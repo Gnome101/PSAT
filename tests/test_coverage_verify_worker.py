@@ -324,6 +324,99 @@ def test_claim_batch_respects_batch_size(db_session, worker, seed_protocol, monk
     assert remaining == 4
 
 
+def test_claim_batch_skips_rows_whose_contract_was_reclassified_as_proxy(db_session, worker, seed_protocol):
+    """Regression for the live-test crash on 2026-05-09.
+
+    A coverage row was inserted while its contract had ``is_proxy=FALSE``;
+    a later static-analysis pass flipped the contract to ``is_proxy=TRUE``.
+    The DB trigger ``_reject_proxy_coverage`` correctly rejects any
+    INSERT/UPDATE that targets a proxy. Without filtering on the claim
+    side, the worker's UPDATE-to-``verifying`` raised, the exception
+    propagated out of ``run_loop``, the process exited 1, and
+    ``start_workers.sh``'s ``wait -n`` brought the whole VM down with it
+    — Fly retried, the same row was still bad, the machine stayed
+    stopped.
+
+    The fix: the claim CTE joins ``contracts`` and filters
+    ``is_proxy=FALSE``. Reclassified rows stay in ``pending`` (orphaned
+    but harmless); valid pending rows continue to be claimed.
+    """
+    from db.models import AuditContractCoverage, Contract
+
+    protocol_id, _ = seed_protocol
+
+    # Row A: pending, contract still impl → should be claimed.
+    contract_ok, _audit_ok = _seed_pending_row(
+        db_session,
+        protocol_id=protocol_id,
+        name="GoodImpl",
+        address="0x" + "1" * 40,
+    )
+    # Row B: pending, contract reclassified to proxy mid-flight →
+    # claim must skip it instead of raising.
+    contract_bad, _audit_bad = _seed_pending_row(
+        db_session,
+        protocol_id=protocol_id,
+        name="BecomesProxy",
+        address="0x" + "2" * 40,
+    )
+    # Flip ``is_proxy`` directly on the contracts row. The trigger only
+    # fires on writes to ``audit_contract_coverage``, so this update
+    # itself is fine — the breakage shows up on the *next* coverage
+    # write.
+    db_session.query(Contract).filter_by(id=contract_bad.id).update({"is_proxy": True})
+    db_session.commit()
+
+    # The previously-failing path: this used to raise psycopg2 error and
+    # crash the worker. After the fix, it returns only the valid row.
+    claimed = worker._claim_batch(db_session)
+    assert len(claimed) == 1
+
+    db_session.expire_all()
+    good_row = db_session.query(AuditContractCoverage).filter_by(contract_id=contract_ok.id).one()
+    bad_row = db_session.query(AuditContractCoverage).filter_by(contract_id=contract_bad.id).one()
+    assert good_row.equivalence_status == "verifying"
+    assert good_row.id == claimed[0]
+    # The proxy-targeting row is left pending — orphaned but never
+    # crashes the worker.
+    assert bad_row.equivalence_status == "pending"
+
+
+def test_run_loop_survives_claim_batch_exception(db_session, worker, seed_protocol, monkeypatch):
+    """Defense-in-depth: any future SQL failure in the claim/recover
+    phase must not crash the worker process.
+
+    Earlier behaviour: an exception from ``_claim_batch`` propagated
+    straight out of ``run_loop`` → process exits 1 → ``start_workers.sh``
+    ``wait -n`` ends the whole VM. Now ``run_loop`` catches the failure,
+    rolls back, logs, and continues to the next poll.
+    """
+    import threading
+
+    protocol_id, _ = seed_protocol
+    _seed_pending_row(db_session, protocol_id=protocol_id)
+
+    calls = []
+
+    def boom(_session):
+        calls.append("called")
+        # Stop the loop after the first failure so the test terminates.
+        worker._running = False
+        raise RuntimeError("simulated SQL failure")
+
+    monkeypatch.setattr(worker, "_claim_batch", boom)
+    # Avoid sleeping idle — we want the loop to exit promptly.
+    monkeypatch.setattr(worker, "idle_poll_interval", 0.01)
+
+    # Run the loop on a thread so a hypothetical hang doesn't deadlock the
+    # test. The fix should make this exit cleanly via ``self._running=False``.
+    t = threading.Thread(target=worker.run_loop, daemon=True)
+    t.start()
+    t.join(timeout=5.0)
+    assert not t.is_alive(), "run_loop did not exit — likely re-raised"
+    assert calls == ["called"]
+
+
 # ---------------------------------------------------------------------------
 # 2. Per-row verify (smoke test of the threadpool entry point)
 # ---------------------------------------------------------------------------

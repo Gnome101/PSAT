@@ -134,14 +134,28 @@ class CoverageVerifyWorker:
         The inner SELECT runs against the partial index
         ``ix_acc_equivalence_pending`` so the queue scan stays a single
         index seek even when the table has millions of resolved rows.
+
+        Filters out rows whose contract has since been reclassified as a
+        proxy. ``audit_contract_coverage`` carries a ``BEFORE
+        INSERT/UPDATE`` trigger (``_reject_proxy_coverage``) that raises
+        if the target ``contract_id`` resolves to ``is_proxy=TRUE``.
+        Coverage rows are written when the contract is known-impl, but a
+        later static-analysis pass can flip ``contracts.is_proxy`` to
+        TRUE — the pending row then becomes uncliamable: the UPDATE that
+        flips it to ``verifying`` would trigger the raise, propagate out
+        of ``run_loop``, and crash the worker. The JOIN here just skips
+        them; they accumulate as orphaned ``pending`` rows but never
+        gate the worker. Cleanup of the orphans is a follow-up.
         """
         result = session.execute(
             text(
                 """
                 WITH locked AS (
-                    SELECT id FROM audit_contract_coverage
-                    WHERE equivalence_status = 'pending'
-                    ORDER BY id
+                    SELECT acc.id FROM audit_contract_coverage acc
+                    JOIN contracts c ON c.id = acc.contract_id
+                    WHERE acc.equivalence_status = 'pending'
+                      AND c.is_proxy = FALSE
+                    ORDER BY acc.id
                     FOR UPDATE SKIP LOCKED
                     LIMIT :limit
                 )
@@ -392,9 +406,30 @@ class CoverageVerifyWorker:
 
                 session = SessionLocal()
                 try:
-                    if poll_counter % _STALE_RECOVERY_EVERY_N_POLLS == 0:
-                        self._recover_stale(session)
-                    claimed_ids = self._claim_batch(session)
+                    try:
+                        if poll_counter % _STALE_RECOVERY_EVERY_N_POLLS == 0:
+                            self._recover_stale(session)
+                        claimed_ids = self._claim_batch(session)
+                    except Exception:
+                        # Defense in depth: any DB failure during the claim/
+                        # recover phase used to propagate out of run_loop and
+                        # crash the worker — start_workers.sh's ``wait -n``
+                        # then takes the whole VM down. Roll back the broken
+                        # transaction, log the trace, and let the next poll
+                        # try again. Specific failure modes we've hit:
+                        # ``_reject_proxy_coverage`` trigger violations on
+                        # rows whose contract was reclassified mid-flight
+                        # (now also filtered in ``_claim_batch``); transient
+                        # Neon SSL drops on long-idle sessions.
+                        logger.exception(
+                            "Worker %s: claim/recover phase raised; rolling back and continuing",
+                            self.worker_id,
+                        )
+                        try:
+                            session.rollback()
+                        except Exception:
+                            logger.debug("rollback failed in run_loop", exc_info=True)
+                        claimed_ids = []
                 finally:
                     session.close()
 
