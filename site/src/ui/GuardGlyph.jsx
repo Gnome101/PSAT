@@ -1,3 +1,5 @@
+import React from "react";
+
 import hourglassIcon from "../assets/hourglass-empty.svg";
 import questionMarkIcon from "../assets/question-mark.svg";
 import vaultIcon from "../assets/vault.svg";
@@ -56,6 +58,16 @@ export function GuardGlyph({ kind, accent, title }) {
       <svg {...common}>
         <rect x="2.6" y="3" width="10.8" height="10" rx="1.8" stroke={accent} strokeWidth="1.4" fill={`${accent}16`} />
         <path d="M5.3 5.4H10.7M5.3 8H10.7M5.3 10.6H8.8" stroke={accent} strokeWidth="1.4" strokeLinecap="round" />
+      </svg>
+    );
+  }
+
+  if (kind === "address") {
+    return (
+      <svg {...common}>
+        <rect x="2.4" y="4.2" width="11.2" height="7.6" rx="1.8" stroke={accent} strokeWidth="1.4" fill={`${accent}14`} />
+        <circle cx="5.2" cy="8" r="1.1" fill={accent} opacity="0.85" />
+        <path d="M7.6 6.4H11M7.6 9.6H10.2" stroke={accent} strokeWidth="1.3" strokeLinecap="round" />
       </svg>
     );
   }

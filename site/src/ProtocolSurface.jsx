@@ -76,6 +76,7 @@ const TYPE_META = {
   eoa: { label: "EOA", accent: "#a09870" },
   contract: { label: "CON", accent: "#7a8098" },
   proxy_admin: { label: "ADM", accent: "#8880a0" },
+  address: { label: "ADDR", accent: "#94a3b8" },
   unknown: { label: "UNK", accent: "#94a3b8" },
   open: { label: "OPEN", accent: "#64748b" },
   many: { label: "MULTI", accent: "#8a80a0" },
@@ -402,7 +403,8 @@ function guardSummary(fn, companyData) {
   }
 
   const principal = direct[0];
-  const type = TYPE_META[principal.resolvedType] || TYPE_META.unknown;
+  const principalKind = principal.resolvedType === "unknown" ? "address" : principal.resolvedType;
+  const type = TYPE_META[principalKind] || TYPE_META.unknown;
   const safeOwners = Array.isArray(principal.details?.owners) ? principal.details.owners.length : 0;
   const threshold = Number(principal.details?.threshold);
   const delay = formatDelay(principal.details?.delay);
@@ -424,7 +426,7 @@ function guardSummary(fn, companyData) {
   }
 
   return {
-    kind: principal.resolvedType,
+    kind: principalKind,
     label: type.label,
     sublabel,
     accent: type.accent,

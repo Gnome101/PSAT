@@ -1,3 +1,5 @@
+import React from "react";
+
 import { GuardGlyph } from "./GuardGlyph.jsx";
 
 export function GuardButton({ fnView, onSelect, onNavigate }) {
