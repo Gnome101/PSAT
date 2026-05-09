@@ -8,17 +8,19 @@ from schemas.control_tracking import ControlTrackingPlan, EventWatch, PollingFal
 
 def _is_address_like_read_spec(read_spec: object) -> bool:
     if not isinstance(read_spec, dict):
-        return False
+        return True
     type_name = str(read_spec.get("type") or "").strip().lower()
+    if not type_name:
+        return True
     return type_name in {"address", "address payable"}
 
 
 def _is_external_contract_read_spec(read_spec: object) -> bool:
     if not isinstance(read_spec, dict):
-        return False
+        return True
     type_name = str(read_spec.get("type") or "").strip().lower()
     if not type_name:
-        return False
+        return True
     if type_name in {"address", "address payable"}:
         return True
     if "mapping" in type_name or "[" in type_name:
