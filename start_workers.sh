@@ -8,6 +8,18 @@ cd "$(dirname "$0")"
 
 export PYTHONUNBUFFERED=1
 
+# Cap glibc's per-thread malloc arenas so freed pages return to the kernel
+# instead of staying mapped in the process's address space. Default is
+# 8×CPU per process; with 12 Python procs × ~16 arenas each, freed-but-
+# still-mapped fragmentation drove the cgroup staircase observed during
+# audit-heavy live runs (cgroup climbed +900MB while individual workers
+# sawtoothed at the Python level — classic glibc-arena retention). Two
+# arenas per process trades a little intra-process malloc lock contention
+# for far better consolidation; CPython's GIL serializes most allocation
+# work anyway, so the contention cost is well under the reclaim-throttling
+# cost we hit at ~80% of the 4GB cgroup. Override per-machine if needed.
+export MALLOC_ARENA_MAX="${MALLOC_ARENA_MAX:-2}"
+
 # Worker DB pool sizing. Bumped from 4+6 to 6+10 to make room for in-process
 # job concurrency (PSAT_<STAGE>_JOB_CONCURRENCY > 1 — opt-in per stage).
 # Per-job worst case: 1 dispatcher session + 1 job session + heartbeat/timing
