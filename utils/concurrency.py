@@ -51,21 +51,13 @@ def _heartbeat_interval_s() -> float:
     return max(0.1, value)
 
 
-def _heartbeat_lost_lease(exc: Exception) -> bool:
-    try:
-        from db.queue import LeaseLost
-    except Exception:
-        return False
-    return isinstance(exc, LeaseLost)
-
-
 def _call_heartbeat(heartbeat: Callable[[], None] | None) -> None:
     if heartbeat is None:
         return
     try:
         heartbeat()
     except Exception as exc:
-        if _heartbeat_lost_lease(exc):
+        if _is_lease_lost(exc):
             raise
         logger.exception("parallel_map: heartbeat raised — continuing")
 
@@ -164,6 +156,18 @@ def parallel_map(
                 raise
 
     return results
+
+
+def _is_lease_lost(exc: BaseException) -> bool:
+    """Lazy import of ``db.queue.LeaseLost`` to keep this utility module
+    free of an unconditional ``utils → db`` import. Returns False if the
+    DB layer is unavailable (test/CLI contexts), letting the heartbeat
+    swallow path stay defensive in those environments."""
+    try:
+        from db.queue import LeaseLost
+    except Exception:
+        return False
+    return isinstance(exc, LeaseLost)
 
 
 def unwrap_results(results: Sequence[tuple[T, R | BaseException]]) -> list[R]:

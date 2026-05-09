@@ -75,7 +75,7 @@ def test_parallel_map_calls_heartbeat_once_per_completion():
 
 
 def test_parallel_map_heartbeat_exception_is_swallowed():
-    """A raising heartbeat must not break the fan-out."""
+    """A raising heartbeat must not break the fan-out for transient errors."""
 
     def bad_heartbeat():
         raise RuntimeError("hb broke")
@@ -84,14 +84,35 @@ def test_parallel_map_heartbeat_exception_is_swallowed():
     assert [r for _, r in results] == [2, 4, 6]
 
 
-def test_parallel_map_lease_lost_heartbeat_propagates():
+def test_parallel_map_propagates_lease_lost_from_heartbeat_parallel_path():
+    """LeaseLost is a directive — the lease has rolled to a sibling worker
+    and continuing this fan-out would be wasted work on a job we no longer
+    own. The parallel-path heartbeat handler must propagate LeaseLost so
+    ``BaseWorker._execute_job`` can bail.
+
+    Why this matters: psat-pr-73 hit duplicate-build symptoms because
+    ``parallel_map`` previously caught LeaseLost as a generic Exception
+    and continued, so the abandoned worker kept running forge builds on
+    a job a sibling had already claimed (signal #4, 2026-05-08 08:17-21).
+    """
     from db.queue import LeaseLost
 
-    def lost_lease():
-        raise LeaseLost("lease gone")
+    def lease_lost_heartbeat():
+        raise LeaseLost("sibling owns the row now")
 
-    with pytest.raises(LeaseLost, match="lease gone"):
-        parallel_map(lambda x: x * 2, [1, 2, 3], max_workers=2, heartbeat=lost_lease)
+    with pytest.raises(LeaseLost):
+        parallel_map(lambda x: x * 2, [1, 2, 3], max_workers=2, heartbeat=lease_lost_heartbeat)
+
+
+def test_parallel_map_propagates_lease_lost_from_heartbeat_sequential_path():
+    """Same invariant for the ``max_workers=1`` sequential path."""
+    from db.queue import LeaseLost
+
+    def lease_lost_heartbeat():
+        raise LeaseLost("sibling owns the row now")
+
+    with pytest.raises(LeaseLost):
+        parallel_map(lambda x: x, [1, 2, 3], max_workers=1, heartbeat=lease_lost_heartbeat)
 
 
 def test_parallel_map_heartbeats_while_waiting(monkeypatch):
