@@ -12,6 +12,7 @@ import traceback
 import uuid
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from datetime import datetime, timezone
+from typing import cast
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -303,7 +304,13 @@ class BaseWorker:
             # Snapshot the lease at claim time so every mutating queue
             # write threads it through. ``getattr`` keeps test stubs that
             # build a bare SimpleNamespace job from tripping AttributeError.
+            claim_job_id = getattr(job, "id")
             claim_lease_id = getattr(job, "lease_id", None)
+            # Heartbeats run from background/parallel helper threads. Keep
+            # them on the immutable claim-time token instead of rereading ORM
+            # attributes from a long-lived worker session.
+            setattr(job, "_heartbeat_job_id", claim_job_id)
+            setattr(job, "_heartbeat_lease_id", claim_lease_id)
             # Register this (job_id, lease_id) for graceful-shutdown release.
             # ``_handle_sigterm`` reads this map on its daemon thread; the
             # ``finally`` below removes the entry whether the job completes,
@@ -311,7 +318,7 @@ class BaseWorker:
             inflight_registered = False
             if claim_lease_id is not None:
                 with self._inflight_lock:
-                    self._inflight_jobs[job.id] = claim_lease_id
+                    self._inflight_jobs[claim_job_id] = claim_lease_id
                 inflight_registered = True
             heartbeat_stop = threading.Event()
             heartbeat_thread: threading.Thread | None = None
@@ -324,13 +331,17 @@ class BaseWorker:
                         logger.warning(
                             "Worker %s: background heartbeat lost lease for job %s: %s",
                             self.worker_id,
-                            job.id,
+                            claim_job_id,
                             lease_exc,
                             extra={"phase": "job", "outcome": "lease_lost"},
                         )
                         return
                     except Exception:
-                        logger.warning("Worker %s: background heartbeat failed for job %s", self.worker_id, job.id)
+                        logger.warning(
+                            "Worker %s: background heartbeat failed for job %s",
+                            self.worker_id,
+                            claim_job_id,
+                        )
 
             if claim_lease_id is not None:
                 heartbeat_thread = threading.Thread(
@@ -625,7 +636,7 @@ class BaseWorker:
                 degraded_errors_var.reset(accumulator_token)
                 if inflight_registered:
                     with self._inflight_lock:
-                        self._inflight_jobs.pop(job.id, None)
+                        self._inflight_jobs.pop(claim_job_id, None)
 
     def _run_one_job(self, job_id) -> None:
         """K>1 dispatcher entry point: open a per-job session, re-fetch the job
@@ -816,7 +827,13 @@ class BaseWorker:
         load-bearing for stall detection, and silent failures on a
         critical path is what hid this bug across multiple PR previews.
         """
-        lease_id = getattr(job, "lease_id", None)
+        missing = object()
+        job_id = getattr(job, "_heartbeat_job_id", missing)
+        if job_id is missing:
+            job_id = getattr(job, "id")
+        lease_id = getattr(job, "_heartbeat_lease_id", missing)
+        if lease_id is missing:
+            lease_id = getattr(job, "lease_id", None)
         if lease_id is None:
             # Pre-migration row, or a job claimed by an out-of-process
             # legacy claim path; fall back to bumping updated_at so the
@@ -825,7 +842,7 @@ class BaseWorker:
 
             try:
                 with SessionLocal() as fresh:
-                    fresh.execute(sa_update(Job).where(Job.id == job.id).values(updated_at=datetime.now(timezone.utc)))
+                    fresh.execute(sa_update(Job).where(Job.id == job_id).values(updated_at=datetime.now(timezone.utc)))
                     fresh.commit()
             except Exception:
                 logger.warning("heartbeat (legacy path) write failed", exc_info=True)
@@ -833,7 +850,12 @@ class BaseWorker:
 
         try:
             with SessionLocal() as fresh:
-                heartbeat_job(fresh, job.id, lease_id=lease_id, lease_ttl_seconds=DEFAULT_JOB_LEASE_TTL_S)
+                heartbeat_job(
+                    fresh,
+                    job_id,
+                    lease_id=cast(uuid.UUID, lease_id),
+                    lease_ttl_seconds=DEFAULT_JOB_LEASE_TTL_S,
+                )
         except LeaseLost:
             raise
         except Exception:

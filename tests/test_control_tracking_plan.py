@@ -130,6 +130,13 @@ def test_build_control_tracking_plan_from_dict_matches_fixture():
                 "label": "owner",
                 "source": "owner",
                 "kind": "state_variable",
+                "read_spec": {
+                    "strategy": "getter_call",
+                    "target": "owner",
+                    "kind": "state_variable",
+                    "state_variable_name": "owner",
+                    "type": "address",
+                },
                 "tracking_mode": "event_plus_state",
                 "writer_functions": [
                     {
@@ -174,3 +181,96 @@ def test_build_control_tracking_plan_from_dict_matches_fixture():
     event_watch = plan["tracked_controllers"][0]["event_watch"]
     assert event_watch is not None
     assert event_watch["events"][0]["name"] == "OwnershipTransferred"
+
+
+def test_build_control_tracking_plan_filters_non_controller_runtime_reads():
+    """Only address-like state and role identifiers should reach runtime resolution."""
+    base_target = {
+        "tracking_mode": "state_only",
+        "writer_functions": [],
+        "associated_events": [],
+        "polling_sources": [],
+        "notes": [],
+    }
+    analysis = {
+        "schema_version": "0.1",
+        "subject": {
+            "address": "0x1111111111111111111111111111111111111111",
+            "name": "Example",
+            "compiler_version": "v0.8.19",
+            "source_verified": True,
+        },
+        "controller_tracking": [
+            {
+                **base_target,
+                "controller_id": "state_variable:owner",
+                "label": "owner",
+                "source": "owner",
+                "kind": "state_variable",
+                "read_spec": {
+                    "strategy": "getter_call",
+                    "target": "owner",
+                    "kind": "state_variable",
+                    "state_variable_name": "owner",
+                    "type": "address",
+                },
+            },
+            {
+                **base_target,
+                "controller_id": "state_variable:paused",
+                "label": "paused",
+                "source": "paused",
+                "kind": "state_variable",
+                "read_spec": {
+                    "strategy": "getter_call",
+                    "target": "paused",
+                    "kind": "state_variable",
+                    "state_variable_name": "paused",
+                    "type": "bool",
+                },
+            },
+            {
+                **base_target,
+                "controller_id": "state_variable:minters",
+                "label": "minters",
+                "source": "minters",
+                "kind": "state_variable",
+                "read_spec": {
+                    "strategy": "getter_call",
+                    "target": "minters",
+                    "kind": "state_variable",
+                    "state_variable_name": "minters",
+                    "type": "mapping(address => bool)",
+                },
+            },
+            {
+                **base_target,
+                "controller_id": "external_contract:name",
+                "label": "name",
+                "source": "name",
+                "kind": "external_contract",
+                "read_spec": {
+                    "strategy": "getter_call",
+                    "target": "name",
+                    "kind": "state_variable",
+                    "state_variable_name": "name",
+                    "type": "string",
+                },
+            },
+            {
+                **base_target,
+                "controller_id": "role_identifier:PAUSER_ROLE",
+                "label": "PAUSER_ROLE",
+                "source": "PAUSER_ROLE",
+                "kind": "role_identifier",
+                "read_spec": {"strategy": "getter_call", "target": "PAUSER_ROLE"},
+            },
+        ],
+    }
+
+    plan = build_control_tracking_plan(cast(ContractAnalysis, analysis))
+
+    assert [target["controller_id"] for target in plan["tracked_controllers"]] == [
+        "role_identifier:PAUSER_ROLE",
+        "state_variable:owner",
+    ]

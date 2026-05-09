@@ -6,6 +6,41 @@ from schemas.contract_analysis import ContractAnalysis
 from schemas.control_tracking import ControlTrackingPlan, EventWatch, PollingFallback, TrackedController
 
 
+def _is_address_like_read_spec(read_spec: object) -> bool:
+    if not isinstance(read_spec, dict):
+        return False
+    type_name = str(read_spec.get("type") or "").strip().lower()
+    return type_name in {"address", "address payable"}
+
+
+def _is_external_contract_read_spec(read_spec: object) -> bool:
+    if not isinstance(read_spec, dict):
+        return False
+    type_name = str(read_spec.get("type") or "").strip().lower()
+    if not type_name:
+        return False
+    if type_name in {"address", "address payable"}:
+        return True
+    if "mapping" in type_name or "[" in type_name:
+        return False
+    if type_name.startswith(("bool", "uint", "int", "string", "bytes")):
+        return False
+    return True
+
+
+def _is_runtime_resolvable_controller(target: object) -> bool:
+    if not isinstance(target, dict):
+        return False
+    kind = target.get("kind")
+    if kind == "role_identifier":
+        return True
+    if kind == "state_variable":
+        return _is_address_like_read_spec(target.get("read_spec"))
+    if kind == "external_contract":
+        return _is_external_contract_read_spec(target.get("read_spec"))
+    return False
+
+
 def build_control_tracking_plan(analysis: ContractAnalysis) -> ControlTrackingPlan:
     """Build an event-first, polling-backed watch plan from contract analysis output."""
     contract_address = analysis["subject"]["address"]
@@ -13,6 +48,8 @@ def build_control_tracking_plan(analysis: ContractAnalysis) -> ControlTrackingPl
 
     tracked_controllers: list[TrackedController] = []
     for target in analysis.get("controller_tracking", []):
+        if not _is_runtime_resolvable_controller(target):
+            continue
         associated_events = list(target.get("associated_events", []))
         writer_functions = [item["function"] for item in target.get("writer_functions", [])]
 
