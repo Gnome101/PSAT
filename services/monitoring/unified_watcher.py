@@ -493,11 +493,13 @@ def _refresh_coverage_after_upgrade(session: Session, protocol_id: int | None) -
     from services.audits.coverage import upsert_coverage_for_protocol
 
     try:
-        # verify_source_equivalence=True so the source-equivalence verdict
-        # stays fresh on every automatic refresh. Matches the worker call
-        # sites (coverage_worker, audit_scope_extraction, resolution_worker)
-        # that also opt in to verification.
-        upsert_coverage_for_protocol(session, protocol_id, verify_source_equivalence=True)
+        # Defer source-equivalence to ``CoverageVerifyWorker``: matches the
+        # coverage_worker / audit_scope_extraction / upgrade_history call
+        # sites which also pass False. Holding verify inline on every
+        # detected upgrade fanned out 4-way Etherscan + GitHub bursts that
+        # cascaded into the shared rate-limit window (#82). The verify
+        # worker drains the resulting ``pending`` rows at a controlled rate.
+        upsert_coverage_for_protocol(session, protocol_id, verify_source_equivalence=False)
     except Exception as exc:
         logger.warning(
             "Failed to refresh audit coverage for protocol %s after upgrade: %s",
