@@ -97,6 +97,12 @@ for _ in $(seq 1 "$POLICY_COUNT"); do
 done
 "${PYTHON_CMD[@]}" -m workers.coverage_worker &
 PIDS+=($!)
+# Drains audit_contract_coverage rows where equivalence_status='pending'.
+# Single instance is enough — concurrency is intentionally low (default 2
+# threads) so we don't reintroduce the Etherscan rate-limit cascade the
+# inline verify path used to cause (#82).
+"${PYTHON_CMD[@]}" -m workers.coverage_verify &
+PIDS+=($!)
 "${PYTHON_CMD[@]}" -m workers.defillama_worker &
 PIDS+=($!)
 "${PYTHON_CMD[@]}" -m workers.selection_worker &
