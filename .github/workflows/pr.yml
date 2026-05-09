@@ -96,6 +96,7 @@ jobs:
           flyctl deploy -a "${{ steps.fly.outputs.app }}" \
             --config fly-preview.toml \
             --remote-only \
+            --ha=false \
             --build-arg GIT_SHA="${{ github.event.pull_request.head.sha }}"
 
       - name: Start non-web process groups
