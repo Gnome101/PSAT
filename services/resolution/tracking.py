@@ -431,7 +431,18 @@ def build_control_snapshot(
     """
     from utils.concurrency import parallel_map
 
-    block_number = _current_block_number(rpc_url) if block_tag == "latest" else int(block_tag, 16)
+    def _call_with_heartbeat(fn: Callable[[], int]) -> int:
+        if heartbeat is None:
+            return fn()
+        results = parallel_map(lambda _item: fn(), [None], max_workers=1, heartbeat=heartbeat)
+        outcome = results[0][1]
+        if isinstance(outcome, BaseException):
+            raise outcome
+        return outcome
+
+    block_number = (
+        _call_with_heartbeat(lambda: _current_block_number(rpc_url)) if block_tag == "latest" else int(block_tag, 16)
+    )
     controller_values: dict[str, Any] = {}
 
     def _compute_controller(controller: TrackedController) -> tuple[str, dict[str, Any]]:

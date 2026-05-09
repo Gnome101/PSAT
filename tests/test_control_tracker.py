@@ -1,4 +1,5 @@
 import sys
+import threading
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -83,6 +84,34 @@ def test_build_control_snapshot(monkeypatch):
     assert first["controller_values"]["state_variable:owner"]["value"] == "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
     assert first["controller_values"]["state_variable:owner"]["resolved_type"] == "eoa"
     assert second["controller_values"]["state_variable:owner"]["value"] == "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+
+
+def test_build_control_snapshot_heartbeats_while_reading_latest_block(monkeypatch):
+    monkeypatch.setenv("PSAT_PARALLEL_HEARTBEAT_INTERVAL_S", "0.01")
+    release = threading.Event()
+    counter = {"n": 0}
+    plan: ControlTrackingPlan = {
+        "schema_version": "0.1",
+        "contract_address": "0x1111111111111111111111111111111111111111",
+        "contract_name": "Mock",
+        "tracking_strategy": "event_first_with_polling_fallback",
+        "tracked_controllers": [],
+    }
+
+    def slow_current_block(_rpc_url: str) -> int:
+        assert release.wait(timeout=2)
+        return 16
+
+    def heartbeat() -> None:
+        counter["n"] += 1
+        release.set()
+
+    monkeypatch.setattr("services.resolution.tracking._current_block_number", slow_current_block)
+
+    snapshot = build_control_snapshot(plan, "https://rpc.example", heartbeat=heartbeat)
+
+    assert snapshot["block_number"] == 16
+    assert counter["n"] >= 1
 
 
 def test_build_control_snapshot_handles_reverting_getter(monkeypatch):
