@@ -572,6 +572,13 @@ def analyzed_company(cached_weth, live_client: LiveClient) -> dict[str, Any]:
             f"Company fixture for '{DEFAULT_TEST_COMPANY}' did not complete "
             f"on {live_client.base_url}: {parent.get('error')}"
         )
+    children = live_client.poll_children_until_done(parent["job_id"])
+    completed = [child for child in children if child["status"] == "completed"]
+    if not completed:
+        pytest.fail(
+            f"Company fixture for '{DEFAULT_TEST_COMPANY}' produced no completed child jobs "
+            f"on {live_client.base_url}: statuses={[child.get('status') for child in children]}"
+        )
     return parent
 
 
