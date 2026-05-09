@@ -240,7 +240,6 @@ def test_idle_queue_makes_no_http_calls_and_no_writes(db_session, worker, seed_p
     without re-introducing the rate-limit cascade — an empty queue is
     the most common state and it has to stay free.
     """
-    from db.models import AuditContractCoverage
     from services.audits import source_equivalence
 
     protocol_id, _ = seed_protocol
