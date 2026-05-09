@@ -87,9 +87,23 @@ jobs:
             ARTIFACT_STORAGE_PREFIX="pr-${PR_NUMBER}/"
 
       - name: Generate preview-specific fly config
-        # Identical to fly.toml except min_machines_running = 0 so idle previews
-        # suspend fully. Prod's fly.toml keeps ≥1 web machine warm.
-        run: sed 's/^  min_machines_running = 1$/  min_machines_running = 0/' fly.toml > fly-preview.toml
+        # Identical to fly.toml except:
+        #   - min_machines_running = 0 (idle previews suspend fully; prod keeps
+        #     ≥1 web machine warm)
+        #   - workers VM bumped from shared-cpu-2x:4GB to shared-cpu-8x:16GB
+        #     for the live-test run. The default 2-vCPU box gets CPU-thrashed
+        #     once the audit pipeline + recursive forge builds + per-worker
+        #     Python procs all want CPU at the same time (peak run-queue depth
+        #     observed at 9 on 2 cores). 8 cores brings it to ~1 contender per
+        #     core. Memory tracks the size class so workers can keep ~12 Python
+        #     procs comfortably resident.
+        run: |
+          sed -e 's/^  min_machines_running = 1$/  min_machines_running = 0/' \
+              -e '/^  processes = \["workers"\]$/,/^  memory = / {
+                    s/^  size = "shared-cpu-2x"$/  size = "shared-cpu-8x"/
+                    s/^  memory = "4gb"$/  memory = "16gb"/
+                  }' \
+              fly.toml > fly-preview.toml
 
       - name: Deploy preview
         run: |
