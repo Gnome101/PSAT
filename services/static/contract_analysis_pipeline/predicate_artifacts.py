@@ -30,7 +30,7 @@ from eth_utils.crypto import keccak
 
 from .mapping_events import WriterEventSpec, discover_mapping_writer_events
 from .predicate_types import PredicateTree
-from .predicates import _helper_engine_cache, build_predicate_tree
+from .predicates import _helper_engine_cache, build_predicate_tree, build_return_predicate_tree
 from .reentrancy_pause import PauseInfo, apply_reentrancy_pause_pass
 from .writer_gate import apply_writer_gate_pass
 
@@ -79,13 +79,17 @@ def build_predicate_artifacts_with_pause_info(
     cache_token = _helper_engine_cache.set({})
     try:
         trees: dict[str, PredicateTree] = {}
+        check_trees: dict[str, PredicateTree] = {}
         for fn in getattr(contract, "functions", []) or []:
             if not _is_externally_callable(fn):
                 continue
             tree = build_predicate_tree(fn)
-            if tree is None:
+            if tree is not None:
+                trees[fn.full_name] = tree
                 continue
-            trees[fn.full_name] = tree
+            check_tree = build_return_predicate_tree(fn)
+            if check_tree is not None:
+                check_trees[fn.full_name] = check_tree
     finally:
         _helper_engine_cache.reset(cache_token)
 
@@ -95,16 +99,23 @@ def build_predicate_artifacts_with_pause_info(
     # caller_authority once it sees the full set of writers, and
     # reentrancy/pause analyzers cross-reference state-vars across
     # the contract's functions.
-    if trees:
-        apply_writer_gate_pass(contract, trees)
-        apply_mapping_event_hint_pass(contract, trees)
-        pause_info = apply_reentrancy_pause_pass(contract, trees)
+    all_trees: dict[str, PredicateTree] = {}
+    all_trees.update(trees)
+    all_trees.update(check_trees)
+    if all_trees:
+        apply_writer_gate_pass(contract, all_trees)
+        apply_mapping_event_hint_pass(contract, all_trees)
+        pause_info = apply_reentrancy_pause_pass(contract, all_trees)
+        trees = {sig: all_trees[sig] for sig in trees}
+        check_trees = {sig: all_trees[sig] for sig in check_trees}
 
     artifact = {
         "schema_version": SCHEMA_VERSION,
         "contract_name": getattr(contract, "name", None),
         "trees": trees,
     }
+    if check_trees:
+        artifact["check_trees"] = check_trees
     return artifact, pause_info
 
 

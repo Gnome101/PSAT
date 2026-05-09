@@ -49,7 +49,7 @@ from sqlalchemy.orm import Session
 from db.models import Contract, ControllerValue, Job, JobStatus
 from db.queue import get_artifact
 
-from .adapters import AdapterRegistry, EvaluationContext
+from .adapters import AdapterRegistry, CallFrame, EvaluationContext
 from .adapters.event_indexed import EventIndexedAdapter
 from .capabilities import CapabilityExpr
 from .predicate_evaluator import evaluate_tree_with_registry
@@ -209,21 +209,33 @@ def resolve_contract_capabilities(
     )
     if not state_var_values and runtime_job.id != analysis_job.id:
         state_var_values = _load_state_var_values(session, addr, job_id=runtime_job.id, chain=chain)
-    ctx = EvaluationContext(
-        chain_id=chain_id,
-        contract_address=addr,
-        block=block,
-        event_log_repo=event_log_repo,
-        rpc_url=rpc_url,
-        state_var_values=state_var_values,
-        session=session,
-    )
-
     out: dict[str, dict[str, Any]] = {}
     for fn_signature, tree in (artifact["trees"] or {}).items():
+        ctx = EvaluationContext(
+            chain_id=chain_id,
+            contract_address=addr,
+            block=block,
+            event_log_repo=event_log_repo,
+            rpc_url=rpc_url,
+            state_var_values=state_var_values,
+            session=session,
+            call_frame=CallFrame.root(
+                contract_address=addr,
+                function_signature=fn_signature if isinstance(fn_signature, str) else None,
+                function_selector=_selector_for_signature(fn_signature if isinstance(fn_signature, str) else None),
+            ),
+        )
         cap = evaluate_tree_with_registry(tree, registry, ctx)
         out[fn_signature] = capability_to_dict(cap)
     return out
+
+
+def _selector_for_signature(signature: str | None) -> str | None:
+    if not signature or "(" not in signature or not signature.endswith(")"):
+        return None
+    from eth_utils.crypto import keccak
+
+    return "0x" + keccak(text=signature).hex()[:8]
 
 
 def _analysis_lookup_for_runtime_job(
@@ -437,4 +449,6 @@ def capability_to_dict(cap: CapabilityExpr) -> dict[str, Any]:
     out["confidence"] = cap.confidence
     if cap.last_indexed_block is not None:
         out["last_indexed_block"] = cap.last_indexed_block
+    if cap.trace:
+        out["trace"] = list(cap.trace)
     return out

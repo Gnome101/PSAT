@@ -148,6 +148,86 @@ def build_predicate_tree(function: Any) -> PredicateTree | None:
     return tree
 
 
+def build_return_predicate_tree(function: Any) -> PredicateTree | None:
+    """Construct a PredicateTree from a bool-returning function's
+    return expression.
+
+    Guarded entrypoints are modeled from revert paths. External
+    authority providers such as ``canCall(user,target,selector)`` often
+    do not revert; they return the authorization predicate as ``bool``.
+    These trees are stored as resolver-only check trees so recursive
+    external-call evaluation has semantic material to inline without
+    listing read-only check methods as protected functions.
+    """
+    if not SLITHER_AVAILABLE:
+        raise RuntimeError("predicate builder requires slither")
+    if not _function_returns_bool(function):
+        return None
+
+    engine = ProvenanceEngine(function)
+    engine.run()
+    prov = engine.provenance
+
+    children: list[PredicateTree] = []
+    for node, return_value in _return_values(function):
+        literal = _literal_bool(return_value)
+        if literal is False:
+            continue
+        if literal is True:
+            continue
+        gate = RevertGate(
+            kind="assert",
+            condition_value=return_value,
+            polarity="allowed_when_true",
+            node=node,
+            containing_function=function,
+            expression_text=f"return {return_value}",
+            basis=["bool-return predicate"],
+        )
+        children.append(_build_subtree_from_value(return_value, prov, gate, function))
+
+    if not children:
+        return None
+    tree = make_or_node(children)
+    apply_confidence_to_tree(tree)
+    return tree
+
+
+def _function_returns_bool(function: Any) -> bool:
+    returns = list(getattr(function, "returns", []) or [])
+    if returns:
+        return any(str(getattr(rv, "type", rv)) == "bool" for rv in returns)
+    raw_return_type = getattr(function, "return_type", None)
+    if raw_return_type is None:
+        return False
+    if isinstance(raw_return_type, (list, tuple)):
+        return any(str(item) == "bool" for item in raw_return_type)
+    return str(raw_return_type) == "bool"
+
+
+def _return_values(function: Any) -> list[tuple[Any, Any]]:
+    out: list[tuple[Any, Any]] = []
+    for node in getattr(function, "nodes", []) or []:
+        for ir in getattr(node, "irs_ssa", None) or getattr(node, "irs", []) or []:
+            if not isinstance(ir, Return):
+                continue
+            for value in getattr(ir, "values", ()) or ():
+                out.append((node, value))
+    return out
+
+
+def _literal_bool(value: Any) -> bool | None:
+    raw = getattr(value, "value", value)
+    if isinstance(raw, bool):
+        return raw
+    text = str(raw)
+    if text == "True":
+        return True
+    if text == "False":
+        return False
+    return None
+
+
 def _build_subtree_from_gate(
     gate: RevertGate,
     prov: ProvenanceMap,
@@ -2002,6 +2082,7 @@ def _value_type_of_index_ir(ir: Any) -> str:
 # Re-export for tests / consumers.
 __all__ = [
     "build_predicate_tree",
+    "build_return_predicate_tree",
     "ProvenanceMap",
     "TOP",
     "EMPTY",

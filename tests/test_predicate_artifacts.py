@@ -76,6 +76,29 @@ def test_artifact_includes_only_guarded_external_functions(tmp_path):
     assert "open()" not in artifact["trees"]
 
 
+def test_bool_returning_authority_check_goes_to_check_trees(tmp_path):
+    """Read-only authorization predicates are resolver inputs, not
+    protected entrypoints. They should be available for recursive
+    inlining without appearing in the normal function surface."""
+    sl = _compile(
+        tmp_path,
+        """
+        pragma solidity ^0.8.19;
+        contract C {
+            mapping(address => mapping(bytes4 => mapping(address => bool))) internal can;
+            function allowed(address user, address target, bytes4 sig) external view returns (bool) {
+                return can[target][sig][user];
+            }
+        }
+    """,
+    )
+    artifact = build_predicate_artifacts(_contract(sl))
+    assert "allowed(address,address,bytes4)" not in artifact["trees"]
+    assert "allowed(address,address,bytes4)" in artifact["check_trees"]
+    leaves = _leaves(artifact["check_trees"]["allowed(address,address,bytes4)"])
+    assert leaves and leaves[0]["kind"] == "membership"
+
+
 def test_artifact_omits_internal_functions(tmp_path):
     """Internal/private helpers don't appear at the boundary the
     resolver consumes — only external/public surface."""

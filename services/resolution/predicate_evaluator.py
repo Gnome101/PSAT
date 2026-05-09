@@ -46,6 +46,8 @@ from .capabilities import (
     union,
 )
 
+_CALLER_SOURCES = {"msg_sender", "tx_origin", "signature_recovery", "root_caller"}
+
 # ---------------------------------------------------------------------------
 # Adapter protocol (placeholder — week-5 fully-typed registry replaces this)
 # ---------------------------------------------------------------------------
@@ -93,6 +95,7 @@ class EvaluationContext:
         adapter: SetAdapter | None = None,
         block: int | None = None,
         state_var_values: dict[str, str] | None = None,
+        call_frame: Any = None,
     ) -> None:
         self.contract_address = contract_address
         self.adapter: SetAdapter = adapter or _NullAdapter()
@@ -101,6 +104,7 @@ class EvaluationContext:
         # Used by ``_resolve_equality_principal`` to enumerate state-variable
         # authority values into concrete addresses.
         self.state_var_values = state_var_values or {}
+        self.call_frame = call_frame
 
 
 def evaluate_tree_with_registry(
@@ -131,6 +135,7 @@ def evaluate_tree_with_registry(
         adapter=_RegistryBackedAdapter(),
         block=getattr(ctx, "block", None),
         state_var_values=getattr(ctx, "state_var_values", None),
+        call_frame=getattr(ctx, "call_frame", None),
     )
     return evaluate_tree(tree, eval_ctx)
 
@@ -196,7 +201,7 @@ def _has_caller_keyed_value_predicate(leaf: LeafPredicate) -> bool:
     if not descriptor.get("value_predicate"):
         return False
     keys = descriptor.get("key_sources") or []
-    return any(k.get("source") in ("msg_sender", "tx_origin", "signature_recovery") for k in keys)
+    return any(k.get("source") in _CALLER_SOURCES for k in keys)
 
 
 def _evaluate_leaf(leaf: LeafPredicate, ctx: EvaluationContext) -> CapabilityExpr:
@@ -308,7 +313,7 @@ def _resolve_equality_principal(
     when the value isn't there we emit the lower_bound placeholder so
     the FE can still render 'guarded by X' even without enumeration."""
     operands = leaf.get("operands") or []
-    other = [op for op in operands if op["source"] not in ("msg_sender", "tx_origin", "signature_recovery")]
+    other = [op for op in operands if op["source"] not in _CALLER_SOURCES]
     if len(other) != 1:
         return CapabilityExpr.unsupported("equality_operand_ambiguous")
     op = other[0]
@@ -317,6 +322,8 @@ def _resolve_equality_principal(
     if src == "constant":
         val = op.get("constant_value")
         if isinstance(val, str) and val.startswith("0x") and len(val) == 42:
+            if _is_zero_address(val):
+                return CapabilityExpr.finite_set([], quality="exact", confidence="enumerable")
             return CapabilityExpr.finite_set([val])
         return CapabilityExpr.unsupported(f"equality_constant_non_address_{val}")
 
@@ -325,6 +332,8 @@ def _resolve_equality_principal(
         if ctx is not None and sv_name and sv_name in ctx.state_var_values:
             value = ctx.state_var_values[sv_name]
             if isinstance(value, str) and value.startswith("0x") and len(value) == 42:
+                if _is_zero_address(value):
+                    return CapabilityExpr.finite_set([], quality="exact", confidence="enumerable")
                 return CapabilityExpr.finite_set(
                     [value],
                     quality="exact",
@@ -367,6 +376,10 @@ def _resolve_equality_principal(
     return CapabilityExpr.unsupported(f"equality_operand_source_{src}")
 
 
+def _is_zero_address(value: str) -> bool:
+    return value.lower() == "0x" + "0" * 40
+
+
 def _maybe_inline_cross_contract_call(
     leaf: LeafPredicate,
     descriptor: SetDescriptor,
@@ -405,6 +418,8 @@ def _maybe_inline_cross_contract_call(
         callee_selector = None
     if not callee_signature and not callee_selector:
         return None
+    if callee_selector is None and callee_signature is not None:
+        callee_selector = _selector_for_signature(callee_signature)
 
     # session lives on the OUTER (adapters) context — pulled by the
     # registry-backed adapter wrapper. Fall back to None gracefully.
@@ -459,30 +474,66 @@ def _maybe_inline_cross_contract_call(
     artifact = get_artifact(session, lookup.analysis_job.id, "predicate_trees")
     if not isinstance(artifact, dict):
         return None
-    trees = artifact.get("trees")
-    if not isinstance(trees, dict) or not trees:
-        return None
+    from services.resolution.adapters import CallFrame
 
-    callee_tree = _tree_for_signature_or_selector(
-        trees,
-        callee_signature=callee_signature,
-        callee_selector=callee_selector,
-    )
-    if callee_tree is None:
-        return None
-
-    callee_tree = _bind_callee_parameters(
-        callee_tree,
-        _callee_argument_operands(
+    parent_frame = getattr(outer_ctx, "call_frame", None)
+    if parent_frame is None:
+        parent_frame = CallFrame.root(
+            contract_address=getattr(outer_ctx, "contract_address", None),
+            function_signature=None,
+            function_selector=None,
+        )
+    call_args = [
+        _normalize_operand_for_call_arg(arg, parent_frame, ctx)
+        for arg in _callee_argument_operands(
             leaf,
             callee_signature=callee_signature,
             callee_selector=callee_selector,
-        ),
+        )
+    ]
+
+    trees = artifact.get("trees")
+    check_trees = artifact.get("check_trees")
+    tree_maps = [m for m in (trees, check_trees) if isinstance(m, dict) and m]
+    if not tree_maps:
+        return _materialize_external_check_from_candidates(
+            session=session,
+            outer_ctx=outer_ctx,
+            chain_id=chain_id,
+            registry_addr=registry_addr,
+            callee_selector=callee_selector,
+            call_args=call_args,
+        )
+
+    callee_tree = None
+    for tree_map in tree_maps:
+        callee_tree = _tree_for_signature_or_selector(
+            tree_map,
+            callee_signature=callee_signature,
+            callee_selector=callee_selector,
+        )
+        if callee_tree is not None:
+            break
+    if callee_tree is None:
+        return _materialize_external_check_from_candidates(
+            session=session,
+            outer_ctx=outer_ctx,
+            chain_id=chain_id,
+            registry_addr=registry_addr,
+            callee_selector=callee_selector,
+            call_args=call_args,
+        )
+
+    callee_tree = _bind_callee_parameters(
+        callee_tree,
+        call_args,
     )
 
-    # Build a child evaluation context targeting the registry. msg.sender
-    # is preserved (the call passes through). state_var_values come
-    # from B's own controller_values rows, not A's.
+    # Build a child evaluation context targeting the registry.
+    # Parameter arguments are already bound above. Direct Solidity
+    # globals inside the callee get the child frame: msg.sender is
+    # the calling contract, address(this) is the registry, and
+    # msg.sig is the callee selector.
     from services.resolution.capability_resolver import _load_state_var_values
 
     state_var_values = _load_state_var_values(
@@ -492,6 +543,21 @@ def _maybe_inline_cross_contract_call(
     )
     if not state_var_values and lookup.runtime_job.id != lookup.analysis_job.id:
         state_var_values = _load_state_var_values(session, registry_addr, job_id=lookup.runtime_job.id)
+
+    parent_this = getattr(parent_frame, "current_address_this", None) or getattr(
+        parent_frame, "executing_contract_address", None
+    )
+    child_frame = CallFrame(
+        protected_contract_address=getattr(parent_frame, "protected_contract_address", None),
+        executing_contract_address=registry_addr,
+        current_function_signature=callee_signature,
+        current_function_selector=callee_selector,
+        current_msg_sender=parent_this.lower() if isinstance(parent_this, str) else None,
+        current_address_this=registry_addr,
+        current_msg_sig=callee_selector,
+        bound_parameters=tuple(call_args),
+    )
+    callee_tree = _normalize_tree_for_frame(callee_tree, child_frame)
 
     child_outer = type(outer_ctx)(
         chain_id=chain_id,
@@ -505,6 +571,7 @@ def _maybe_inline_cross_contract_call(
         state_var_values=state_var_values,
         session=session,
         evaluation_stack=stack | {key},
+        call_frame=child_frame,
         meta=dict(outer_ctx.meta),
     )
 
@@ -517,7 +584,60 @@ def _maybe_inline_cross_contract_call(
         if hasattr(ctx.adapter, "_registry")
         else _Reg()
     )
-    return evaluate_tree_with_registry(callee_tree, registry_adapters, child_outer)
+    resolved = evaluate_tree_with_registry(callee_tree, registry_adapters, child_outer)
+    if _inline_result_needs_materialization(resolved):
+        materialized = _materialize_external_check_from_candidates(
+            session=session,
+            outer_ctx=outer_ctx,
+            chain_id=chain_id,
+            registry_addr=registry_addr,
+            callee_selector=callee_selector,
+            call_args=call_args,
+        )
+        if materialized is not None:
+            return materialized
+        return CapabilityExpr.external_check_only(
+            ExternalCheck(
+                target_address=registry_addr,
+                target_call_selector=callee_selector,
+                extra={
+                    "callee_signature": callee_signature,
+                    "basis": ["delegated_check_not_materialized"],
+                },
+            )
+        )
+    return resolved
+
+
+def _inline_result_needs_materialization(cap: CapabilityExpr) -> bool:
+    if cap.kind == "finite_set":
+        return not cap.members and cap.membership_quality != "exact"
+    return cap.kind not in {"finite_set", "threshold_group", "signature_witness"}
+
+
+def _materialize_external_check_from_candidates(
+    *,
+    session: Any,
+    outer_ctx: Any,
+    chain_id: int,
+    registry_addr: str,
+    callee_selector: str | None,
+    call_args: list[dict[str, Any]],
+) -> CapabilityExpr | None:
+    from services.resolution.external_check_materializer import materialize_external_check_from_events
+
+    try:
+        return materialize_external_check_from_events(
+            session=session,
+            rpc_url=getattr(outer_ctx, "rpc_url", None),
+            chain_id=chain_id,
+            checker_address=registry_addr,
+            checker_selector=callee_selector,
+            call_args=call_args,
+            block=getattr(outer_ctx, "block", None),
+        )
+    except Exception:
+        return None
 
 
 def _callee_argument_operands(
@@ -562,6 +682,77 @@ def _bind_callee_parameters(tree: PredicateTree, call_args: list[dict[str, Any]]
     return cast(PredicateTree, bound) if isinstance(bound, dict) else tree
 
 
+def _normalize_operand_for_call_arg(
+    operand: dict[str, Any],
+    frame: Any,
+    ctx: EvaluationContext,
+) -> dict[str, Any]:
+    source = operand.get("source")
+    if source in _CALLER_SOURCES:
+        return {"source": "root_caller"}
+    if source == "self_address":
+        value = getattr(frame, "current_address_this", None) or getattr(frame, "executing_contract_address", None)
+        if isinstance(value, str) and value.startswith("0x"):
+            return {"source": "constant", "constant_value": value.lower()}
+    if source == "computed" and operand.get("computed_kind") == "msg.sig":
+        selector = getattr(frame, "current_msg_sig", None) or getattr(frame, "current_function_selector", None)
+        if isinstance(selector, str) and selector.startswith("0x"):
+            return {"source": "constant", "constant_value": selector.lower()}
+    if source == "parameter":
+        bound = _bound_parameter_operand(operand, frame)
+        if bound is not None:
+            return _normalize_operand_for_call_arg(bound, frame, ctx)
+    if source == "state_variable":
+        name = operand.get("state_variable_name")
+        value = ctx.state_var_values.get(name) if isinstance(name, str) else None
+        if isinstance(value, str) and value.startswith("0x") and len(value) in {42, 66}:
+            return {"source": "constant", "constant_value": value.lower()}
+    return deepcopy(operand)
+
+
+def _normalize_tree_for_frame(tree: PredicateTree, frame: Any) -> PredicateTree:
+    normalized = _normalize_value_for_frame(deepcopy(tree), frame)
+    return cast(PredicateTree, normalized) if isinstance(normalized, dict) else tree
+
+
+def _normalize_value_for_frame(value: Any, frame: Any) -> Any:
+    if isinstance(value, list):
+        return [_normalize_value_for_frame(item, frame) for item in value]
+    if not isinstance(value, dict):
+        return value
+
+    source = value.get("source")
+    if source == "msg_sender":
+        sender = getattr(frame, "current_msg_sender", None)
+        if isinstance(sender, str) and sender.startswith("0x"):
+            return {"source": "constant", "constant_value": sender.lower()}
+    if source == "self_address":
+        address_this = getattr(frame, "current_address_this", None) or getattr(
+            frame, "executing_contract_address", None
+        )
+        if isinstance(address_this, str) and address_this.startswith("0x"):
+            return {"source": "constant", "constant_value": address_this.lower()}
+    if source == "computed" and value.get("computed_kind") == "msg.sig":
+        selector = getattr(frame, "current_msg_sig", None) or getattr(frame, "current_function_selector", None)
+        if isinstance(selector, str) and selector.startswith("0x"):
+            return {"source": "constant", "constant_value": selector.lower()}
+    if source == "parameter":
+        bound = _bound_parameter_operand(value, frame)
+        if bound is not None:
+            return _normalize_value_for_frame(bound, frame)
+
+    return {k: _normalize_value_for_frame(v, frame) for k, v in value.items()}
+
+
+def _bound_parameter_operand(operand: dict[str, Any], frame: Any) -> dict[str, Any] | None:
+    idx = operand.get("parameter_index")
+    bound_params = getattr(frame, "bound_parameters", ()) or ()
+    if isinstance(idx, int) and 0 <= idx < len(bound_params):
+        bound = bound_params[idx]
+        return deepcopy(bound) if isinstance(bound, dict) else None
+    return None
+
+
 def _bind_value(value: Any, call_args: list[dict[str, Any]]) -> Any:
     if isinstance(value, list):
         return [_bind_value(item, call_args) for item in value]
@@ -592,7 +783,7 @@ def _promote_bound_caller_leaf(leaf: dict[str, Any]) -> None:
 
 
 def _is_caller_source(item: dict[str, Any]) -> bool:
-    return item.get("source") in {"msg_sender", "tx_origin", "signature_recovery"}
+    return item.get("source") in _CALLER_SOURCES
 
 
 def _tree_for_signature_or_selector(

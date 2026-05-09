@@ -200,6 +200,15 @@ def test_union_idempotent():
     assert out.members == a.members
 
 
+def test_union_identical_conditionals_collapses():
+    cond = Condition(kind="business", description="same guard")
+    a = CapabilityExpr.conditional_universal(cond)
+    b = CapabilityExpr.conditional_universal(cond)
+    out = union(a, b)
+    assert out.kind == "conditional_universal"
+    assert out.conditions == [cond]
+
+
 # ---------------------------------------------------------------------------
 # Union — cofinite_blacklist intersects
 # ---------------------------------------------------------------------------

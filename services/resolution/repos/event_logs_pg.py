@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 from db.models import IndexedEventCursor, IndexedEventLog
 from services.resolution.adapters import EnumerationResult
 
-_CALLER_SOURCES = {"msg_sender", "tx_origin", "signature_recovery"}
+_CALLER_SOURCES = {"msg_sender", "tx_origin", "signature_recovery", "root_caller"}
 
 
 class PostgresEventLogRepo:
@@ -245,6 +245,8 @@ def _normalize_word(raw: Any) -> str | None:
     if not value.startswith("0x"):
         return None
     body = value[2:]
+    if len(body) == 8:
+        return "0x" + body.ljust(64, "0")
     if len(body) == 40:
         return "0x" + body.rjust(64, "0")
     if len(body) == 64:

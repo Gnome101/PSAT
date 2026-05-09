@@ -17,6 +17,7 @@ from ..capabilities import CapabilityExpr, Confidence
 # Convenience re-export for adapters that need to construct caps.
 __all__ = [
     "AdapterRegistry",
+    "CallFrame",
     "EnumerationResult",
     "EventLogRepo",
     "EvaluationContext",
@@ -49,6 +50,46 @@ class EnumerationResult:
     confidence: Confidence = "enumerable"
     partial_reason: str | None = None
     last_indexed_block: int | None = None
+
+
+@dataclass(frozen=True)
+class CallFrame:
+    """Execution frame for recursive predicate evaluation.
+
+    ``protected_contract_address`` is the root contract whose
+    function we are resolving. ``executing_contract_address`` is the
+    contract whose predicate tree is currently being evaluated.
+    Those differ when a guarded function delegates authorization to
+    an external checker.
+    """
+
+    protected_contract_address: str | None = None
+    executing_contract_address: str | None = None
+    current_function_signature: str | None = None
+    current_function_selector: str | None = None
+    current_msg_sender: str | None = None
+    current_address_this: str | None = None
+    current_msg_sig: str | None = None
+    bound_parameters: tuple[dict[str, Any], ...] = field(default_factory=tuple)
+
+    @classmethod
+    def root(
+        cls,
+        *,
+        contract_address: str | None,
+        function_signature: str | None,
+        function_selector: str | None,
+    ) -> "CallFrame":
+        normalized = contract_address.lower() if isinstance(contract_address, str) else None
+        return cls(
+            protected_contract_address=normalized,
+            executing_contract_address=normalized,
+            current_function_signature=function_signature,
+            current_function_selector=function_selector,
+            current_msg_sender=None,
+            current_address_this=normalized,
+            current_msg_sig=function_selector,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -118,6 +159,7 @@ class EvaluationContext:
     # encountering an already-visited entry short-circuits to
     # external_check_only so a malformed dep graph can't loop.
     evaluation_stack: set[tuple[int, str, str]] = field(default_factory=set)
+    call_frame: CallFrame | None = None
     # Free-form metadata bag for adapter-specific state; avoid using
     # for general-purpose data.
     meta: dict[str, Any] = field(default_factory=dict)

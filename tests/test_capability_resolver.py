@@ -109,6 +109,10 @@ def _address_topic(address: str) -> str:
     return "0x" + address.lower()[2:].rjust(64, "0")
 
 
+def _bytes4_topic(selector: str) -> str:
+    return "0x" + selector.lower()[2:].ljust(64, "0")
+
+
 @requires_postgres
 def test_resolve_returns_none_when_no_completed_job(session):
     from services.resolution.capability_resolver import resolve_contract_capabilities
@@ -540,9 +544,16 @@ def test_external_authority_inlining_follows_proxy_to_impl_predicate_trees(sessi
                     "kind": "external_bool",
                     "operator": "truthy",
                     "authority_role": "delegated_authority",
-                    "operands": [{"source": "msg_sender"}],
+                    "operands": [
+                        {"source": "constant", "constant_value": role_const_hex},
+                        {"source": "msg_sender"},
+                    ],
                     "set_descriptor": {
                         "kind": "external_set",
+                        "key_sources": [
+                            {"source": "constant", "constant_value": role_const_hex},
+                            {"source": "msg_sender"},
+                        ],
                         "authority_contract": {
                             "address_source": {
                                 "source": "state_variable",
@@ -594,12 +605,14 @@ def test_external_authority_inlining_follows_proxy_to_impl_predicate_trees(sessi
                     "kind": "membership",
                     "operator": "truthy",
                     "authority_role": "caller_authority",
-                    "operands": [{"source": "msg_sender"}],
+                    "operands": [
+                        {"source": "parameter", "parameter_index": 1, "parameter_name": "account"},
+                    ],
                     "set_descriptor": {
                         "kind": "mapping_membership",
                         "key_sources": [
-                            {"source": "constant", "constant_value": role_const_hex},
-                            {"source": "msg_sender"},
+                            {"source": "parameter", "parameter_index": 0, "parameter_name": "role"},
+                            {"source": "parameter", "parameter_index": 1, "parameter_name": "account"},
                         ],
                         "storage_var": "_roles",
                         "enumeration_hint": [
@@ -865,6 +878,147 @@ def test_external_authority_inlining_binds_msg_sender_argument(session):
     cap = out["upgradeTo(address)"]
     assert cap["kind"] == "finite_set"
     assert cap.get("members") == [owner]
+
+
+@requires_postgres
+def test_external_authority_inlining_uses_check_trees_and_call_frame(session):
+    from eth_utils.crypto import keccak
+
+    from db.models import Contract, ControllerValue, IndexedEventCursor, IndexedEventLog, Protocol
+    from services.resolution.capability_resolver import resolve_contract_capabilities
+
+    target_addr = "0x" + uuid.uuid4().hex[:8] + "a4" * 16
+    registry_addr = "0x" + uuid.uuid4().hex[:8] + "b5" * 16
+    member = "0x" + "88" * 20
+    guarded_selector = "0x" + keccak(text="guarded()").hex()[:8]
+    topic0 = "0x" + "44" * 32
+
+    proto = Protocol(name=f"capres_check_tree_{uuid.uuid4().hex[:8]}")
+    session.add(proto)
+    session.flush()
+
+    target_artifact = {
+        "schema_version": "semantic",
+        "contract_name": "Protected",
+        "trees": {
+            "guarded()": {
+                "op": "LEAF",
+                "leaf": {
+                    "kind": "external_bool",
+                    "operator": "truthy",
+                    "authority_role": "delegated_authority",
+                    "operands": [
+                        {"source": "msg_sender"},
+                        {"source": "self_address"},
+                        {"source": "computed", "computed_kind": "msg.sig"},
+                    ],
+                    "set_descriptor": {
+                        "kind": "external_set",
+                        "authority_contract": {
+                            "address_source": {
+                                "source": "state_variable",
+                                "state_variable_name": "authority",
+                            }
+                        },
+                        "callee_signature": "allowed(address,address,bytes4)",
+                        "callee_selector": "0x77777777",
+                    },
+                    "references_msg_sender": True,
+                    "parameter_indices": [],
+                    "expression": "authority.allowed(msg.sender,address(this),msg.sig)",
+                    "basis": [],
+                },
+            }
+        },
+    }
+    target_job = _seed_job_with_artifact(session, address=target_addr, predicate_trees=target_artifact)
+    target_contract = Contract(address=target_addr, chain="ethereum", protocol_id=proto.id, job_id=target_job.id)
+    session.add(target_contract)
+    session.flush()
+    session.add(
+        ControllerValue(
+            contract_id=target_contract.id,
+            controller_id="external_contract:authority",
+            value=registry_addr,
+            resolved_type="contract",
+            source="state_variable",
+        )
+    )
+
+    registry_artifact = {
+        "schema_version": "semantic",
+        "contract_name": "RenamedAuthority",
+        "trees": {},
+        "check_trees": {
+            "allowed(address,address,bytes4)": {
+                "op": "LEAF",
+                "leaf": {
+                    "kind": "membership",
+                    "operator": "truthy",
+                    "authority_role": "business",
+                    "operands": [
+                        {"source": "parameter", "parameter_index": 1},
+                        {"source": "parameter", "parameter_index": 2},
+                        {"source": "parameter", "parameter_index": 0},
+                    ],
+                    "set_descriptor": {
+                        "kind": "mapping_membership",
+                        "key_sources": [
+                            {"source": "parameter", "parameter_index": 1},
+                            {"source": "parameter", "parameter_index": 2},
+                            {"source": "parameter", "parameter_index": 0},
+                        ],
+                        "storage_var": "can",
+                        "enumeration_hint": [
+                            {
+                                "event_address": registry_addr,
+                                "topic0": topic0,
+                                "topics_to_keys": {1: 0, 2: 1, 3: 2},
+                                "data_to_keys": {},
+                                "direction": "add",
+                            }
+                        ],
+                    },
+                    "references_msg_sender": False,
+                    "parameter_indices": [0, 1, 2],
+                    "expression": "can[target][sig][user]",
+                    "basis": [],
+                },
+            }
+        },
+    }
+    _seed_job_with_artifact(session, address=registry_addr, predicate_trees=registry_artifact)
+
+    session.add(
+        IndexedEventLog(
+            chain_id=1,
+            event_address=registry_addr,
+            topic0=topic0,
+            tx_hash=b"\x84" * 32,
+            log_index=0,
+            block_number=100,
+            block_hash=b"\x85" * 32,
+            transaction_index=0,
+            topics=[topic0, _address_topic(target_addr), _bytes4_topic(guarded_selector), _address_topic(member)],
+            data_words=[],
+        )
+    )
+    session.add(
+        IndexedEventCursor(
+            chain_id=1,
+            event_address=registry_addr,
+            topic0=topic0,
+            last_indexed_block=200,
+            last_indexed_block_hash=b"\x86" * 32,
+        )
+    )
+    session.commit()
+
+    out = resolve_contract_capabilities(session, address=target_addr, chain_id=1, job_id=target_job.id)
+    assert out is not None
+    cap = out["guarded()"]
+    assert cap["kind"] == "finite_set"
+    assert cap.get("members") == [member]
 
 
 @requires_postgres

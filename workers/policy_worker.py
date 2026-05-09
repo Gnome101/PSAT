@@ -25,6 +25,8 @@ from schemas.control_tracking import ControlSnapshot
 from schemas.effective_permissions import PrincipalResolution
 from services.policy import build_effective_permissions, build_principal_labels
 from services.policy.effective_permissions_writer import write_effective_function_rows
+from services.policy.principal_history import build_principal_history
+from services.resolution.capability_resolver import _load_state_var_values
 from services.resolution.recursive import LoadedArtifacts, resolve_control_graph
 from utils.concurrency import parallel_map
 from utils.logging import record_degraded
@@ -34,6 +36,7 @@ logger = logging.getLogger("workers.policy_worker")
 
 DEFAULT_RPC_URL = os.getenv("ETH_RPC", "https://ethereum-rpc.publicnode.com")
 RECURSION_MAX_DEPTH = int(os.getenv("PSAT_RECURSION_MAX_DEPTH", "6"))
+CHAIN_IDS = {"ethereum": 1, "mainnet": 1}
 
 
 def _root_artifacts(
@@ -354,6 +357,48 @@ class PolicyWorker(BaseWorker):
             session.commit()
 
         store_artifact(session, job.id, "effective_permissions", data=ep_data)
+        if contract_row and isinstance(predicate_trees, dict):
+            job_chain = job.request.get("chain") if isinstance(job.request, dict) else None
+            chain_id = CHAIN_IDS.get(str(job_chain or "ethereum").lower(), 1)
+            try:
+                state_var_values = _load_state_var_values(
+                    session,
+                    contract_row.address,
+                    job_id=job.id,
+                    chain=job_chain if isinstance(job_chain, str) else None,
+                )
+                principal_history = build_principal_history(
+                    contract_address=contract_row.address,
+                    chain_id=chain_id,
+                    predicate_trees=predicate_trees,
+                    state_var_values=state_var_values,
+                )
+            except Exception as exc:
+                record_degraded(
+                    phase="principal_history",
+                    exc=exc,
+                    context={"job_id": str(job.id), "address": contract_row.address},
+                )
+                logger.warning(
+                    "principal history skipped for job %s address=%s: %s",
+                    job.id,
+                    contract_row.address,
+                    exc,
+                    extra={"exc_type": type(exc).__name__},
+                )
+                principal_history = {
+                    "schema_version": "principal_history.v1",
+                    "contract_address": contract_row.address.lower(),
+                    "chain_id": chain_id,
+                    "status": "error",
+                    "reason": str(exc),
+                    "sources": [],
+                    "role_membership": [],
+                    "capability_roles": [],
+                    "function_permissions": [],
+                    "public_capabilities": [],
+                }
+            store_artifact(session, job.id, "principal_history", data=principal_history)
 
         logger.info(
             "Policy stage effective permissions complete for job %s address=%s name=%s",

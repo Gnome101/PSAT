@@ -230,11 +230,12 @@ def _bulk_insert_logs(
 
 def _descriptors_from_artifact(artifact: dict[str, Any]) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
-    trees = artifact.get("trees")
-    if not isinstance(trees, dict):
-        return out
-    for tree in trees.values():
-        out.extend(_walk_descriptors(tree))
+    for key in ("trees", "check_trees"):
+        trees = artifact.get(key)
+        if not isinstance(trees, dict):
+            continue
+        for tree in trees.values():
+            out.extend(_walk_descriptors(tree))
     return out
 
 

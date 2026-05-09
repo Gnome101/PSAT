@@ -8,6 +8,7 @@ from __future__ import annotations
 import sys
 import textwrap
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -341,3 +342,153 @@ def test_evaluator_dispatches_on_unsupported_first():
     cap = evaluate_tree(tree)  # type: ignore[arg-type]
     assert cap.kind == "unsupported"
     assert cap.unsupported_reason == "test_unsupported"
+
+
+def test_zero_address_equality_is_empty_principal_set():
+    tree = {
+        "op": "LEAF",
+        "leaf": {
+            "kind": "equality",
+            "operator": "eq",
+            "authority_role": "caller_authority",
+            "operands": [
+                {"source": "msg_sender"},
+                {"source": "state_variable", "state_variable_name": "owner"},
+            ],
+            "references_msg_sender": True,
+            "parameter_indices": [],
+            "expression": "msg.sender == owner",
+            "basis": [],
+        },
+    }
+    cap = evaluate_tree(tree, EvaluationContext(state_var_values={"owner": "0x" + "0" * 40}))  # type: ignore[arg-type]
+    assert cap.kind == "finite_set"
+    assert cap.members == []
+    assert cap.membership_quality == "exact"
+
+
+def test_delegated_check_conditional_inline_falls_back_to_materializer(monkeypatch):
+    from eth_utils.crypto import keccak
+
+    import db.queue as queue_mod
+    import services.resolution.capability_resolver as resolver_mod
+    import services.resolution.external_check_materializer as materializer_mod
+    from services.resolution.adapters import AdapterRegistry, CallFrame
+    from services.resolution.adapters import EvaluationContext as ResolverContext
+    from services.resolution.capabilities import CapabilityExpr
+    from services.resolution.predicate_evaluator import evaluate_tree_with_registry
+
+    target_addr = "0x" + "11" * 20
+    authority_addr = "0x" + "22" * 20
+    member = "0x" + "33" * 20
+    selector = "0x" + keccak(text="allowAll(address)").hex()[:8]
+
+    target_tree = {
+        "op": "LEAF",
+        "leaf": {
+            "kind": "external_bool",
+            "operator": "truthy",
+            "authority_role": "delegated_authority",
+            "operands": [
+                {"source": "msg_sender"},
+                {"source": "self_address"},
+                {"source": "computed", "computed_kind": "msg.sig"},
+            ],
+            "set_descriptor": {
+                "kind": "external_set",
+                "authority_contract": {
+                    "address_source": {"source": "state_variable", "state_variable_name": "authority"}
+                },
+                "callee_signature": "allowed(address,address,bytes4)",
+                "callee_selector": "0x77777777",
+            },
+            "references_msg_sender": True,
+            "parameter_indices": [],
+            "expression": "authority.allowed(msg.sender,address(this),msg.sig)",
+            "basis": [],
+        },
+    }
+    authority_artifact = {
+        "schema_version": "semantic",
+        "contract_name": "RenamedAuthority",
+        "trees": {},
+        "check_trees": {
+            "allowed(address,address,bytes4)": {
+                "op": "LEAF",
+                "leaf": {
+                    "kind": "membership",
+                    "operator": "truthy",
+                    "authority_role": "business",
+                    "operands": [
+                        {"source": "parameter", "parameter_index": 1},
+                        {"source": "parameter", "parameter_index": 2},
+                    ],
+                    "set_descriptor": {
+                        "kind": "mapping_membership",
+                        "key_sources": [
+                            {"source": "parameter", "parameter_index": 1},
+                            {"source": "parameter", "parameter_index": 2},
+                        ],
+                        "storage_var": "isCapabilityPublic",
+                    },
+                    "references_msg_sender": False,
+                    "parameter_indices": [1, 2],
+                    "expression": "isCapabilityPublic[target][sig]",
+                    "basis": [],
+                },
+            }
+        },
+    }
+
+    job = SimpleNamespace(id="authority-job", address=authority_addr)
+    monkeypatch.setattr(
+        resolver_mod,
+        "find_analysis_job_for_address",
+        lambda *_args, **_kwargs: SimpleNamespace(analysis_job=job, runtime_job=job),
+    )
+    monkeypatch.setattr(resolver_mod, "_load_state_var_values", lambda *_args, **_kwargs: {})
+    monkeypatch.setattr(queue_mod, "get_artifact", lambda *_args, **_kwargs: authority_artifact)
+
+    materialize_calls = []
+
+    def fake_materialize(**kwargs):
+        materialize_calls.append(kwargs)
+        return CapabilityExpr.finite_set(
+            [member],
+            quality="lower_bound",
+            confidence="partial",
+            trace=[{"step": "external_check_materialized"}],
+        )
+
+    monkeypatch.setattr(materializer_mod, "materialize_external_check_from_events", fake_materialize)
+
+    ctx = ResolverContext(
+        chain_id=1,
+        contract_address=target_addr,
+        rpc_url="http://rpc",
+        state_var_values={"authority": authority_addr},
+        session=object(),
+        call_frame=CallFrame.root(
+            contract_address=target_addr,
+            function_signature="allowAll(address)",
+            function_selector=selector,
+        ),
+    )
+
+    cap = evaluate_tree_with_registry(target_tree, AdapterRegistry(), ctx)  # type: ignore[arg-type]
+
+    assert cap.kind == "finite_set"
+    assert cap.members == [member]
+    assert materialize_calls
+    call_args = materialize_calls[0]["call_args"]
+    assert call_args == [
+        {"source": "root_caller"},
+        {"source": "constant", "constant_value": target_addr},
+        {"source": "constant", "constant_value": selector},
+    ]
+
+    monkeypatch.setattr(materializer_mod, "materialize_external_check_from_events", lambda **_kwargs: None)
+    unresolved = evaluate_tree_with_registry(target_tree, AdapterRegistry(), ctx)  # type: ignore[arg-type]
+    assert unresolved.kind == "external_check_only"
+    assert unresolved.check is not None
+    assert unresolved.check.extra["basis"] == ["delegated_check_not_materialized"]

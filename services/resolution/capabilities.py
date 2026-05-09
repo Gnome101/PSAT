@@ -109,6 +109,7 @@ class CapabilityExpr:
     membership_quality: MembershipQuality = "exact"
     confidence: Confidence = "enumerable"
     last_indexed_block: int | None = None
+    trace: list[dict[str, Any]] = field(default_factory=list)
 
     # ------------------------------------------------------------------
     # Factories
@@ -123,6 +124,7 @@ class CapabilityExpr:
         confidence: Confidence = "enumerable",
         conditions: list[Condition] | None = None,
         last_indexed_block: int | None = None,
+        trace: list[dict[str, Any]] | None = None,
     ) -> "CapabilityExpr":
         return cls(
             kind="finite_set",
@@ -131,6 +133,7 @@ class CapabilityExpr:
             confidence=confidence,
             conditions=list(conditions or []),
             last_indexed_block=last_indexed_block,
+            trace=list(trace or []),
         )
 
     @classmethod
@@ -285,6 +288,9 @@ def union(a: CapabilityExpr, b: CapabilityExpr) -> CapabilityExpr:
     if a.kind == "cofinite_blacklist" and b.kind == "finite_set":
         return _union_finite_blacklist(b, a)
 
+    if a.kind == "conditional_universal" and b.kind == "conditional_universal" and a.conditions == b.conditions:
+        return a
+
     # X ∪ conditional_universal — structural OR (anyone, with c) is
     # not the same as X.
     return CapabilityExpr.structural_or([a, b])
@@ -344,12 +350,14 @@ def _intersect_finite(a: CapabilityExpr, b: CapabilityExpr) -> CapabilityExpr:
         return CapabilityExpr.structural_and([a, b])
     confidence = _meet_confidence(a.confidence, b.confidence)
     conditions = list(a.conditions) + list(b.conditions)
-    return CapabilityExpr.finite_set(
+    cap = CapabilityExpr.finite_set(
         common,
         quality=quality,
         confidence=confidence,
         conditions=conditions,
     )
+    cap.trace = list(a.trace) + list(b.trace)
+    return cap
 
 
 def _union_finite(a: CapabilityExpr, b: CapabilityExpr) -> CapabilityExpr:
@@ -361,12 +369,14 @@ def _union_finite(a: CapabilityExpr, b: CapabilityExpr) -> CapabilityExpr:
         return CapabilityExpr.structural_or([a, b])
     confidence = _meet_confidence(a.confidence, b.confidence)
     conditions = list(a.conditions) + list(b.conditions)
-    return CapabilityExpr.finite_set(
+    cap = CapabilityExpr.finite_set(
         merged,
         quality=quality,
         confidence=confidence,
         conditions=conditions,
     )
+    cap.trace = list(a.trace) + list(b.trace)
+    return cap
 
 
 def _intersect_finite_blacklist(finite: CapabilityExpr, blacklist: CapabilityExpr) -> CapabilityExpr:
@@ -374,12 +384,14 @@ def _intersect_finite_blacklist(finite: CapabilityExpr, blacklist: CapabilityExp
     members_set = set(finite.members or [])
     bl = set(blacklist.blacklist or [])
     out = _canon_addresses(list(members_set - bl))
-    return CapabilityExpr.finite_set(
+    cap = CapabilityExpr.finite_set(
         out,
         quality=finite.membership_quality,
         confidence=_meet_confidence(finite.confidence, blacklist.confidence),
         conditions=list(finite.conditions) + list(blacklist.conditions),
     )
+    cap.trace = list(finite.trace) + list(blacklist.trace)
+    return cap
 
 
 def _union_finite_blacklist(finite: CapabilityExpr, blacklist: CapabilityExpr) -> CapabilityExpr:
@@ -456,4 +468,5 @@ def _attach_conditions(cap: CapabilityExpr, conditions: list[Condition]) -> Capa
         membership_quality=cap.membership_quality,
         confidence=cap.confidence,
         last_indexed_block=cap.last_indexed_block,
+        trace=list(cap.trace),
     )
