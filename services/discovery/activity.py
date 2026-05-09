@@ -102,6 +102,7 @@ def _primary_chain(contract: dict[str, Any]) -> str:
 def enrich_with_activity(
     contracts: list[dict[str, Any]],
     debug: bool = False,
+    max_fetches: int = 0,
 ) -> list[dict[str, Any]]:
     """Add activity metrics to each contract and re-sort by blended rank score.
 
@@ -115,12 +116,14 @@ def enrich_with_activity(
 
     _debug_log(debug, f"Fetching on-chain activity for {len(contracts)} contract(s)")
 
-    for contract in contracts:
+    for idx, contract in enumerate(contracts):
         address = contract["address"]
         chain = _primary_chain(contract)
         chain_id = CHAIN_IDS.get(chain, CHAIN_IDS["ethereum"])
 
-        last_ts = _fetch_last_active_ts(address, chain_id=chain_id, debug=debug)
+        last_ts = None
+        if max_fetches <= 0 or idx < max_fetches:
+            last_ts = _fetch_last_active_ts(address, chain_id=chain_id, debug=debug)
         score = _activity_score(last_ts)
 
         contract["activity"] = {

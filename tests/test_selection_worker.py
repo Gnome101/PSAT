@@ -317,6 +317,42 @@ def test_selection_ranks_across_sources_and_queues_top_n(db_session, worker, see
     assert len(summary["child_jobs"]) == 3
 
 
+@requires_postgres
+def test_selection_activity_candidate_limit_caps_activity_fetches(db_session, worker, seed_protocol, monkeypatch):
+    """PR previews can cap activity lookups without shrinking the ranked set."""
+    from db.models import Job
+    from services.discovery import activity as activity_module
+
+    protocol_id, company, addr = seed_protocol
+    calls: list[str] = []
+
+    def fake_etherscan_get(module, action, **params):
+        calls.append(str(params.get("address", "")).lower())
+        return {"result": []}
+
+    monkeypatch.setenv("PSAT_SELECTION_ACTIVITY_CANDIDATE_LIMIT", "3")
+    monkeypatch.setattr(activity_module.etherscan, "get", fake_etherscan_get)
+
+    for i in range(10):
+        _add_contract(
+            db_session,
+            protocol_id=protocol_id,
+            address=addr(),
+            discovery_sources="inventory",
+            confidence=0.95 - (i * 0.01),
+        )
+
+    job = _add_selection_job(db_session, protocol_id=protocol_id, company=company, analyze_limit=5)
+    with pytest.raises(JobHandledDirectly):
+        worker.process(db_session, job)
+
+    children = (
+        db_session.execute(select(Job).where(Job.request["parent_job_id"].as_string() == str(job.id))).scalars().all()
+    )
+    assert len(calls) == 3
+    assert len(children) == 5
+
+
 # ---------------------------------------------------------------------------
 # 2. Confidence filter: everything below _MIN_CONFIDENCE_THRESHOLD is skipped
 # ---------------------------------------------------------------------------

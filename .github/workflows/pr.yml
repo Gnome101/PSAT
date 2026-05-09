@@ -88,6 +88,7 @@ jobs:
             TAVILY_API_KEY="${{ secrets.TAVILY_API_KEY }}" \
             OPEN_ROUTER_KEY="${{ secrets.OPEN_ROUTER_KEY }}" \
             GITHUB_TOKEN="${{ secrets.PROTOCOL_GITHUB_TOKEN }}" \
+            PSAT_SELECTION_ACTIVITY_CANDIDATE_LIMIT="25" \
             ARTIFACT_STORAGE_ENDPOINT="${{ secrets.ARTIFACT_STORAGE_ENDPOINT }}" \
             ARTIFACT_STORAGE_BUCKET="${{ secrets.ARTIFACT_STORAGE_BUCKET }}" \
             ARTIFACT_STORAGE_ACCESS_KEY="${{ secrets.ARTIFACT_STORAGE_ACCESS_KEY }}" \

@@ -44,6 +44,18 @@ logger = logging.getLogger("workers.selection_worker")
 # Bypass the sibling-readiness gate after this many seconds queued (default 30 min) so a wedged crawl doesn't strand the
 # protocol.
 _STUCK_SELECTION_TIMEOUT = int(os.getenv("PSAT_SELECTION_STUCK_TIMEOUT", "1800"))
+_ACTIVITY_CANDIDATE_LIMIT_ENV = "PSAT_SELECTION_ACTIVITY_CANDIDATE_LIMIT"
+
+
+def _activity_candidate_limit() -> int:
+    raw = os.getenv(_ACTIVITY_CANDIDATE_LIMIT_ENV, "0").strip()
+    if not raw:
+        return 0
+    try:
+        return max(0, int(raw))
+    except ValueError:
+        logger.warning("Ignoring invalid %s=%r", _ACTIVITY_CANDIDATE_LIMIT_ENV, raw)
+        return 0
 
 
 def _existing_in_same_cascade(session: Session, addr: str, chain: str | None, root_job_id: str) -> bool:
@@ -203,7 +215,7 @@ class SelectionWorker(BaseWorker):
             self._finish(session, job, ranked=[], child_ids=[])
             return
 
-        ranked_dicts = rank_contract_rows(eligible_rows)
+        ranked_dicts = rank_contract_rows(eligible_rows, activity_candidate_limit=_activity_candidate_limit())
 
         # Persist rank_score onto the row so UI listings see the same ordering the selector picked.
         by_key: dict[tuple[str, str | None], dict] = {(d["__row_address"], d["__row_chain"]): d for d in ranked_dicts}
