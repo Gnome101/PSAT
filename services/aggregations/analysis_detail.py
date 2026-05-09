@@ -95,6 +95,7 @@ def build_analysis_detail(session: Session, run_name: str) -> dict[str, Any] | N
         "resolved_control_graph",
         "dependency_graph_viz",
         "upgrade_history",
+        "principal_history",
         # Raw predicate trees per externally-callable function. Consumers
         # can read this directly or fetch resolved semantic capabilities
         # below.
@@ -357,6 +358,7 @@ def _inherit_from_impl(session: Session, payload: dict[str, Any], job: Job, impl
         "resolved_control_graph",
         "effective_permissions",
         "principal_labels",
+        "principal_history",
     ):
         if fallback_name not in payload:
             val = impl_artifacts.get(fallback_name)
