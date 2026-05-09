@@ -99,6 +99,61 @@ def test_bool_returning_authority_check_goes_to_check_trees(tmp_path):
     assert leaves and leaves[0]["kind"] == "membership"
 
 
+def test_bool_returning_checker_keeps_literal_true_branch(tmp_path):
+    """Checker functions with public fast paths must preserve the
+    literal-true branch as a predicate over the preceding if condition."""
+    sl = _compile(
+        tmp_path,
+        """
+        pragma solidity ^0.8.19;
+        contract C {
+            mapping(address => mapping(bytes4 => bool)) public publicCapability;
+            mapping(address => bool) public users;
+            function canCall(address user, address target, bytes4 sig) external view returns (bool) {
+                if (publicCapability[target][sig]) return true;
+                return users[user];
+            }
+        }
+    """,
+    )
+    artifact = build_predicate_artifacts(_contract(sl))
+    tree = artifact["check_trees"]["canCall(address,address,bytes4)"]
+    assert tree["op"] == "OR"
+    leaves = _leaves(tree)
+    storage_vars = {leaf.get("set_descriptor", {}).get("storage_var") for leaf in leaves}
+    assert "publicCapability" in storage_vars
+    assert "users" in storage_vars
+
+
+def test_guarded_bool_returning_checker_gets_tree_and_check_tree(tmp_path):
+    """A guarded bool checker is both a callable function and a
+    resolver-side authorization provider."""
+    sl = _compile(
+        tmp_path,
+        """
+        pragma solidity ^0.8.19;
+        contract C {
+            address public owner;
+            mapping(address => bool) public users;
+            function canCall(address user) external view returns (bool) {
+                require(msg.sender == owner);
+                return users[user];
+            }
+        }
+    """,
+    )
+    artifact = build_predicate_artifacts(_contract(sl))
+    assert "canCall(address)" in artifact["trees"]
+    assert "canCall(address)" in artifact["check_trees"]
+    guard_exprs = {leaf.get("expression") for leaf in _leaves(artifact["trees"]["canCall(address)"])}
+    return_storage_vars = {
+        leaf.get("set_descriptor", {}).get("storage_var")
+        for leaf in _leaves(artifact["check_trees"]["canCall(address)"])
+    }
+    assert any("owner" in str(expr) for expr in guard_exprs)
+    assert return_storage_vars == {"users"}
+
+
 def test_artifact_omits_internal_functions(tmp_path):
     """Internal/private helpers don't appear at the boundary the
     resolver consumes — only external/public surface."""

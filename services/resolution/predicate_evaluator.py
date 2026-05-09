@@ -204,6 +204,17 @@ def _has_caller_keyed_value_predicate(leaf: LeafPredicate) -> bool:
     return any(k.get("source") in _CALLER_SOURCES for k in keys)
 
 
+def _is_opaque_bool_return_predicate(leaf: LeafPredicate) -> bool:
+    basis = leaf.get("basis") or []
+    if "bool-return predicate" not in basis:
+        return False
+    if leaf.get("set_descriptor"):
+        return False
+    if leaf.get("kind") != "equality":
+        return False
+    return any((op or {}).get("source") in {"computed", "external_call", "top"} for op in leaf.get("operands") or [])
+
+
 def _evaluate_leaf(leaf: LeafPredicate, ctx: EvaluationContext) -> CapabilityExpr:
     # 0. unsupported is structural — check first (round-5 #3 fix).
     if leaf.get("kind") == "unsupported":
@@ -219,6 +230,17 @@ def _evaluate_leaf(leaf: LeafPredicate, ctx: EvaluationContext) -> CapabilityExp
     # otherwise the fallback path produces conditional_universal.
     role = leaf.get("authority_role")
     if role in ("reentrancy", "pause", "business", "time"):
+        if _is_opaque_bool_return_predicate(leaf):
+            return CapabilityExpr.external_check_only(
+                ExternalCheck(
+                    target_address=None,
+                    target_call_selector=None,
+                    extra={
+                        "basis": ["opaque_bool_return_predicate"],
+                        "expression": leaf.get("expression"),
+                    },
+                )
+            )
         if _has_caller_keyed_value_predicate(leaf):
             descriptor = leaf.get("set_descriptor")
             if descriptor is not None:
@@ -467,7 +489,7 @@ def _maybe_inline_cross_contract_call(
         session,
         registry_addr,
         required_artifact="predicate_trees",
-        completed_only=True,
+        completed_only=False,
     )
     if lookup is None:
         return None
@@ -484,7 +506,14 @@ def _maybe_inline_cross_contract_call(
             function_selector=None,
         )
     call_args = [
-        _normalize_operand_for_call_arg(arg, parent_frame, ctx)
+        _normalize_operand_for_call_arg(
+            arg,
+            parent_frame,
+            ctx,
+            callee_contract_address=registry_addr,
+            rpc_url=getattr(outer_ctx, "rpc_url", None),
+            block=getattr(outer_ctx, "block", None),
+        )
         for arg in _callee_argument_operands(
             leaf,
             callee_signature=callee_signature,
@@ -612,7 +641,40 @@ def _maybe_inline_cross_contract_call(
 def _inline_result_needs_materialization(cap: CapabilityExpr) -> bool:
     if cap.kind == "finite_set":
         return not cap.members and cap.membership_quality != "exact"
-    return cap.kind not in {"finite_set", "threshold_group", "signature_witness"}
+    if cap.kind in {"external_check_only", "unsupported"}:
+        return True
+    if cap.kind == "conditional_universal":
+        return _conditional_result_needs_materialization(cap)
+    if cap.kind == "OR":
+        return _or_result_needs_materialization(cap)
+    return False
+
+
+def _conditional_result_needs_materialization(cap: CapabilityExpr) -> bool:
+    for condition in cap.conditions:
+        description = condition.description or ""
+        if description.startswith("return "):
+            return True
+    return False
+
+
+def _or_result_needs_materialization(cap: CapabilityExpr) -> bool:
+    saw_materializable = False
+    for child in cap.children:
+        if child.kind == "finite_set":
+            if child.members:
+                return False
+            if child.membership_quality != "exact":
+                saw_materializable = True
+            continue
+        if child.kind in {"external_check_only", "unsupported"}:
+            saw_materializable = True
+            continue
+        if child.kind == "conditional_universal" and _conditional_result_needs_materialization(child):
+            saw_materializable = True
+            continue
+        return False
+    return saw_materializable
 
 
 def _materialize_external_check_from_candidates(
@@ -686,10 +748,23 @@ def _normalize_operand_for_call_arg(
     operand: dict[str, Any],
     frame: Any,
     ctx: EvaluationContext,
+    *,
+    callee_contract_address: str | None = None,
+    rpc_url: str | None = None,
+    block: int | None = None,
 ) -> dict[str, Any]:
     source = operand.get("source")
     if source in _CALLER_SOURCES:
         return {"source": "root_caller"}
+    if source == "external_call":
+        constant = _resolve_static_external_call_operand(
+            operand,
+            callee_contract_address=callee_contract_address,
+            rpc_url=rpc_url,
+            block=block,
+        )
+        if constant is not None:
+            return constant
     if source == "self_address":
         value = getattr(frame, "current_address_this", None) or getattr(frame, "executing_contract_address", None)
         if isinstance(value, str) and value.startswith("0x"):
@@ -701,13 +776,54 @@ def _normalize_operand_for_call_arg(
     if source == "parameter":
         bound = _bound_parameter_operand(operand, frame)
         if bound is not None:
-            return _normalize_operand_for_call_arg(bound, frame, ctx)
+            return _normalize_operand_for_call_arg(
+                bound,
+                frame,
+                ctx,
+                callee_contract_address=callee_contract_address,
+                rpc_url=rpc_url,
+                block=block,
+            )
     if source == "state_variable":
         name = operand.get("state_variable_name")
         value = ctx.state_var_values.get(name) if isinstance(name, str) else None
         if isinstance(value, str) and value.startswith("0x") and len(value) in {42, 66}:
             return {"source": "constant", "constant_value": value.lower()}
     return deepcopy(operand)
+
+
+def _resolve_static_external_call_operand(
+    operand: dict[str, Any],
+    *,
+    callee_contract_address: str | None,
+    rpc_url: str | None,
+    block: int | None,
+) -> dict[str, Any] | None:
+    signature = operand.get("callee_signature")
+    selector = operand.get("callee_selector")
+    if not isinstance(signature, str) or not signature.endswith("()"):
+        return None
+    if not isinstance(selector, str) or not selector.startswith("0x") or len(selector) != 10:
+        selector = _selector_for_signature(signature)
+    if not selector or not isinstance(callee_contract_address, str) or not callee_contract_address.startswith("0x"):
+        return None
+    if not rpc_url:
+        return None
+    block_tag = hex(block) if isinstance(block, int) else "latest"
+    try:
+        from utils.rpc import rpc_request
+
+        raw = rpc_request(
+            rpc_url,
+            "eth_call",
+            [{"to": callee_contract_address.lower(), "data": selector}, block_tag],
+            retries=1,
+        )
+    except Exception:
+        return None
+    if not isinstance(raw, str) or not raw.startswith("0x") or len(raw) < 66:
+        return None
+    return {"source": "constant", "constant_value": "0x" + raw[-64:].lower()}
 
 
 def _normalize_tree_for_frame(tree: PredicateTree, frame: Any) -> PredicateTree:

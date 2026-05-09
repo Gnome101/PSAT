@@ -367,7 +367,7 @@ def test_zero_address_equality_is_empty_principal_set():
     assert cap.membership_quality == "exact"
 
 
-def test_delegated_check_conditional_inline_falls_back_to_materializer(monkeypatch):
+def test_delegated_check_conditional_inline_preserves_structural_result(monkeypatch):
     from eth_utils.crypto import keccak
 
     import db.queue as queue_mod
@@ -477,18 +477,133 @@ def test_delegated_check_conditional_inline_falls_back_to_materializer(monkeypat
 
     cap = evaluate_tree_with_registry(target_tree, AdapterRegistry(), ctx)  # type: ignore[arg-type]
 
+    assert cap.kind == "conditional_universal"
+    assert cap.conditions
+    assert cap.conditions[0].description == "isCapabilityPublic[target][sig]"
+    assert materialize_calls == []
+
+
+def test_delegated_opaque_checker_materializes_with_zero_arg_getter(monkeypatch):
+    from eth_utils.crypto import keccak
+
+    import db.queue as queue_mod
+    import services.resolution.capability_resolver as resolver_mod
+    import services.resolution.external_check_materializer as materializer_mod
+    import utils.rpc as rpc_mod
+    from services.resolution.adapters import AdapterRegistry, CallFrame
+    from services.resolution.adapters import EvaluationContext as ResolverContext
+    from services.resolution.capabilities import CapabilityExpr
+    from services.resolution.predicate_evaluator import evaluate_tree_with_registry
+
+    target_addr = "0x" + "11" * 20
+    authority_addr = "0x" + "22" * 20
+    member = "0x" + "33" * 20
+    role_word = "0x" + "12" * 32
+    checker_selector = "0x" + keccak(text="hasRole(bytes32,address)").hex()[:8]
+    role_selector = "0x" + keccak(text="PROTOCOL_PAUSER()").hex()[:8]
+    root_selector = "0x" + keccak(text="pause()").hex()[:8]
+
+    target_tree = {
+        "op": "LEAF",
+        "leaf": {
+            "kind": "external_bool",
+            "operator": "truthy",
+            "authority_role": "delegated_authority",
+            "operands": [
+                {
+                    "source": "external_call",
+                    "callee": "PROTOCOL_PAUSER",
+                    "callee_signature": "PROTOCOL_PAUSER()",
+                    "callee_selector": role_selector,
+                },
+                {"source": "msg_sender"},
+            ],
+            "set_descriptor": {
+                "kind": "external_set",
+                "authority_contract": {
+                    "address_source": {"source": "state_variable", "state_variable_name": "authority"}
+                },
+                "callee_signature": "hasRole(bytes32,address)",
+                "callee_selector": checker_selector,
+            },
+            "references_msg_sender": True,
+            "parameter_indices": [],
+            "expression": "authority.hasRole(authority.PROTOCOL_PAUSER(), msg.sender)",
+            "basis": [],
+        },
+    }
+    authority_artifact = {
+        "schema_version": "semantic",
+        "contract_name": "OpaqueRoleRegistry",
+        "trees": {},
+        "check_trees": {
+            "hasRole(bytes32,address)": {
+                "op": "LEAF",
+                "leaf": {
+                    "kind": "equality",
+                    "operator": "truthy",
+                    "authority_role": "business",
+                    "operands": [{"source": "computed", "computed_kind": "sload(uint256)"}],
+                    "expression": "return hasRole(bytes32,address)",
+                    "basis": ["bool-return predicate"],
+                },
+            }
+        },
+    }
+
+    job = SimpleNamespace(id="authority-job", address=authority_addr)
+    monkeypatch.setattr(
+        resolver_mod,
+        "find_analysis_job_for_address",
+        lambda *_args, **_kwargs: SimpleNamespace(analysis_job=job, runtime_job=job),
+    )
+    monkeypatch.setattr(resolver_mod, "_load_state_var_values", lambda *_args, **_kwargs: {})
+    monkeypatch.setattr(queue_mod, "get_artifact", lambda *_args, **_kwargs: authority_artifact)
+
+    rpc_calls = []
+
+    def fake_rpc_request(_rpc_url, method, params, retries=1):
+        rpc_calls.append((method, params, retries))
+        assert method == "eth_call"
+        assert params[0]["to"] == authority_addr
+        assert params[0]["data"] == role_selector
+        return role_word
+
+    monkeypatch.setattr(rpc_mod, "rpc_request", fake_rpc_request)
+
+    materialize_calls = []
+
+    def fake_materialize(**kwargs):
+        materialize_calls.append(kwargs)
+        return CapabilityExpr.finite_set(
+            [member],
+            quality="lower_bound",
+            confidence="partial",
+            trace=[{"step": "external_check_materialized"}],
+        )
+
+    monkeypatch.setattr(materializer_mod, "materialize_external_check_from_events", fake_materialize)
+
+    ctx = ResolverContext(
+        chain_id=1,
+        contract_address=target_addr,
+        rpc_url="http://rpc",
+        state_var_values={"authority": authority_addr},
+        session=object(),
+        call_frame=CallFrame.root(
+            contract_address=target_addr,
+            function_signature="pause()",
+            function_selector=root_selector,
+        ),
+    )
+
+    cap = evaluate_tree_with_registry(target_tree, AdapterRegistry(), ctx)  # type: ignore[arg-type]
+
     assert cap.kind == "finite_set"
     assert cap.members == [member]
+    assert rpc_calls
     assert materialize_calls
-    call_args = materialize_calls[0]["call_args"]
-    assert call_args == [
+    assert materialize_calls[0]["call_args"] == [
+        {"source": "constant", "constant_value": role_word},
         {"source": "root_caller"},
-        {"source": "constant", "constant_value": target_addr},
-        {"source": "constant", "constant_value": selector},
     ]
-
-    monkeypatch.setattr(materializer_mod, "materialize_external_check_from_events", lambda **_kwargs: None)
-    unresolved = evaluate_tree_with_registry(target_tree, AdapterRegistry(), ctx)  # type: ignore[arg-type]
-    assert unresolved.kind == "external_check_only"
-    assert unresolved.check is not None
-    assert unresolved.check.extra["basis"] == ["delegated_check_not_materialized"]

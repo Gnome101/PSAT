@@ -104,7 +104,12 @@ def _rows_for_finite_set(cap_dict: dict[str, Any]) -> list[dict[str, Any]]:
                 "resolved_type": None,
                 "origin": "semantic_capability:finite_set",
                 "principal_type": "controller",
-                "details": {"source": "semantic_predicate_capability_resolver"},
+                "details": {
+                    "source": "semantic_predicate_capability_resolver",
+                    "membership_quality": cap_dict.get("membership_quality"),
+                    "confidence": cap_dict.get("confidence"),
+                    "trace": cap_dict.get("trace") or [],
+                },
             }
         )
     return rows

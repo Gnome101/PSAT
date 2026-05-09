@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import sys
 import uuid
 from pathlib import Path
@@ -14,6 +15,50 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from workers.resolution_worker import ResolutionWorker
+
+_DB_URL = os.environ.get("TEST_DATABASE_URL", os.environ.get("DATABASE_URL", "")) or ""
+
+
+def _can_connect() -> bool:
+    if not _DB_URL:
+        return False
+    try:
+        from sqlalchemy import create_engine, text
+
+        engine = create_engine(_DB_URL)
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+        engine.dispose()
+        return True
+    except Exception:
+        return False
+
+
+requires_postgres = pytest.mark.skipif(not _can_connect(), reason="PostgreSQL not available")
+
+
+@pytest.fixture
+def db_session_for_resolution():
+    if not _can_connect():
+        pytest.skip("PostgreSQL not available")
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import Session
+
+    from db.models import Artifact, Job, JobDependency
+
+    engine = create_engine(_DB_URL)
+    session = Session(engine, expire_on_commit=False)
+    try:
+        yield session
+    finally:
+        session.rollback()
+        session.query(JobDependency).delete()
+        session.query(Artifact).delete()
+        session.query(Job).delete()
+        session.commit()
+        session.close()
+        engine.dispose()
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -737,6 +782,85 @@ class TestQueueDiscoveredContractsParentChainEdgeCases:
 
         assert len(create_calls) == 1
         assert child_ns.company == "GrandCorp"
+
+
+@requires_postgres
+def test_dependency_emission_walks_check_trees(db_session_for_resolution):
+    """Authority providers used only by resolver-side check_trees still
+    need dependency gates."""
+    from sqlalchemy import select
+
+    from db.models import JobDependency, JobStage, JobStatus
+    from db.queue import create_job, store_artifact
+
+    session = db_session_for_resolution
+    provider_addr = "0x" + uuid.uuid4().hex[:8] + "aa" * 16
+    depender_addr = "0x" + uuid.uuid4().hex[:8] + "bb" * 16
+
+    provider_job = create_job(
+        session,
+        {"address": provider_addr, "chain": "ethereum", "name": "Provider"},
+        initial_stage=JobStage.coverage,
+    )
+    provider_job.status = JobStatus.queued
+    session.commit()
+    store_artifact(session, provider_job.id, "effective_permissions", data={"functions": []})
+
+    depender_job = create_job(
+        session,
+        {"address": depender_addr, "chain": "ethereum", "name": "Depender"},
+        initial_stage=JobStage.resolution,
+    )
+    store_artifact(
+        session,
+        depender_job.id,
+        "predicate_trees",
+        data={
+            "schema_version": "semantic",
+            "contract_name": "Depender",
+            "trees": {},
+            "check_trees": {
+                "canCall(address,address,bytes4)": {
+                    "op": "LEAF",
+                    "leaf": {
+                        "kind": "external_bool",
+                        "operator": "truthy",
+                        "authority_role": "delegated_authority",
+                        "operands": [{"source": "msg_sender"}],
+                        "set_descriptor": {
+                            "kind": "external_set",
+                            "authority_contract": {
+                                "address_source": {
+                                    "source": "state_variable",
+                                    "state_variable_name": "authority",
+                                }
+                            },
+                            "callee_signature": "canCall(address,address,bytes4)",
+                        },
+                    },
+                }
+            },
+        },
+    )
+
+    snapshot = {
+        "controller_values": {
+            "external_contract:authority": {
+                "value": provider_addr,
+            }
+        }
+    }
+
+    ResolutionWorker()._emit_dependency_edges_from_predicate_trees(
+        session,
+        cast(Any, depender_job),
+        cast(Any, snapshot),
+        "https://rpc.example",
+    )
+
+    dep = session.execute(select(JobDependency).where(JobDependency.depender_job_id == depender_job.id)).scalar_one()
+    assert dep.provider_address == provider_addr
+    assert dep.status == "satisfied"
 
 
 # ---------------------------------------------------------------------------

@@ -86,7 +86,6 @@ def build_predicate_artifacts_with_pause_info(
             tree = build_predicate_tree(fn)
             if tree is not None:
                 trees[fn.full_name] = tree
-                continue
             check_tree = build_return_predicate_tree(fn)
             if check_tree is not None:
                 check_trees[fn.full_name] = check_tree
@@ -99,15 +98,14 @@ def build_predicate_artifacts_with_pause_info(
     # caller_authority once it sees the full set of writers, and
     # reentrancy/pause analyzers cross-reference state-vars across
     # the contract's functions.
-    all_trees: dict[str, PredicateTree] = {}
-    all_trees.update(trees)
-    all_trees.update(check_trees)
+    all_trees: dict[str, PredicateTree] = {f"tree:{sig}": tree for sig, tree in trees.items()}
+    all_trees.update({f"check:{sig}": tree for sig, tree in check_trees.items()})
     if all_trees:
         apply_writer_gate_pass(contract, all_trees)
         apply_mapping_event_hint_pass(contract, all_trees)
         pause_info = apply_reentrancy_pause_pass(contract, all_trees)
-        trees = {sig: all_trees[sig] for sig in trees}
-        check_trees = {sig: all_trees[sig] for sig in check_trees}
+        trees = {sig: all_trees[f"tree:{sig}"] for sig in trees}
+        check_trees = {sig: all_trees[f"check:{sig}"] for sig in check_trees}
 
     artifact = {
         "schema_version": SCHEMA_VERSION,

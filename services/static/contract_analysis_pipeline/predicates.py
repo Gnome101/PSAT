@@ -168,23 +168,16 @@ def build_return_predicate_tree(function: Any) -> PredicateTree | None:
     engine.run()
     prov = engine.provenance
 
-    children: list[PredicateTree] = []
-    for node, return_value in _return_values(function):
-        literal = _literal_bool(return_value)
-        if literal is False:
-            continue
-        if literal is True:
-            continue
-        gate = RevertGate(
-            kind="assert",
-            condition_value=return_value,
-            polarity="allowed_when_true",
-            node=node,
-            containing_function=function,
-            expression_text=f"return {return_value}",
-            basis=["bool-return predicate"],
-        )
-        children.append(_build_subtree_from_value(return_value, prov, gate, function))
+    base_gate = RevertGate(
+        kind="assert",
+        condition_value=None,
+        polarity="allowed_when_true",
+        node=None,
+        containing_function=function,
+        expression_text=f"return {getattr(function, 'full_name', 'bool')}",
+        basis=["bool-return predicate"],
+    )
+    children = _build_if_else_returns_or_children(function, prov, base_gate)
 
     if not children:
         return None
@@ -203,29 +196,6 @@ def _function_returns_bool(function: Any) -> bool:
     if isinstance(raw_return_type, (list, tuple)):
         return any(str(item) == "bool" for item in raw_return_type)
     return str(raw_return_type) == "bool"
-
-
-def _return_values(function: Any) -> list[tuple[Any, Any]]:
-    out: list[tuple[Any, Any]] = []
-    for node in getattr(function, "nodes", []) or []:
-        for ir in getattr(node, "irs_ssa", None) or getattr(node, "irs", []) or []:
-            if not isinstance(ir, Return):
-                continue
-            for value in getattr(ir, "values", ()) or ():
-                out.append((node, value))
-    return out
-
-
-def _literal_bool(value: Any) -> bool | None:
-    raw = getattr(value, "value", value)
-    if isinstance(raw, bool):
-        return raw
-    text = str(raw)
-    if text == "True":
-        return True
-    if text == "False":
-        return False
-    return None
 
 
 def _build_subtree_from_gate(
@@ -744,7 +714,7 @@ def _build_if_else_returns_or_children(callee: Any, sub_prov: ProvenanceMap, gat
                 node=node,
                 containing_function=callee,
                 call_chain=list(gate.call_chain),
-                expression_text=gate.expression_text,
+                expression_text=f"return {cond_value}",
                 basis=list(gate.basis),
             )
             children.append(_build_subtree_from_value(cond_value, sub_prov, branch_gate, callee))
@@ -757,7 +727,7 @@ def _build_if_else_returns_or_children(callee: Any, sub_prov: ProvenanceMap, gat
             node=node,
             containing_function=callee,
             call_chain=list(gate.call_chain),
-            expression_text=gate.expression_text,
+            expression_text=f"return {return_value}",
             basis=list(gate.basis),
         )
         children.append(_build_subtree_from_value(return_value, sub_prov, branch_gate, callee))
@@ -1482,6 +1452,10 @@ def _source_to_operand(source: Source) -> Operand:
         op["state_variable_name"] = source.state_variable_name
     if source.callee is not None:
         op["callee"] = source.callee
+    if source.callee_signature is not None:
+        op["callee_signature"] = source.callee_signature
+    if source.callee_selector is not None:
+        op["callee_selector"] = source.callee_selector
     if source.constant_value is not None:
         op["constant_value"] = source.constant_value
     if source.computed_kind is not None:

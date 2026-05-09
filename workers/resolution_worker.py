@@ -20,7 +20,6 @@ from db.models import (
     ControllerValue,
     Job,
     JobStage,
-    JobStatus,
 )
 from db.nested_artifacts import store_bundle as store_nested_artifacts
 from db.queue import create_job, get_artifact, store_artifact
@@ -476,8 +475,12 @@ class ResolutionWorker(BaseWorker):
         predicate_trees = get_artifact(session, job.id, "predicate_trees")
         if not isinstance(predicate_trees, dict):
             return
-        trees = predicate_trees.get("trees")
-        if not isinstance(trees, dict) or not trees:
+        tree_maps = [
+            tree_map
+            for tree_map in (predicate_trees.get("trees"), predicate_trees.get("check_trees"))
+            if isinstance(tree_map, dict) and tree_map
+        ]
+        if not tree_maps:
             return
 
         controller_values = (snapshot or {}).get("controller_values") or {}
@@ -499,8 +502,9 @@ class ResolutionWorker(BaseWorker):
         # contract state-vars. Worth doing once — the same registry can
         # be referenced from many functions on A.
         referenced: set[str] = set()
-        for tree in trees.values():
-            _collect_authority_contract_state_vars(tree, referenced)
+        for tree_map in tree_maps:
+            for tree in tree_map.values():
+                _collect_authority_contract_state_vars(tree, referenced)
         if not referenced:
             return
 
@@ -560,13 +564,13 @@ class ResolutionWorker(BaseWorker):
                 target_addr,
                 required_artifact="effective_permissions",
                 chain=chain,
-                completed_only=True,
+                completed_only=False,
             )
             already_satisfied = False
             if satisfied_lookup is not None:
                 provider_job = satisfied_lookup.analysis_job
                 dependency_provider_addr = (provider_job.address or dependency_provider_addr).lower()
-                already_satisfied = provider_job.status == JobStatus.completed
+                already_satisfied = True
 
             # Cycle detection: would inserting (A → B) close a path
             # that's already (B → ... → A)? If so we'd have A waiting on

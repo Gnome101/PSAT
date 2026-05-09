@@ -520,7 +520,15 @@ def test_external_set_resolves_to_indexed_event_members(session):
 def test_external_authority_inlining_follows_proxy_to_impl_predicate_trees(session):
     """If an authority contract is a proxy, inline the implementation's
     predicate_trees while keeping event reads keyed to the runtime proxy."""
-    from db.models import Contract, ControllerValue, IndexedEventCursor, IndexedEventLog, Protocol
+    from db.models import (
+        Contract,
+        ControllerValue,
+        IndexedEventCursor,
+        IndexedEventLog,
+        JobStage,
+        JobStatus,
+        Protocol,
+    )
     from services.resolution.capability_resolver import resolve_contract_capabilities
 
     target_addr = "0x" + uuid.uuid4().hex[:8] + "a1" * 16
@@ -634,6 +642,11 @@ def test_external_authority_inlining_follows_proxy_to_impl_predicate_trees(sessi
         },
     }
     impl_job = _seed_job_with_artifact(session, address=registry_impl, predicate_trees=registry_artifact)
+    # The dependency gate unblocks dependers when the provider finishes
+    # policy, which leaves the provider queued for coverage rather than
+    # status=completed. Inlining must still be allowed at that point.
+    impl_job.stage = JobStage.coverage
+    impl_job.status = JobStatus.queued
     impl_job.request = {
         "address": registry_impl,
         "name": "RoleRegistry: (impl)",

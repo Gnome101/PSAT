@@ -27,6 +27,8 @@ import os
 from dataclasses import dataclass
 from typing import Any, Iterable
 
+from eth_utils.crypto import keccak
+
 # Slither IR types — imported lazily where they aren't part of the
 # module's public surface so this file remains importable in test
 # environments without solc.
@@ -104,6 +106,8 @@ class Source:
     # Hash of constituent source frozensets — used to keep view_call /
     # external_call recursive shape without making Source recursive.
     callee_args_digest: str | None = None
+    callee_signature: str | None = None
+    callee_selector: str | None = None
     constant_value: str | None = None
     computed_kind: str | None = None
     block_context_kind: str | None = None
@@ -559,6 +563,7 @@ class ProvenanceEngine:
         if not isinstance(ir, OperationWithLValue) or ir.lvalue is None:
             return False
         callee_name = getattr(getattr(ir, "function", None), "name", None) or getattr(ir, "function_name", None)
+        callee_signature = _callee_signature(ir)
         args_union = self._union_of_args(getattr(ir, "arguments", ()))
         result = frozenset(
             {
@@ -566,6 +571,8 @@ class ProvenanceEngine:
                     kind="external_call",
                     callee=callee_name,
                     callee_args_digest=_digest(args_union),
+                    callee_signature=callee_signature,
+                    callee_selector=_selector_for_signature(callee_signature),
                 )
             }
         )
@@ -862,6 +869,24 @@ def _strip_ssa_suffix(name: str) -> str:
     if len(parts) == 2 and parts[1].isdigit():
         return parts[0]
     return name
+
+
+def _callee_signature(ir: Any) -> str | None:
+    fn = getattr(ir, "function", None)
+    for attr in ("full_name", "signature_str"):
+        value = getattr(fn, attr, None)
+        if isinstance(value, str) and "(" in value and value.endswith(")"):
+            return value.rsplit(".", 1)[-1]
+    value = getattr(ir, "function_name", None)
+    if isinstance(value, str) and "(" in value and value.endswith(")"):
+        return value.rsplit(".", 1)[-1]
+    return None
+
+
+def _selector_for_signature(signature: str | None) -> str | None:
+    if not signature or "(" not in signature or not signature.endswith(")"):
+        return None
+    return "0x" + keccak(text=signature).hex()[:8]
 
 
 def _digest(s: SourceSet) -> str:
