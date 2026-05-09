@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import os
 import signal
+import threading
 import uuid
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
@@ -217,6 +218,36 @@ def test_run_loop_job_handled_directly_skips_advance(mock_advance, mock_claim, m
     w.run_loop()
 
     mock_advance.assert_not_called()
+
+
+@patch("workers.base.signal.signal")
+@patch("workers.base.advance_job")
+def test_execute_job_heartbeats_while_process_blocks(mock_advance, mock_signal, monkeypatch):
+    """A processing job gets a background heartbeat even if process() is blocked."""
+    monkeypatch.setenv("PSAT_JOB_HEARTBEAT_INTERVAL_S", "0.01")
+    release = threading.Event()
+    job = _make_job(lease_id=uuid.uuid4())
+    mock_session = MagicMock()
+
+    w = _TestWorker()
+    w._record_stage_timing = MagicMock()
+    w._satisfy_dependencies = MagicMock(return_value=0)
+
+    def heartbeat(_session, _job):
+        release.set()
+
+    def process(_session, _job):
+        assert release.wait(timeout=2)
+
+    w._heartbeat = MagicMock(side_effect=heartbeat)
+    w.process = MagicMock(side_effect=process)
+
+    w._execute_job(mock_session, cast(Any, job))
+
+    assert w._heartbeat.call_count >= 1
+    mock_advance.assert_called_once_with(
+        mock_session, job.id, JobStage.static, "Completed discovery", lease_id=job.lease_id
+    )
 
 
 @patch("workers.base.signal.signal")

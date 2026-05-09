@@ -54,6 +54,15 @@ STALE_JOB_TIMEOUT = int(os.getenv("PSAT_STALE_JOB_TIMEOUT", "600"))  # seconds
 RECLAIM_INTERVAL_S = float(os.getenv("PSAT_RECLAIM_INTERVAL_S", "30"))
 
 
+def _job_heartbeat_interval_s() -> float:
+    """Resolve the max wait between background job heartbeats."""
+    try:
+        value = float(os.getenv("PSAT_JOB_HEARTBEAT_INTERVAL_S", os.getenv("PSAT_PARALLEL_HEARTBEAT_INTERVAL_S", "30")))
+    except ValueError:
+        return 30.0
+    return max(0.1, value)
+
+
 def _resolve_job_concurrency(stage_value: str) -> int:
     """Resolve K (max concurrent jobs per worker process) for *stage_value*.
 
@@ -304,6 +313,32 @@ class BaseWorker:
                 with self._inflight_lock:
                     self._inflight_jobs[job.id] = claim_lease_id
                 inflight_registered = True
+            heartbeat_stop = threading.Event()
+            heartbeat_thread: threading.Thread | None = None
+
+            def _background_heartbeat() -> None:
+                while not heartbeat_stop.wait(_job_heartbeat_interval_s()):
+                    try:
+                        self._heartbeat(session, job)
+                    except LeaseLost as lease_exc:
+                        logger.warning(
+                            "Worker %s: background heartbeat lost lease for job %s: %s",
+                            self.worker_id,
+                            job.id,
+                            lease_exc,
+                            extra={"phase": "job", "outcome": "lease_lost"},
+                        )
+                        return
+                    except Exception:
+                        logger.warning("Worker %s: background heartbeat failed for job %s", self.worker_id, job.id)
+
+            if claim_lease_id is not None:
+                heartbeat_thread = threading.Thread(
+                    target=_background_heartbeat,
+                    name=f"{self.worker_id}-heartbeat-{str(job.id)[:8]}",
+                    daemon=True,
+                )
+                heartbeat_thread.start()
             try:
                 logger.info("Worker %s claimed job %s", self.worker_id, job.id)
                 t0 = time.monotonic()
@@ -584,6 +619,9 @@ class BaseWorker:
                                 "Could not update job %s for retry/terminal even with fresh session", job.id
                             )
             finally:
+                heartbeat_stop.set()
+                if heartbeat_thread is not None:
+                    heartbeat_thread.join(timeout=1)
                 degraded_errors_var.reset(accumulator_token)
                 if inflight_registered:
                     with self._inflight_lock:
