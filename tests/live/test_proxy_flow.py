@@ -6,7 +6,7 @@ from typing import Any, Protocol
 
 import pytest
 
-from tests.live.conftest import DEFAULT_SINGLE_TIMEOUT, LiveClient
+from tests.live.conftest import DEFAULT_COMPANY_TIMEOUT, DEFAULT_SINGLE_TIMEOUT, LiveClient
 
 USDC_PROXY = "0xA0b86991c6218b36c1D19D4a2e9Eb0cE3606eB48"  # USDC FiatTokenProxy, EIP-1967
 
@@ -37,7 +37,7 @@ def _resolve_impl_job(
     *,
     parent_job_id: str,
     impl_address: str,
-    timeout: float = DEFAULT_SINGLE_TIMEOUT,
+    timeout: float = DEFAULT_COMPANY_TIMEOUT,
 ) -> dict[str, Any] | None:
     """Locate the impl analysis job for ``impl_address`` and wait for it
     to terminate.
@@ -60,6 +60,10 @@ def _resolve_impl_job(
       manifested on PR-63 once the mapping_enumeration_cache fix made the
       surrounding tests substantially faster — there was no longer enough
       wall-clock for the impl to settle before this test fired.
+
+      The v2 preview path can also put the impl job behind recursive
+      resolution fanout from other live protocols, so use the same timeout
+      budget as company analysis rather than the single-address budget.
     """
     children = client.children_of(parent_job_id)
     child_match = [c for c in children if (c.get("address") or "").lower() == impl_address]
