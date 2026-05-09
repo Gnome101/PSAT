@@ -92,7 +92,7 @@ def parallel_map(
 
     results: list[tuple[T, R | BaseException]] = [(item, None) for item in items_list]  # type: ignore[misc]
 
-    if workers == 1:
+    if workers == 1 and heartbeat is None:
         for idx, item in enumerate(items_list):
             try:
                 results[idx] = (item, fn(item))
