@@ -323,6 +323,148 @@ class TestFetchGithubRaw:
         assert captured["headers"].get("Authorization") == "token secret-token"
 
 
+# ---------------------------------------------------------------------------
+# _fetch_github_raw — retry-with-backoff on transient transport failures.
+#
+# Same root-cause pattern as services.audits.text_extraction: prod observed
+# bursts of ConnectionResetError(104) from raw.githubusercontent.com that
+# turned every flake into a permanent ``transport_error``. The lru_cache
+# makes this *worse* — once memoized, the same URL stays poisoned for the
+# whole worker process. Retry must happen *before* memoization.
+# ---------------------------------------------------------------------------
+
+
+class TestFetchGithubRawRetry:
+    def test_transient_connection_error_is_retried_to_success(self, monkeypatch):
+        """First call RSTs (the prod failure mode), second succeeds — the
+        cached outcome should be the success, not the flake."""
+        monkeypatch.setattr("services.audits.source_equivalence._retry_sleep", lambda _s: None, raising=False)
+
+        calls = {"n": 0}
+
+        def flaky(*_a, **_kw):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise requests.exceptions.ConnectionError(
+                    "Connection aborted.",
+                    ConnectionResetError(104, "Connection reset by peer"),
+                )
+            return _resp(text="contract X { function f() public {} }", content_type="text/plain")
+
+        monkeypatch.setattr("services.audits.source_equivalence.requests.get", flaky)
+
+        got = _fetch_github_raw("https://raw.githubusercontent.com/x/y/abc/Retry1.sol", None)
+        assert got.status == "ok"
+        assert got.content == "contract X { function f() public {} }"
+        assert calls["n"] == 2
+
+    def test_retries_exhausted_returns_transport_error(self, monkeypatch):
+        """If the upstream stays bad through every retry, the function should
+        still surface the transport_error (not loop forever)."""
+        monkeypatch.setattr("services.audits.source_equivalence._retry_sleep", lambda _s: None, raising=False)
+
+        calls = {"n": 0}
+
+        def always_raises(*_a, **_kw):
+            calls["n"] += 1
+            raise requests.exceptions.ConnectionError(
+                "Connection aborted.",
+                ConnectionResetError(104, "Connection reset by peer"),
+            )
+
+        monkeypatch.setattr("services.audits.source_equivalence.requests.get", always_raises)
+
+        got = _fetch_github_raw("https://raw.githubusercontent.com/x/y/abc/Retry2.sol", None)
+        assert got.content is None
+        assert got.status == "transport_error"
+        assert calls["n"] == 3
+
+    def test_transient_5xx_is_retried_to_success(self, monkeypatch):
+        """503 from raw.githubusercontent.com is transient — retry rather
+        than memoize as ``http_5xx`` and starve the rest of the run."""
+        monkeypatch.setattr("services.audits.source_equivalence._retry_sleep", lambda _s: None, raising=False)
+
+        calls = {"n": 0}
+
+        def maybe_5xx(*_a, **_kw):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                return _resp(status_code=503, text="Unavailable")
+            return _resp(text="contract Y {}", content_type="text/plain")
+
+        monkeypatch.setattr("services.audits.source_equivalence.requests.get", maybe_5xx)
+
+        got = _fetch_github_raw("https://raw.githubusercontent.com/x/y/abc/Retry3.sol", None)
+        assert got.status == "ok"
+        assert got.content == "contract Y {}"
+        assert calls["n"] == 2
+
+    def test_read_timeout_is_retried_to_success(self, monkeypatch):
+        """Slow CDNs surface as ReadTimeout rather than ConnectionError —
+        same retry treatment."""
+        monkeypatch.setattr("services.audits.source_equivalence._retry_sleep", lambda _s: None, raising=False)
+
+        calls = {"n": 0}
+
+        def maybe_timeout(*_a, **_kw):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise requests.exceptions.ReadTimeout("read timed out")
+            return _resp(text="contract Z {}", content_type="text/plain")
+
+        monkeypatch.setattr("services.audits.source_equivalence.requests.get", maybe_timeout)
+
+        got = _fetch_github_raw("https://raw.githubusercontent.com/x/y/abc/Retry4.sol", None)
+        assert got.status == "ok"
+        assert calls["n"] == 2
+
+    def test_404_does_not_retry(self, monkeypatch):
+        """404 means the path is genuinely missing — retrying just wastes
+        the budget. Stays terminal."""
+        monkeypatch.setattr("services.audits.source_equivalence._retry_sleep", lambda _s: None, raising=False)
+
+        calls = {"n": 0}
+
+        def always_404(*_a, **_kw):
+            calls["n"] += 1
+            return _resp(status_code=404, text="Not Found")
+
+        monkeypatch.setattr("services.audits.source_equivalence.requests.get", always_404)
+
+        got = _fetch_github_raw("https://raw.githubusercontent.com/x/y/abc/Retry5.sol", None)
+        assert got.status == "http_404"
+        assert calls["n"] == 1
+
+    def test_success_after_retry_is_memoized_not_the_flake(self, monkeypatch):
+        """The lru_cache wrapper makes the retry strictly necessary: without
+        it, a single transient flake gets memoized as ``transport_error``
+        for the whole worker process, starving every later call to the same
+        URL. With retry, the *successful* outcome is what the cache stores."""
+        monkeypatch.setattr("services.audits.source_equivalence._retry_sleep", lambda _s: None, raising=False)
+
+        calls = {"n": 0}
+
+        def flaky_then_ok(*_a, **_kw):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise requests.exceptions.ConnectionError(
+                    "Connection aborted.",
+                    ConnectionResetError(104, "Connection reset by peer"),
+                )
+            return _resp(text="contract M {}", content_type="text/plain")
+
+        monkeypatch.setattr("services.audits.source_equivalence.requests.get", flaky_then_ok)
+
+        url = "https://raw.githubusercontent.com/x/y/abc/Retry6.sol"
+        first = _fetch_github_raw(url, None)
+        second = _fetch_github_raw(url, None)
+
+        assert first.status == "ok"
+        assert second.status == "ok"
+        # Cache hit on the second call: requests.get is not called again.
+        assert calls["n"] == 2
+
+
 class TestFetchGithubSourceHash:
     def test_returns_invalid_input_on_missing_inputs(self):
         """The wrapper short-circuits without any HTTP call when any of repo,
