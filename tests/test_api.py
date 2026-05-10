@@ -123,6 +123,78 @@ def test_build_company_function_entry_filters_generic_authority_contract_when_sp
     ]
 
 
+def test_build_company_function_entry_enriches_principal_type_from_company_lookup() -> None:
+    from services.governance.principals import _build_company_function_entry
+
+    timelock_addr = "0x" + "9" * 40
+    ef = SimpleNamespace(
+        abi_signature="transferOwnership(address)",
+        function_name="transferOwnership",
+        selector="0xf2fde38b",
+        effect_labels=["ownership_transfer"],
+        effect_targets=["owner"],
+        action_summary="Transfers ownership.",
+        authority_public=False,
+        authority_roles=[],
+    )
+    principals = [
+        SimpleNamespace(
+            address=timelock_addr,
+            resolved_type=None,
+            origin="semantic_capability:finite_set",
+            principal_type="controller",
+            details={"membership_quality": "exact"},
+        )
+    ]
+
+    result = _build_company_function_entry(
+        cast(Any, ef),
+        cast(Any, principals),
+        principal_lookup={
+            timelock_addr: {
+                "resolved_type": "timelock",
+                "label": "ProtocolTimelock",
+                "details": {"delay": 864000},
+            }
+        },
+    )
+
+    principal = result["controllers"][0]["principals"][0]
+    assert principal["resolved_type"] == "timelock"
+    assert principal["label"] == "ProtocolTimelock"
+    assert principal["principal_type"] == "controller"
+    assert principal["details"] == {"delay": 864000, "membership_quality": "exact"}
+
+
+def test_company_principal_lookup_promotes_delay_contract_to_timelock() -> None:
+    from services.aggregations.company_overview import _build_principal_lookup
+
+    timelock_addr = "0x" + "8" * 40
+    contract = SimpleNamespace(
+        id=1,
+        address=timelock_addr,
+        contract_name="ProtocolTimelock",
+        summary=SimpleNamespace(has_timelock=False),
+    )
+    node = SimpleNamespace(
+        address=timelock_addr,
+        resolved_type="contract",
+        contract_name=None,
+        label="timelock controller",
+        details={"delay": 864000},
+    )
+
+    lookup = _build_principal_lookup(
+        {uuid.uuid4(): cast(Any, contract)},
+        {},
+        {1: [cast(Any, node)]},
+    )
+
+    assert lookup[timelock_addr]["resolved_type"] == "timelock"
+    assert lookup[timelock_addr]["label"] == "ProtocolTimelock"
+    assert lookup[timelock_addr]["details"]["delay"] == 864000
+
+
 def test_index_serves_html() -> None:
     client = make_client()
     response = client.get("/")

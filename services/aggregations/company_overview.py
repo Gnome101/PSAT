@@ -248,6 +248,133 @@ def _prefetch_child_tables(session: Session, contract_ids: set[int]) -> dict[str
     return out
 
 
+def _has_timelock_delay(details: Any) -> bool:
+    if not isinstance(details, dict):
+        return False
+    for key in ("delay", "delay_seconds", "min_delay"):
+        value = details.get(key)
+        if isinstance(value, bool):
+            continue
+        if isinstance(value, (int, float)) and value > 0:
+            return True
+        if isinstance(value, str) and value.isdigit() and int(value) > 0:
+            return True
+    return False
+
+
+def _principal_lookup_type(resolved_type: str | None, details: Any) -> str | None:
+    normalized = (resolved_type or "").lower()
+    if normalized == "gnosis_safe":
+        normalized = "safe"
+    if normalized in {"safe", "timelock", "eoa", "proxy_admin"}:
+        return normalized
+    if _has_timelock_delay(details):
+        return "timelock"
+    if normalized == "contract":
+        return "contract"
+    return None
+
+
+def _principal_type_priority(resolved_type: str | None) -> int:
+    if resolved_type in {"safe", "timelock", "eoa", "proxy_admin"}:
+        return 3
+    if resolved_type == "contract":
+        return 1
+    return 0
+
+
+def _record_principal_lookup(
+    lookup: dict[str, dict[str, Any]],
+    *,
+    address: str | None,
+    resolved_type: str | None,
+    label: str | None,
+    details: Any,
+) -> None:
+    if not address or not address.startswith("0x"):
+        return
+    details_dict = dict(details) if isinstance(details, dict) else {}
+    principal_type = _principal_lookup_type(resolved_type, details_dict)
+    if not principal_type:
+        return
+
+    addr = address.lower()
+    current = lookup.setdefault(addr, {"resolved_type": principal_type, "details": {}})
+    current_priority = _principal_type_priority(current.get("resolved_type"))
+    principal_priority = _principal_type_priority(principal_type)
+    if principal_priority > current_priority:
+        current["resolved_type"] = principal_type
+    if label and not current.get("label"):
+        current["label"] = label
+
+    merged_details = dict(current.get("details") or {})
+    if principal_priority >= current_priority:
+        merged_details.update(details_dict)
+    merged_details.setdefault("address", addr)
+    current["details"] = merged_details
+
+
+def _build_principal_lookup(
+    contracts_by_job_id: dict[Any, Contract],
+    controller_values_by_cid: dict[int, list[ControllerValue]],
+    cgn_by_cid: dict[int, list[ControlGraphNode]],
+) -> dict[str, dict[str, Any]]:
+    lookup: dict[str, dict[str, Any]] = {}
+    seen_contract_ids: set[int] = set()
+
+    for contract in contracts_by_job_id.values():
+        if not contract or contract.id in seen_contract_ids:
+            continue
+        seen_contract_ids.add(contract.id)
+        summary = contract.summary
+        contract_type = "timelock" if summary and summary.has_timelock else "contract"
+        _record_principal_lookup(
+            lookup,
+            address=contract.address,
+            resolved_type=contract_type,
+            label=contract.contract_name,
+            details={},
+        )
+
+    for values in controller_values_by_cid.values():
+        for cv in values:
+            _record_principal_lookup(
+                lookup,
+                address=cv.value,
+                resolved_type=cv.resolved_type,
+                label=cv.source or cv.controller_id,
+                details=cv.details,
+            )
+
+    for nodes in cgn_by_cid.values():
+        for node in nodes:
+            _record_principal_lookup(
+                lookup,
+                address=node.address,
+                resolved_type=node.resolved_type,
+                label=node.contract_name or node.label,
+                details=node.details,
+            )
+
+    return lookup
+
+
+def _principal_lookup_meta(
+    principal_lookup: dict[str, dict[str, Any]],
+    address: str | None,
+    details: Any = None,
+) -> dict[str, Any]:
+    lookup = principal_lookup.get((address or "").lower(), {})
+    merged_details = dict(lookup.get("details") or {})
+    if isinstance(details, dict):
+        merged_details.update(details)
+    return {
+        "resolved_type": lookup.get("resolved_type"),
+        "label": lookup.get("label"),
+        "details": merged_details,
+    }
+
+
 def build_governance_view(
     session: Session,
     jobs: list[Job],
@@ -264,6 +391,7 @@ def build_governance_view(
     balances_by_cid: dict[int, list[Any]] = children["balances"]
     cgn_by_cid: dict[int, list[ControlGraphNode]] = children["cgn"]
     cge_by_cid: dict[int, list[ControlGraphEdge]] = children["cge"]
+    principal_lookup = _build_principal_lookup(contracts_by_job_id, controller_values_by_cid, cgn_by_cid)
 
     contracts: list[dict[str, Any]] = []
     owner_groups: dict[str, list[dict]] = {}
@@ -365,7 +493,10 @@ def build_governance_view(
         else:
             role = "utility"
 
-        functions_list = [_build_company_function_entry(ef, ef.principals or []) for ef in ef_rows_for_contract]
+        functions_list = [
+            _build_company_function_entry(ef, ef.principals or [], principal_lookup=principal_lookup)
+            for ef in ef_rows_for_contract
+        ]
 
         balance_contract = lookup_contract or contract_row
         balances_list = []
@@ -421,13 +552,14 @@ def build_governance_view(
         if graph_contract:
             cg_nodes = cgn_by_cid.get(graph_contract.id, [])
             cg_edges = cge_by_cid.get(graph_contract.id, [])
+            node_meta = {n.address: _principal_lookup_meta(principal_lookup, n.address, n.details) for n in cg_nodes}
             entry["control_graph"] = {
                 "nodes": [
                     {
                         "address": n.address,
-                        "type": n.resolved_type,
-                        "label": n.contract_name or n.label,
-                        "details": n.details or {},
+                        "type": node_meta[n.address].get("resolved_type") or n.resolved_type,
+                        "label": node_meta[n.address].get("label") or n.contract_name or n.label,
+                        "details": node_meta[n.address]["details"],
                     }
                     for n in cg_nodes
                 ],
@@ -459,7 +591,13 @@ def build_governance_view(
 
     hierarchy = _build_ownership_hierarchy(contracts, owner_groups)
     fund_flows, principals = _build_flows_and_principals(
-        contracts, contracts_by_job_id, controller_values_by_cid, ef_rows_by_cid, cgn_by_cid, cge_by_cid
+        contracts,
+        contracts_by_job_id,
+        controller_values_by_cid,
+        ef_rows_by_cid,
+        cgn_by_cid,
+        cge_by_cid,
+        principal_lookup,
     )
 
     return GovernanceView(
@@ -507,6 +645,7 @@ def _build_flows_and_principals(
     ef_rows_by_cid: dict[int, list[EffectiveFunction]],
     cgn_by_cid: dict[int, list[ControlGraphNode]],
     cge_by_cid: dict[int, list[ControlGraphEdge]],
+    principal_lookup: dict[str, dict[str, Any]],
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     contract_addrs = {c["address"].lower() for c in contracts if c["address"]}
     contract_by_addr = {c["address"].lower(): c for c in contracts if c["address"]}
@@ -607,7 +746,9 @@ def _build_flows_and_principals(
                 continue
             if node_addr in owner_of_safe:
                 continue
-            if cgn.resolved_type not in ("safe", "timelock", "proxy_admin", "eoa"):
+            lookup_meta = principal_lookup.get(node_addr, {})
+            resolved_type = lookup_meta.get("resolved_type") or cgn.resolved_type
+            if resolved_type not in ("safe", "timelock", "proxy_admin", "eoa"):
                 continue
             if node_addr == "0x0000000000000000000000000000000000000000":
                 continue
@@ -621,7 +762,7 @@ def _build_flows_and_principals(
                 # Safe's own threshold, so prior code that only merged
                 # CV details missed the threshold and fell back to
                 # len(owners).
-                details: dict[str, Any] = {}
+                details: dict[str, Any] = dict(lookup_meta.get("details") or {})
                 if isinstance(cgn.details, dict):
                     details.update(cgn.details)
                 for cv in controller_values_by_cid.get(lookup_c.id, []):
@@ -631,7 +772,7 @@ def _build_flows_and_principals(
                         for k, v in cv.details.items():
                             details.setdefault(k, v)
 
-                if cgn.resolved_type == "safe":
+                if resolved_type == "safe":
                     if not details.get("owners"):
                         details["owners"] = safe_owners_map.get(node_addr, [])
                     if "threshold" not in details and details.get("owners"):
@@ -639,8 +780,8 @@ def _build_flows_and_principals(
 
                 principal_map[node_addr] = {
                     "address": node_addr,
-                    "type": cgn.resolved_type,
-                    "label": cgn.contract_name or cgn.label or cgn.resolved_type,
+                    "type": resolved_type,
+                    "label": lookup_meta.get("label") or cgn.contract_name or cgn.label or resolved_type,
                     "details": details,
                     "controls": [],
                 }
@@ -670,21 +811,27 @@ def _build_flows_and_principals(
                 continue
             if pa in owner_of_safe:
                 continue
-            if fp.resolved_type not in ("safe", "timelock", "eoa", "proxy_admin"):
+            lookup_meta = principal_lookup.get(pa, {})
+            resolved_type = fp.resolved_type
+            if lookup_meta.get("resolved_type") and resolved_type in (None, "", "unknown", "contract"):
+                resolved_type = lookup_meta["resolved_type"]
+            if resolved_type not in ("safe", "timelock", "eoa", "proxy_admin"):
                 continue
             if pa in contract_addrs:
                 continue
             if pa not in principal_map:
-                fp_details = dict(fp.details or {})
-                if fp.resolved_type == "safe":
+                fp_details = dict(lookup_meta.get("details") or {})
+                if isinstance(fp.details, dict):
+                    fp_details.update(fp.details)
+                if resolved_type == "safe":
                     if not fp_details.get("owners"):
                         fp_details["owners"] = safe_owners_map.get(pa, [])
                     if "threshold" not in fp_details and fp_details.get("owners"):
                         fp_details["threshold"] = len(fp_details["owners"])
                 principal_map[pa] = {
                     "address": pa,
-                    "type": fp.resolved_type,
-                    "label": fp.resolved_type,
+                    "type": resolved_type,
+                    "label": lookup_meta.get("label") or resolved_type,
                     "details": fp_details,
                     "controls": [],
                 }

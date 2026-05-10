@@ -2,19 +2,38 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any
 
 from db.models import EffectiveFunction, FunctionPrincipal
 
 
-def _function_principal_payload(fp: FunctionPrincipal) -> dict[str, Any]:
-    return {
+def _function_principal_payload(
+    fp: FunctionPrincipal,
+    principal_lookup: Mapping[str, Mapping[str, Any]] | None = None,
+) -> dict[str, Any]:
+    address = fp.address
+    lookup = principal_lookup.get(address.lower()) if principal_lookup and address else None
+    resolved_type = fp.resolved_type
+    details = dict(lookup.get("details") or {}) if lookup else {}
+    if isinstance(fp.details, dict):
+        details.update(fp.details)
+
+    if lookup:
+        lookup_type = lookup.get("resolved_type")
+        if lookup_type and resolved_type in (None, "", "unknown", "contract"):
+            resolved_type = str(lookup_type)
+
+    payload = {
         "address": fp.address,
-        "resolved_type": fp.resolved_type,
+        "resolved_type": resolved_type,
         "source_controller_id": fp.origin,
         "principal_type": fp.principal_type,
-        "details": fp.details or {},
+        "details": details,
     }
+    if lookup and lookup.get("label"):
+        payload["label"] = lookup["label"]
+    return payload
 
 
 def _is_generic_authority_contract_principal(principal: dict[str, Any]) -> bool:
@@ -38,14 +57,18 @@ def _role_value_from_origin(origin: str | None) -> int | str:
     return origin
 
 
-def _build_company_function_entry(ef: EffectiveFunction, principals: list[FunctionPrincipal]) -> dict[str, Any]:
+def _build_company_function_entry(
+    ef: EffectiveFunction,
+    principals: list[FunctionPrincipal],
+    principal_lookup: Mapping[str, Mapping[str, Any]] | None = None,
+) -> dict[str, Any]:
     direct_owner = None
     controllers_by_label: dict[str, dict[str, Any]] = {}
     authority_roles_by_key: dict[str, dict[str, Any]] = {}
     signature_witnesses: list[dict[str, Any]] = []
 
     for fp in principals:
-        principal_dict = _function_principal_payload(fp)
+        principal_dict = _function_principal_payload(fp, principal_lookup)
 
         if fp.principal_type == "direct_owner":
             if direct_owner is None:
