@@ -482,6 +482,12 @@ class AuditContractCoverage(Base):
         Index("ix_audit_contract_coverage_contract_id", "contract_id"),
         Index("ix_audit_contract_coverage_audit_report_id", "audit_report_id"),
         Index("ix_audit_contract_coverage_protocol_id", "protocol_id"),
+        # Queue index for CoverageVerifyWorker pending equivalence rows.
+        Index(
+            "ix_acc_equivalence_pending",
+            "id",
+            postgresql_where=text("equivalence_status = 'pending'"),
+        ),
     )
 
 
