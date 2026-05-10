@@ -886,7 +886,7 @@ def test_reextract_endpoint_makes_row_eligible_again(
 # ---------------------------------------------------------------------------
 
 
-def test_scope_worker_refresh_coverage_runs_source_equivalence(
+def test_scope_worker_refresh_coverage_writes_pending_for_verify_worker(
     db_session,
     storage_bucket,
     seed_protocol,
@@ -894,25 +894,25 @@ def test_scope_worker_refresh_coverage_runs_source_equivalence(
     llm_stub_dir,
     monkeypatch,
 ):
-    """Regression for the "LiquidityPool shows no audit coverage" bug —
-    the scope-side half.
+    """Regression follow-up: the scope worker no longer runs source-
+    equivalence inline (#82 — inline verify caused Etherscan rate-limit
+    cascades that blocked every other worker). Instead the worker writes
+    coverage rows with ``equivalence_status='pending'`` so the
+    ``CoverageVerifyWorker`` can drain them at a controlled rate.
 
-    When scope extraction completes for an audit that already has
-    ``reviewed_commits`` + ``source_repo`` populated (discovery-time
-    values, or a re-extraction of an audit that was already through the
-    pipeline), the worker's inline ``_refresh_coverage`` must invoke
-    ``upsert_coverage_for_audit`` with ``verify_source_equivalence=True``.
-    Otherwise an audit that cryptographically covers the deployed impl
-    (byte-equal source) lands at ``impl_era`` / temporal-only confidence
-    and the UI "audited?" check fails despite the proof existing.
+    The end-state for "LiquidityPool shows no audit coverage" is still
+    correct — once the verify worker drains the pending row, it lands
+    at ``match_type='reviewed_commit'`` exactly like the inline path
+    used to. This test pins the synchronous half (pending status,
+    no inline HTTP); the deferred verify path is covered by
+    ``test_coverage_verify_worker.py``.
     """
     from db.models import AuditContractCoverage, AuditReport, Contract
 
     protocol_id, _ = seed_protocol
 
     # Seed a concrete, non-proxy impl Contract whose name the fixture's
-    # scope will match. Direct match (no UpgradeEvent history) keeps the
-    # test focused on source-equivalence promotion vs. the temporal path.
+    # scope will match.
     impl = Contract(
         protocol_id=protocol_id,
         address="0x" + "d" * 40,
@@ -930,67 +930,28 @@ def test_scope_worker_refresh_coverage_runs_source_equivalence(
         fixture="spearbit_table.txt",
         auditor="Spearbit",
         title="Pre-Deployment Review",
-        # Audit dated BEFORE a hypothetical deployment — temporal alone
-        # would not promote to 'high' for this impl, but source-equivalence
-        # is date-agnostic when hashes match.
         date="2026-02-01",
         text_sha256="sha-scope-se",
     )
 
-    # Pre-populate reviewed_commits + source_repo on the audit row (the
-    # scope extractor normally fills reviewed_commits from PDF text; we
-    # shortcut that here because the fixture's own commits are fine).
+    # Pre-populate reviewed_commits + source_repo on the audit row.
     audit = db_session.get(AuditReport, audit_id)
     audit.reviewed_commits = ["abc123def456"]
     audit.source_repo = "example/protocol"
     db_session.commit()
 
-    # Stub source-equivalence at the current HTTP-phase seam used by the
-    # two-phase coverage upsert. If verify_source_equivalence=False (the
-    # pre-fix default at the scope-worker call site), this stub is never
-    # invoked and the coverage row lands at match_type='direct' /
-    # match_confidence='high' — the regression assertion below pins
-    # match_type='reviewed_commit', which is reachable only when the
-    # worker passes verify_source_equivalence=True.
+    # The scope worker MUST NOT touch the network on its own — the
+    # verify worker does that asynchronously. Make any HTTP call loud.
     import services.audits.source_equivalence as se_mod
 
-    def fake_verify(
-        *,
-        reviewed_commits,
-        scope_name,
-        impl_source,
-        source_repo,
-        github_token=None,
-        specific_commit=None,
-        fallback_repos=None,
-    ):
-        return se_mod.EquivalenceOutcome(
-            status="proven",
-            reason="test",
-            matches=(
-                se_mod.EquivalenceMatch(
-                    commit="abc123def456",
-                    scope_name=scope_name,
-                    etherscan_path="src/Pool.sol",
-                    source_sha256="deadbeef" * 8,
-                ),
-            ),
-        )
+    def boom_etherscan(_addr):
+        raise AssertionError("scope worker called etherscan inline (#82 regression)")
 
-    monkeypatch.setattr(se_mod, "verify_audit_covers_impl", fake_verify)
-    monkeypatch.setattr(
-        se_mod,
-        "fetch_etherscan_source_files",
-        lambda _addr: se_mod.EtherscanFetch(
-            source=se_mod.VerifiedSource(
-                contract_name="Pool",
-                compiler_version="0.8",
-                files={"src/Pool.sol": "stubhash"},
-            ),
-            status="ok",
-            detail="",
-        ),
-    )
+    def boom_github(*_a, **_k):
+        raise AssertionError("scope worker called github inline (#82 regression)")
+
+    monkeypatch.setattr(se_mod, "fetch_etherscan_source_files", boom_etherscan)
+    monkeypatch.setattr(se_mod, "fetch_github_source_hash", boom_github)
 
     # Drive the scope worker the same way the existing tests do.
     claimed = worker._claim_batch(db_session)
@@ -1005,9 +966,7 @@ def test_scope_worker_refresh_coverage_runs_source_equivalence(
     )
 
     cov = db_session.query(AuditContractCoverage).filter_by(audit_report_id=audit_id, contract_id=impl.id).one()
-    # The assertions that fail before the fix: without
-    # verify_source_equivalence=True at the scope-worker refresh site,
-    # the proof path never fires and the row stays at 'direct' (direct
-    # name match, no impl history).
-    assert cov.match_type == "reviewed_commit"
-    assert cov.match_confidence == "high"
+    # Heuristic match still emitted synchronously…
+    assert cov.match_type == "direct"
+    # …with verification deferred to the CoverageVerifyWorker.
+    assert cov.equivalence_status == "pending"

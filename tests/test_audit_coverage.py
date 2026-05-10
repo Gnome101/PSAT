@@ -1161,6 +1161,296 @@ def test_verify_source_equivalence_off_by_default(db_session, seed_protocol, mon
     assert called == {"etherscan": 0, "github": 0}
 
 
+# ---------------------------------------------------------------------------
+# 8.1 Deferred verification — pending stamping for the verify worker
+# ---------------------------------------------------------------------------
+
+
+def test_deferred_path_stamps_pending_when_audit_is_verifiable(db_session, seed_protocol, monkeypatch):
+    """verify_source_equivalence=False on a verifiable audit must write
+    ``equivalence_status='pending'`` so ``CoverageVerifyWorker`` can later
+    drain it. No HTTP calls happen here.
+    """
+    from db.models import AuditContractCoverage
+    from services.audits import source_equivalence
+    from services.audits.coverage import upsert_coverage_for_audit
+
+    protocol_id, _ = seed_protocol
+    _add_contract(db_session, protocol_id, address="0x" + "a" * 40, name="MyPool")
+    audit = _add_audit(db_session, protocol_id, scope=["MyPool"], date="2024-06-01")
+    audit.reviewed_commits = ["abc1234"]
+    audit.source_repo = "etherfi-protocol/smart-contracts"
+    db_session.commit()
+
+    called = {"etherscan": 0, "github": 0}
+
+    def boom_etherscan(address):
+        called["etherscan"] += 1
+        raise AssertionError("etherscan must not be called on the deferred path")
+
+    def boom_github(*args, **kwargs):
+        called["github"] += 1
+        raise AssertionError("github must not be called on the deferred path")
+
+    monkeypatch.setattr(source_equivalence, "fetch_etherscan_source_files", boom_etherscan)
+    monkeypatch.setattr(source_equivalence, "fetch_github_source_hash", boom_github)
+
+    upsert_coverage_for_audit(db_session, audit.id)
+    db_session.commit()
+
+    row = db_session.query(AuditContractCoverage).filter_by(audit_report_id=audit.id).one()
+    # Heuristic match still emitted synchronously…
+    assert row.match_type == "direct"
+    # …with verification deferred.
+    assert row.equivalence_status == "pending"
+    assert row.equivalence_checked_at is None
+    assert called == {"etherscan": 0, "github": 0}
+
+
+def test_deferred_path_stamps_no_reviewed_commit_when_audit_lacks_commits(db_session, seed_protocol):
+    """Audits without reviewed_commits can never be verified — write a
+    terminal status immediately so the verify worker doesn't keep
+    polling them."""
+    from db.models import AuditContractCoverage
+    from services.audits.coverage import upsert_coverage_for_audit
+
+    protocol_id, _ = seed_protocol
+    _add_contract(db_session, protocol_id, address="0x" + "a" * 40, name="MyPool")
+    audit = _add_audit(db_session, protocol_id, scope=["MyPool"], date="2024-06-01")
+    # No reviewed_commits, no source_repo.
+    db_session.commit()
+
+    upsert_coverage_for_audit(db_session, audit.id)
+    db_session.commit()
+
+    row = db_session.query(AuditContractCoverage).filter_by(audit_report_id=audit.id).one()
+    assert row.match_type == "direct"
+    assert row.equivalence_status == "no_reviewed_commit"
+
+
+def test_deferred_path_stamps_no_source_repo_when_repo_missing(db_session, seed_protocol):
+    """reviewed_commits without source_repo / referenced_repos is also a
+    terminal — there's nowhere to fetch the file from."""
+    from db.models import AuditContractCoverage
+    from services.audits.coverage import upsert_coverage_for_audit
+
+    protocol_id, _ = seed_protocol
+    _add_contract(db_session, protocol_id, address="0x" + "a" * 40, name="MyPool")
+    audit = _add_audit(db_session, protocol_id, scope=["MyPool"], date="2024-06-01")
+    audit.reviewed_commits = ["abc1234"]
+    # source_repo + referenced_repos both missing.
+    db_session.commit()
+
+    upsert_coverage_for_audit(db_session, audit.id)
+    db_session.commit()
+
+    row = db_session.query(AuditContractCoverage).filter_by(audit_report_id=audit.id).one()
+    assert row.match_type == "direct"
+    assert row.equivalence_status == "no_source_repo"
+
+
+def test_deferred_path_for_contract_stamps_pending(db_session, seed_protocol, monkeypatch):
+    """Symmetric: ``upsert_coverage_for_contract`` (called by
+    CoverageWorker.process) on a verifiable audit must also write
+    ``pending`` rather than blocking on inline HTTP."""
+    from db.models import AuditContractCoverage
+    from services.audits import source_equivalence
+    from services.audits.coverage import upsert_coverage_for_contract
+
+    protocol_id, _ = seed_protocol
+    contract = _add_contract(db_session, protocol_id, address="0x" + "a" * 40, name="MyPool")
+    audit = _add_audit(db_session, protocol_id, scope=["MyPool"], date="2024-06-01")
+    audit.reviewed_commits = ["abc1234"]
+    audit.source_repo = "etherfi-protocol/smart-contracts"
+    db_session.commit()
+
+    monkeypatch.setattr(
+        source_equivalence,
+        "fetch_etherscan_source_files",
+        lambda _addr: (_ for _ in ()).throw(AssertionError("must not call etherscan")),
+    )
+    monkeypatch.setattr(
+        source_equivalence,
+        "fetch_github_source_hash",
+        lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("must not call github")),
+    )
+
+    n = upsert_coverage_for_contract(db_session, contract.id)
+    db_session.commit()
+    assert n == 1
+
+    row = db_session.query(AuditContractCoverage).filter_by(contract_id=contract.id).one()
+    assert row.match_type == "direct"
+    assert row.equivalence_status == "pending"
+
+
+# ---------------------------------------------------------------------------
+# 8.2 verify_one_coverage_row — the per-row entry point the verify worker uses
+# ---------------------------------------------------------------------------
+
+
+def test_verify_one_coverage_row_proves_when_hashes_match(db_session, seed_protocol, monkeypatch):
+    """End-to-end one-row verify: pending row → proven, with match_type
+    upgraded to ``reviewed_commit`` and the audit's classified_commits
+    feeding ``proof_kind``."""
+    import hashlib
+
+    from db.models import AuditContractCoverage
+    from services.audits import source_equivalence
+    from services.audits.coverage import upsert_coverage_for_audit, verify_one_coverage_row
+
+    protocol_id, _ = seed_protocol
+    _add_contract(db_session, protocol_id, address="0x" + "a" * 40, name="MyPool")
+    audit = _add_audit(db_session, protocol_id, scope=["MyPool"], date="2024-06-01")
+    audit.reviewed_commits = ["abc1234"]
+    audit.source_repo = "etherfi-protocol/smart-contracts"
+    audit.classified_commits = [{"sha": "abc1234", "label": "reviewed", "context": ""}]
+    db_session.commit()
+
+    # Land a pending row first.
+    upsert_coverage_for_audit(db_session, audit.id)
+    db_session.commit()
+    row = db_session.query(AuditContractCoverage).filter_by(audit_report_id=audit.id).one()
+    assert row.equivalence_status == "pending"
+
+    content = "contract MyPool {}"
+    h = hashlib.sha256(content.encode()).hexdigest()
+
+    monkeypatch.setattr(
+        source_equivalence,
+        "fetch_etherscan_source_files",
+        lambda _addr: source_equivalence.EtherscanFetch(
+            source=source_equivalence.VerifiedSource(
+                contract_name="MyPool",
+                compiler_version="0.8",
+                files={"src/MyPool.sol": h},
+            ),
+            status="ok",
+            detail="",
+        ),
+    )
+    monkeypatch.setattr(
+        source_equivalence,
+        "fetch_github_source_hash",
+        lambda _repo, _commit, path, token=None: source_equivalence.GithubHashResult(
+            sha256=h if path == "src/MyPool.sol" else None,
+            status="ok" if path == "src/MyPool.sol" else "http_404",
+            detail="",
+        ),
+    )
+
+    status = verify_one_coverage_row(db_session, row.id)
+    db_session.commit()
+    assert status == "proven"
+
+    db_session.expire_all()
+    row = db_session.get(AuditContractCoverage, row.id)
+    assert row.equivalence_status == "proven"
+    assert row.match_type == "reviewed_commit"
+    assert row.match_confidence == "high"
+    assert row.proof_kind == "clean"
+    assert row.matched_commit_sha == "abc1234"
+    assert row.equivalence_checked_at is not None
+
+
+def test_verify_one_coverage_row_writes_hash_mismatch_when_hashes_differ(db_session, seed_protocol, monkeypatch):
+    """Files exist on both sides, content differs → hash_mismatch.
+    match_type stays at the heuristic 'direct' — failed proofs annotate
+    but never delete."""
+    from db.models import AuditContractCoverage
+    from services.audits import source_equivalence
+    from services.audits.coverage import upsert_coverage_for_audit, verify_one_coverage_row
+
+    protocol_id, _ = seed_protocol
+    _add_contract(db_session, protocol_id, address="0x" + "a" * 40, name="MyPool")
+    audit = _add_audit(db_session, protocol_id, scope=["MyPool"], date="2024-06-01")
+    audit.reviewed_commits = ["abc1234"]
+    audit.source_repo = "etherfi-protocol/smart-contracts"
+    db_session.commit()
+
+    upsert_coverage_for_audit(db_session, audit.id)
+    db_session.commit()
+    row = db_session.query(AuditContractCoverage).filter_by(audit_report_id=audit.id).one()
+    assert row.equivalence_status == "pending"
+
+    monkeypatch.setattr(
+        source_equivalence,
+        "fetch_etherscan_source_files",
+        lambda _addr: source_equivalence.EtherscanFetch(
+            source=source_equivalence.VerifiedSource(
+                contract_name="MyPool",
+                compiler_version="0.8",
+                files={"src/MyPool.sol": "aaa"},
+            ),
+            status="ok",
+            detail="",
+        ),
+    )
+    monkeypatch.setattr(
+        source_equivalence,
+        "fetch_github_source_hash",
+        lambda *_a, **_k: source_equivalence.GithubHashResult(sha256="bbb", status="ok", detail=""),
+    )
+
+    status = verify_one_coverage_row(db_session, row.id)
+    db_session.commit()
+    assert status == "hash_mismatch"
+
+    db_session.expire_all()
+    row = db_session.get(AuditContractCoverage, row.id)
+    # Heuristic match preserved on a non-proven verdict.
+    assert row.match_type == "direct"
+    assert row.equivalence_status == "hash_mismatch"
+    # Non-proven rows must not carry stale proven-only fields.
+    assert row.proof_kind is None
+    assert row.matched_commit_sha is None
+
+
+def test_verify_one_coverage_row_returns_none_when_row_vanished(db_session, seed_protocol):
+    """If the row has been deleted between claim and verify (e.g. a
+    coverage rebuild raced), the verify entry point must no-op cleanly."""
+    from services.audits.coverage import verify_one_coverage_row
+
+    # Deliberately use an id that won't exist.
+    status = verify_one_coverage_row(db_session, 999_999_999)
+    assert status is None
+
+
+def test_verify_one_coverage_row_etherscan_unverified(db_session, seed_protocol, monkeypatch):
+    """Etherscan returns the empty-source sentinel → permanent
+    ``etherscan_unverified``. The verify worker won't retry a row in
+    this state, but the row stays visible to the UI as "no verified
+    source"."""
+    from db.models import AuditContractCoverage
+    from services.audits import source_equivalence
+    from services.audits.coverage import upsert_coverage_for_audit, verify_one_coverage_row
+
+    protocol_id, _ = seed_protocol
+    _add_contract(db_session, protocol_id, address="0x" + "a" * 40, name="MyPool")
+    audit = _add_audit(db_session, protocol_id, scope=["MyPool"], date="2024-06-01")
+    audit.reviewed_commits = ["abc1234"]
+    audit.source_repo = "etherfi-protocol/smart-contracts"
+    db_session.commit()
+
+    upsert_coverage_for_audit(db_session, audit.id)
+    db_session.commit()
+    row = db_session.query(AuditContractCoverage).filter_by(audit_report_id=audit.id).one()
+
+    monkeypatch.setattr(
+        source_equivalence,
+        "fetch_etherscan_source_files",
+        lambda _addr: source_equivalence.EtherscanFetch(
+            source=None,
+            status="unverified",
+            detail="no verified source for 0xaaaa…",
+        ),
+    )
+
+    status = verify_one_coverage_row(db_session, row.id)
+    db_session.commit()
+    assert status == "etherscan_unverified"
+
+
 def test_source_equivalence_uses_referenced_repos_when_source_repo_missing(
     db_session,
     seed_protocol,

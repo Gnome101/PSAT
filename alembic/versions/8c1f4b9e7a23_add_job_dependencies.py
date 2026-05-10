@@ -1,7 +1,7 @@
 """add job_dependencies table
 
 Revision ID: 8c1f4b9e7a23
-Revises: f9c2a83d1e44
+Revises: a3b4c5d6e7f8
 Create Date: 2026-05-04 21:00:00.000000
 
 Durable cross-job dependency edges so a depender stage can be gated on
@@ -39,7 +39,7 @@ from sqlalchemy.dialects import postgresql
 from alembic import op
 
 revision: str = "8c1f4b9e7a23"
-down_revision: Union[str, Sequence[str], None] = "f9c2a83d1e44"
+down_revision: Union[str, Sequence[str], None] = "a3b4c5d6e7f8"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

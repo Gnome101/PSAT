@@ -230,15 +230,85 @@ def test_coverage_worker_claims_and_writes_when_ready(db_session, seed_protocol,
     assert rows[0].match_type == "direct"
 
 
-def test_coverage_worker_process_upgrades_via_source_equivalence(db_session, seed_protocol, worker, monkeypatch):
-    """When reviewed_commits + source_repo + a file hash match an impl's
-    Etherscan verified source, process() writes a ``reviewed_commit`` row
-    — not just the temporal ``direct`` match. Exercises the full pipeline
-    path ``CoverageWorker.process → upsert_coverage_for_contract(..., verify=True)
-    → _reviewed_commit_upgrades → source_equivalence``.
+def test_coverage_worker_writes_pending_when_audit_is_verifiable(db_session, seed_protocol, worker, monkeypatch):
+    """A scope-completed audit with reviewed_commits + source_repo populated
+    must produce a row with ``equivalence_status='pending'`` after
+    ``process()`` — the verify worker takes it from there. The coverage
+    worker itself MUST NOT make any GitHub / Etherscan HTTP calls; that's
+    the whole point of the deferred-verify split (#82).
     """
     from db.models import AuditContractCoverage, JobStage, JobStatus
     from services.audits import source_equivalence
+
+    protocol_id, _ = seed_protocol
+    job = _add_job(
+        db_session,
+        protocol_id=protocol_id,
+        stage=JobStage.coverage,
+        status=JobStatus.queued,
+    )
+    contract = _add_contract(
+        db_session,
+        protocol_id=protocol_id,
+        name="Pool",
+        address="0x" + "a" * 40,
+        job_id=job.id,
+    )
+    audit = _add_audit(
+        db_session,
+        protocol_id=protocol_id,
+        text_status="success",
+        scope_status="success",
+        scope=["Pool"],
+    )
+    audit.reviewed_commits = ["abc1234"]
+    audit.source_repo = "some/repo"
+    db_session.commit()
+
+    # Make any HTTP attempt loud — the coverage worker mustn't reach
+    # network on the deferred-verify path.
+    calls = {"github": 0, "etherscan": 0}
+
+    def boom_etherscan(_addr):
+        calls["etherscan"] += 1
+        raise AssertionError("coverage worker must not call etherscan")
+
+    def boom_github(*_a, **_k):
+        calls["github"] += 1
+        raise AssertionError("coverage worker must not call github")
+
+    monkeypatch.setattr(source_equivalence, "fetch_etherscan_source_files", boom_etherscan)
+    monkeypatch.setattr(source_equivalence, "fetch_github_source_hash", boom_github)
+
+    claimed = worker._claim_next_job(db_session)
+    assert claimed is not None
+    worker.process(db_session, claimed)
+    db_session.commit()
+    db_session.expire_all()
+
+    rows = (
+        db_session.execute(select(AuditContractCoverage).where(AuditContractCoverage.contract_id == contract.id))
+        .scalars()
+        .all()
+    )
+    assert len(rows) == 1
+    # Heuristic match still emitted synchronously…
+    assert rows[0].match_type == "direct"
+    # …but cryptographic verification is deferred.
+    assert rows[0].equivalence_status == "pending"
+    # And the worker stayed off the network.
+    assert calls == {"github": 0, "etherscan": 0}
+
+
+def test_coverage_worker_then_verify_worker_upgrades_to_reviewed_commit(db_session, seed_protocol, worker, monkeypatch):
+    """End-to-end deferred path: coverage worker writes a pending row, then
+    ``verify_one_coverage_row`` (the per-row entry point the verify worker
+    calls) upgrades it to ``reviewed_commit/high`` once the source-
+    equivalence proof goes through.
+    """
+    from db.models import AuditContractCoverage, JobStage, JobStatus
+    from services.audits import source_equivalence
+    from services.audits.coverage import verify_one_coverage_row
 
     protocol_id, _ = seed_protocol
     job = _add_job(
@@ -270,32 +340,54 @@ def test_coverage_worker_process_upgrades_via_source_equivalence(db_session, see
     monkeypatch.setattr(
         source_equivalence,
         "fetch_etherscan_source_files",
-        lambda _addr: source_equivalence.VerifiedSource(
-            contract_name="Pool",
-            compiler_version="0.8",
-            files={"src/Pool.sol": h},
+        lambda _addr: source_equivalence.EtherscanFetch(
+            source=source_equivalence.VerifiedSource(
+                contract_name="Pool",
+                compiler_version="0.8",
+                files={"src/Pool.sol": h},
+            ),
+            status="ok",
+            detail="",
         ),
     )
     monkeypatch.setattr(
         source_equivalence,
         "fetch_github_source_hash",
-        lambda _repo, _commit, path, token=None: h if path == "src/Pool.sol" else None,
+        lambda _repo, _commit, path, token=None: source_equivalence.GithubHashResult(
+            sha256=h if path == "src/Pool.sol" else None,
+            status="ok" if path == "src/Pool.sol" else "http_404",
+            detail="",
+        ),
     )
 
+    # Phase 1: coverage worker lands a pending row.
     claimed = worker._claim_next_job(db_session)
     assert claimed is not None
     worker.process(db_session, claimed)
     db_session.commit()
-    db_session.expire_all()
 
-    rows = (
+    db_session.expire_all()
+    row = (
         db_session.execute(select(AuditContractCoverage).where(AuditContractCoverage.contract_id == contract.id))
         .scalars()
-        .all()
+        .one()
     )
-    assert len(rows) == 1
-    assert rows[0].match_type == "reviewed_commit"
-    assert rows[0].match_confidence == "high"
+    assert row.match_type == "direct"
+    assert row.equivalence_status == "pending"
+
+    # Phase 2: drive the per-row verify entry point. The verify worker
+    # calls this from its thread pool; testing it directly keeps the
+    # assertions focused on the row-level behavior.
+    status = verify_one_coverage_row(db_session, row.id)
+    db_session.commit()
+    assert status == "proven"
+
+    db_session.expire_all()
+    row = db_session.get(AuditContractCoverage, row.id)
+    assert row is not None
+    assert row.match_type == "reviewed_commit"
+    assert row.match_confidence == "high"
+    assert row.equivalence_status == "proven"
 
 
 # ---------------------------------------------------------------------------
@@ -514,17 +606,14 @@ def test_coverage_worker_handles_job_without_contract(db_session, seed_protocol,
 # ---------------------------------------------------------------------------
 
 
-def test_coverage_worker_does_not_hold_transaction_during_http(db_session, seed_protocol, worker, monkeypatch):
-    """S5: the coverage worker must not keep a Postgres transaction open
-    while running GitHub / Etherscan HTTP calls. A held row-lock during a
-    15s HTTP timeout blocks every other writer touching the same rows.
-
-    We track the "is a transaction currently open?" flag via SQLAlchemy
-    engine events, and assert the flag is False every time the stubbed
-    source-equivalence HTTP helper is invoked.
+def test_coverage_worker_makes_zero_http_calls_on_deferred_path(db_session, seed_protocol, worker, monkeypatch):
+    """The coverage worker MUST NOT touch GitHub / Etherscan even when the
+    audit looks ripe for source-equivalence verification. The whole
+    point of moving verify to a dedicated worker is that the synchronous
+    coverage write sees zero rate-limit-able traffic — that's how we
+    avoid the 4-way Etherscan burst that used to cascade-block other
+    workers behind the shared backoff sleep (#82).
     """
-    from sqlalchemy import event
-
     from db.models import JobStage, JobStatus
     from services.audits import source_equivalence
 
@@ -553,65 +642,22 @@ def test_coverage_worker_does_not_hold_transaction_during_http(db_session, seed_
     audit.source_repo = "some/repo"
     db_session.commit()
 
-    # Flush the fixture's own transaction so the "begin" events below fire
-    # for the worker's writes, not pre-existing test setup.
-    db_session.close()
+    calls = {"github": 0, "etherscan": 0}
 
-    # Track active transactions on the engine. begin/commit events fire for
-    # every implicit-begin in SQLAlchemy 2.x.
-    tx_depth = {"value": 0}
+    def record_github(*_a, **_k):
+        calls["github"] += 1
+        raise AssertionError("github fetch reached on deferred path")
 
-    def on_begin(conn):
-        tx_depth["value"] += 1
-
-    def on_commit(conn):
-        tx_depth["value"] = max(0, tx_depth["value"] - 1)
-
-    def on_rollback(conn):
-        tx_depth["value"] = max(0, tx_depth["value"] - 1)
-
-    engine = db_session.bind
-    event.listen(engine, "begin", on_begin)
-    event.listen(engine, "commit", on_commit)
-    event.listen(engine, "rollback", on_rollback)
-
-    # Record tx_depth at the moment each HTTP helper is called.
-    http_tx_depths: list[tuple[str, int]] = []
-
-    def record_github(repo, commit, path, *, token=None):
-        http_tx_depths.append(("github", tx_depth["value"]))
-        return None
-
-    def record_etherscan(address):
-        http_tx_depths.append(("etherscan", tx_depth["value"]))
-        return source_equivalence.VerifiedSource(
-            contract_name="Pool",
-            compiler_version="0.8",
-            files={"src/Pool.sol": "deadbeef"},
-        )
+    def record_etherscan(_addr):
+        calls["etherscan"] += 1
+        raise AssertionError("etherscan fetch reached on deferred path")
 
     monkeypatch.setattr(source_equivalence, "fetch_github_source_hash", record_github)
     monkeypatch.setattr(source_equivalence, "fetch_etherscan_source_files", record_etherscan)
 
-    # Use a fresh session (the worker does too) so fixture tx state is
-    # isolated from the worker's transaction activity.
-    from sqlalchemy.orm import Session as _Session
+    claimed = worker._claim_next_job(db_session)
+    assert claimed is not None
+    worker.process(db_session, claimed)
+    db_session.commit()
 
-    session = _Session(engine, expire_on_commit=False)
-    try:
-        claimed = worker._claim_next_job(session)
-        assert claimed is not None
-
-        worker.process(session, claimed)
-        session.commit()
-    finally:
-        session.close()
-        event.remove(engine, "begin", on_begin)
-        event.remove(engine, "commit", on_commit)
-        event.remove(engine, "rollback", on_rollback)
-
-    # At least one HTTP call must have been made (via scope-name "Pool" +
-    # reviewed_commits populated).
-    assert http_tx_depths, "expected source-equivalence HTTP helpers to be invoked"
-    for label, depth in http_tx_depths:
-        assert depth == 0, f"{label} HTTP call happened inside an open transaction (depth={depth})"
+    assert calls == {"github": 0, "etherscan": 0}

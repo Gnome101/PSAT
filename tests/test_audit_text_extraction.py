@@ -348,6 +348,137 @@ class TestDownloadPdfBoundaries:
 
 
 # ---------------------------------------------------------------------------
+# download_audit_body — retry-with-backoff on transient transport failures.
+#
+# Production observed bursts of ConnectionResetError(104, 'Connection reset by
+# peer') from upstream publishers (Code4rena / Sherlock). Without retry, every
+# transient flake permanently fails an audit row — the worker writes
+# ``ExtractionOutcome(status="failed")`` and the audit never gets reattempted.
+# requests wraps OS-level ConnectionResetError as
+# requests.exceptions.ConnectionError, so the tests below mock with the wrapped
+# form to mirror what actually flows through ``download_audit_body``.
+# ---------------------------------------------------------------------------
+
+
+class TestDownloadAuditBodyRetry:
+    def test_transient_connection_error_is_retried_to_success(self, monkeypatch):
+        """First call RSTs the way prod does, second call succeeds — audit
+        should end as a successful download, not a terminal failure."""
+        monkeypatch.setattr("services.audits.text_extraction._retry_sleep", lambda _s: None, raising=False)
+
+        ok = _mock_response(body=b"%PDF-1.4\n...")
+        session = MagicMock()
+        session.get.side_effect = [
+            requests.exceptions.ConnectionError(
+                "Connection aborted.",
+                ConnectionResetError(104, "Connection reset by peer"),
+            ),
+            ok,
+        ]
+
+        body = download_pdf("https://example.com/audit.pdf", session=session)
+        assert body == b"%PDF-1.4\n..."
+        assert session.get.call_count == 2
+
+    def test_retries_exhausted_raises_download_error(self, monkeypatch):
+        """Caps the retry budget — three transient flakes in a row still
+        surface as a download failure, not an infinite loop."""
+        monkeypatch.setattr("services.audits.text_extraction._retry_sleep", lambda _s: None, raising=False)
+
+        session = MagicMock()
+        session.get.side_effect = requests.exceptions.ConnectionError(
+            "Connection aborted.",
+            ConnectionResetError(104, "Connection reset by peer"),
+        )
+
+        with pytest.raises(PdfDownloadError, match="fetch error"):
+            download_pdf("https://example.com/audit.pdf", session=session)
+        assert session.get.call_count == 3
+
+    def test_read_timeout_is_retried_to_success(self, monkeypatch):
+        """Slow CDNs surface as ReadTimeout, not ConnectionError. Both are
+        transient transport failures and get the same retry treatment."""
+        monkeypatch.setattr("services.audits.text_extraction._retry_sleep", lambda _s: None, raising=False)
+
+        ok = _mock_response(body=b"%PDF-1.4\n...")
+        session = MagicMock()
+        session.get.side_effect = [
+            requests.exceptions.ReadTimeout("read timed out"),
+            ok,
+        ]
+
+        body = download_pdf("https://example.com/audit.pdf", session=session)
+        assert body == b"%PDF-1.4\n..."
+        assert session.get.call_count == 2
+
+    def test_transient_5xx_is_retried_to_success(self, monkeypatch):
+        """A 503 from a CDN is the HTTP-level analogue of a connection reset.
+        Bucketed with 4xx as fatal pre-fix; should be retried post-fix."""
+        monkeypatch.setattr("services.audits.text_extraction._retry_sleep", lambda _s: None, raising=False)
+
+        ok = _mock_response(body=b"%PDF-1.4\n...")
+        session = MagicMock()
+        session.get.side_effect = [_mock_response(status_code=503), ok]
+
+        body = download_pdf("https://example.com/audit.pdf", session=session)
+        assert body == b"%PDF-1.4\n..."
+        assert session.get.call_count == 2
+
+    def test_fatal_4xx_does_not_retry(self, monkeypatch):
+        """404 means the audit URL is dead — retrying just wastes the budget."""
+        monkeypatch.setattr("services.audits.text_extraction._retry_sleep", lambda _s: None, raising=False)
+
+        session = MagicMock()
+        session.get.return_value = _mock_response(status_code=404)
+
+        with pytest.raises(PdfDownloadError, match="HTTP 404"):
+            download_pdf("https://example.com/missing.pdf", session=session)
+        assert session.get.call_count == 1
+
+    def test_fatal_content_type_does_not_retry(self, monkeypatch):
+        """text/html signals a wrong URL was captured at discovery — refetching
+        the same URL will keep returning HTML, so this short-circuits."""
+        monkeypatch.setattr("services.audits.text_extraction._retry_sleep", lambda _s: None, raising=False)
+
+        session = MagicMock()
+        session.get.return_value = _mock_response(content_type="text/html")
+
+        with pytest.raises(PdfDownloadError, match="content-type"):
+            download_pdf("https://example.com/login.pdf", session=session)
+        assert session.get.call_count == 1
+
+    def test_end_to_end_audit_succeeds_after_transient_flake(self, monkeypatch):
+        """Closes the loop on the prod failure mode: a single ConnectionReset
+        burst made audit rows permanently 'failed'. Post-fix the same flake
+        is absorbed by retry and the audit ends as 'success'."""
+        monkeypatch.setattr("services.audits.text_extraction._retry_sleep", lambda _s: None, raising=False)
+
+        pdf = _minimal_pdf_with_text("Audits covering Pool.sol Vault.sol Strategy.sol Registry.sol. " * 20)
+        session = MagicMock()
+        session.get.side_effect = [
+            requests.exceptions.ConnectionError(
+                "Connection aborted.",
+                ConnectionResetError(104, "Connection reset by peer"),
+            ),
+            _mock_response(body=pdf),
+        ]
+        monkeypatch.setattr(
+            "services.audits.text_extraction.store_audit_text",
+            lambda aid, text: (f"audits/text/{aid}.txt", len(text.encode("utf-8")), "f" * 64),
+        )
+
+        outcome = process_audit_report(
+            audit_report_id=1,
+            url="https://example.com/audit.pdf",
+            session=session,
+        )
+        assert outcome.status == "success", (
+            f"expected success after transient retry, got {outcome.status}: {outcome.error}"
+        )
+        assert session.get.call_count == 2
+
+
+# ---------------------------------------------------------------------------
 # audit_text_key — deterministic key format that downstream routes depend on
 # ---------------------------------------------------------------------------
 
