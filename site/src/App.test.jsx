@@ -57,7 +57,24 @@ function installDefaultApiMocks() {
     () => ETHERFI_COMPANY,
   );
   setFetchHandler(/^\/api\/monitored-contracts/, () => ({ items: [] }));
-  setFetchHandler(/^\/api\/watched-proxies/, () => []);
+  // One real proxy so ProxyWatcherPage's row .map() actually runs in tests
+  // (an empty list silently skips the React.Fragment branch — the very thing
+  // that crashed in prod when the import was missing).
+  setFetchHandler(/^\/api\/watched-proxies$/, () => [
+    {
+      id: "proxy-1",
+      label: "test-proxy",
+      proxy_address: "0x2222222222222222222222222222222222222222",
+      proxy_type: "EIP1967",
+      last_known_implementation: "0x3333333333333333333333333333333333333333",
+      needs_polling: false,
+      last_scanned_block: 12345,
+    },
+  ]);
+  setFetchHandler(
+    (url) => /^\/api\/watched-proxies\/[^/]+\/subscriptions$/.test(url.pathname),
+    () => [],
+  );
   setFetchHandler(/^\/api\/proxy-events/, () => []);
   setFetchHandler(/^\/api\/address_labels$/, () => ({ labels: {} }));
   setFetchHandler(
@@ -104,6 +121,9 @@ describe("App router smoke tests", () => {
     navigateTo("/proxies");
     render(<App />);
     expect(await screen.findByText(/Watched Proxies/i)).toBeInTheDocument();
+    // Wait for the row to mount so the .map() runs the React.Fragment path —
+    // empty-list fixtures silently skip this and let import bugs slip through.
+    expect(await screen.findByText("test-proxy")).toBeInTheDocument();
     expectNoCrash();
   });
 
