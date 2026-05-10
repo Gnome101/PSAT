@@ -407,6 +407,14 @@ class AuditContractCoverage(Base):
         Index("ix_audit_contract_coverage_contract_id", "contract_id"),
         Index("ix_audit_contract_coverage_audit_report_id", "audit_report_id"),
         Index("ix_audit_contract_coverage_protocol_id", "protocol_id"),
+        # Partial queue index for ``CoverageVerifyWorker``: only ``pending``
+        # rows are scanned, so the index size tracks the queue depth not
+        # the table size. Built in ``a3b4c5d6e7f8_add_coverage_pending_index``.
+        Index(
+            "ix_acc_equivalence_pending",
+            "id",
+            postgresql_where=text("equivalence_status = 'pending'"),
+        ),
     )
 
 

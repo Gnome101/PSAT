@@ -22,13 +22,41 @@ from __future__ import annotations
 import functools
 import hashlib
 import logging
+import random
 import re
+import time
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Final
 
 import requests
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Retry policy for transient GitHub raw fetches.
+#
+# Same shape as services.audits.text_extraction: prod observed bursts of
+# ConnectionResetError(104) hammering raw.githubusercontent.com that turned
+# every flake into a permanent ``transport_error``. The lru_cache below
+# makes this *worse* — once memoized, the URL stays poisoned for the entire
+# worker process. Retry runs *inside* the cached function, so the cache
+# stores the eventual outcome (success or genuine failure), not a flake.
+# ---------------------------------------------------------------------------
+_RETRY_ATTEMPTS: Final[int] = 3
+_RETRY_INITIAL_BACKOFF: Final[float] = 0.5
+_RETRY_BACKOFF_CAP: Final[float] = 10.0
+# 408/429 are transient by spec; 5xx is the HTTP analogue of an RST.
+# 404/403/410 stay terminal — refetching won't materialize a missing file.
+_TRANSIENT_HTTP_STATUS: Final[frozenset[int]] = frozenset({408, 429, 500, 502, 503, 504})
+
+
+def _retry_sleep(seconds: float) -> None:
+    """Sleep ``seconds`` with ±50% jitter. Factored out so unit tests can
+    stub the wall-clock wait without monkeypatching the whole ``time``
+    module — tests under ``TestFetchGithubRawRetry`` rely on this.
+    """
+    time.sleep(random.uniform(seconds * 0.5, seconds * 1.5))
 
 
 # ---------------------------------------------------------------------------
@@ -49,6 +77,14 @@ EQUIVALENCE_STATUSES = frozenset(
         "no_reviewed_commit",  # audit text had no commit SHA — cannot verify
         "no_source_repo",  # audit.source_repo is NULL — can't look it up
         "not_attempted",  # row predates verification rollout; needs backfill
+        # Deferred-verification states owned by ``workers.coverage_verify``.
+        # ``pending`` is the initial state coverage refresh writes for any
+        # row that *could* be verified later (audit has reviewed_commits +
+        # at least one repo). ``verifying`` is the in-flight sentinel the
+        # worker stamps while running the HTTP probe — stale recovery
+        # reverts it back to ``pending`` after a timeout.
+        "pending",
+        "verifying",
     }
 )
 
@@ -370,44 +406,94 @@ def _fetch_github_raw(url: str, token: str | None) -> GithubFetch:
     Result is cached by (url, token) — lru_cache works on ``GithubFetch``
     because it's a frozen dataclass (hashable). A 404 is cached too, so a
     known-missing URL is a single lookup across the whole run.
+
+    Retries transient transport flakes (``ConnectionError``, ``Timeout``)
+    and transient HTTP statuses (408/429/5xx) with jittered exponential
+    backoff *before* the cache memoizes the outcome — so a single RST
+    burst can't poison a URL for the worker's process lifetime.
     """
     headers = {"User-Agent": "PSAT-source-equivalence/0.1"}
     if token:
         headers["Authorization"] = f"token {token}"
-    try:
-        r = requests.get(url, headers=headers, timeout=15)
-    except requests.RequestException as exc:
-        logger.warning("github raw fetch failed for %s: %s", url, exc)
-        return GithubFetch(content=None, status="transport_error", detail=str(exc))
 
-    if r.status_code == 404:
-        return GithubFetch(content=None, status="http_404", detail=f"{url}: 404")
-    if 500 <= r.status_code < 600:
-        return GithubFetch(content=None, status="http_5xx", detail=f"{url}: {r.status_code}")
-    if r.status_code != 200:
-        return GithubFetch(
-            content=None,
-            status="http_other",
-            detail=f"{url}: {r.status_code}",
-        )
+    backoff = _RETRY_INITIAL_BACKOFF
+    last_transport_exc: requests.RequestException | None = None
+    last_5xx_status: int | None = None
 
-    # Reject likely binary or huge responses — source files are plain text
-    # and shouldn't exceed a few hundred KB. This guards against a repo
-    # path collision with a PDF or similar.
-    ct = (r.headers.get("content-type") or "").lower()
-    if ct and "text" not in ct and "application/octet-stream" not in ct:
-        return GithubFetch(
-            content=None,
-            status="content_type_rejected",
-            detail=f"{url}: content-type {ct!r} not source",
-        )
-    if len(r.content) > 5 * 1024 * 1024:
-        return GithubFetch(
-            content=None,
-            status="size_cap_exceeded",
-            detail=f"{url}: {len(r.content)} bytes > 5MB",
-        )
-    return GithubFetch(content=r.text, status="ok", detail="")
+    for attempt in range(_RETRY_ATTEMPTS):
+        last_attempt = attempt == _RETRY_ATTEMPTS - 1
+        try:
+            r = requests.get(url, headers=headers, timeout=15)
+        except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as exc:
+            last_transport_exc = exc
+            if last_attempt:
+                logger.warning("github raw fetch failed for %s: %s", url, exc)
+                return GithubFetch(content=None, status="transport_error", detail=str(exc))
+            logger.warning(
+                "github raw fetch transient %s for %s, retrying in %.1fs (attempt %d/%d)",
+                type(exc).__name__,
+                url,
+                backoff,
+                attempt + 1,
+                _RETRY_ATTEMPTS,
+            )
+            _retry_sleep(backoff)
+            backoff = min(backoff * 2, _RETRY_BACKOFF_CAP)
+            continue
+        except requests.RequestException as exc:
+            # SSLError / InvalidURL / etc. — not transport flakes, retry won't help.
+            logger.warning("github raw fetch failed for %s: %s", url, exc)
+            return GithubFetch(content=None, status="transport_error", detail=str(exc))
+
+        if r.status_code in _TRANSIENT_HTTP_STATUS and not last_attempt:
+            last_5xx_status = r.status_code
+            logger.warning(
+                "github raw fetch HTTP %d for %s, retrying in %.1fs (attempt %d/%d)",
+                r.status_code,
+                url,
+                backoff,
+                attempt + 1,
+                _RETRY_ATTEMPTS,
+            )
+            _retry_sleep(backoff)
+            backoff = min(backoff * 2, _RETRY_BACKOFF_CAP)
+            continue
+
+        if r.status_code == 404:
+            return GithubFetch(content=None, status="http_404", detail=f"{url}: 404")
+        if 500 <= r.status_code < 600:
+            return GithubFetch(content=None, status="http_5xx", detail=f"{url}: {r.status_code}")
+        if r.status_code != 200:
+            return GithubFetch(
+                content=None,
+                status="http_other",
+                detail=f"{url}: {r.status_code}",
+            )
+
+        # Reject likely binary or huge responses — source files are plain text
+        # and shouldn't exceed a few hundred KB. This guards against a repo
+        # path collision with a PDF or similar.
+        ct = (r.headers.get("content-type") or "").lower()
+        if ct and "text" not in ct and "application/octet-stream" not in ct:
+            return GithubFetch(
+                content=None,
+                status="content_type_rejected",
+                detail=f"{url}: content-type {ct!r} not source",
+            )
+        if len(r.content) > 5 * 1024 * 1024:
+            return GithubFetch(
+                content=None,
+                status="size_cap_exceeded",
+                detail=f"{url}: {len(r.content)} bytes > 5MB",
+            )
+        return GithubFetch(content=r.text, status="ok", detail="")
+
+    # Loop fell through: every attempt was transient. Surface the most
+    # recent failure shape so callers can distinguish transport vs 5xx.
+    if last_transport_exc is not None:
+        return GithubFetch(content=None, status="transport_error", detail=str(last_transport_exc))
+    assert last_5xx_status is not None  # one branch must have set this
+    return GithubFetch(content=None, status="http_5xx", detail=f"{url}: {last_5xx_status}")
 
 
 @dataclass(frozen=True)

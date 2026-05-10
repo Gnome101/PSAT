@@ -1307,6 +1307,301 @@ def _persist_coverage_for_contract(session: Session, contract_id: int, matches: 
     return len(matches)
 
 
+# --- Deferred verification (CoverageVerifyWorker) ----------------------
+
+
+def _stamp_pending_when_verifiable(
+    matches: list[CoverageMatch],
+    audits_by_id: dict[int, AuditReport | None],
+) -> list[CoverageMatch]:
+    """Stamp ``equivalence_status`` for the deferred-verify path.
+
+    Used when ``verify_source_equivalence=False``: rows that *could* later
+    be proven by source-equivalence land with ``status='pending'`` so
+    ``workers.coverage_verify`` can drain them. Rows whose audit lacks
+    inputs (no commits or no candidate repo) get a terminal status
+    immediately so the verify worker doesn't bother re-checking — a
+    re-extraction that fills those fields will trigger a fresh upsert
+    that re-stamps them as ``pending``.
+    """
+    out: list[CoverageMatch] = []
+    for m in matches:
+        # Don't override stamps that the inline verify path already set
+        # (in case a caller mixes paths). Idempotent fallthrough.
+        if m.equivalence_status:
+            out.append(m)
+            continue
+        audit = audits_by_id.get(m.audit_report_id)
+        if audit is None:
+            out.append(m)
+            continue
+        has_commits = bool(audit.reviewed_commits)
+        has_repo = bool(audit.source_repo) or bool(audit.referenced_repos)
+        if not has_commits:
+            status = "no_reviewed_commit"
+            reason: str | None = "audit has no reviewed_commits"
+        elif not has_repo:
+            status = "no_source_repo"
+            reason = "audit has no source_repo or referenced_repos"
+        else:
+            status = "pending"
+            reason = None
+        out.append(
+            CoverageMatch(
+                audit_report_id=m.audit_report_id,
+                contract_id=m.contract_id,
+                protocol_id=m.protocol_id,
+                matched_name=m.matched_name,
+                match_type=m.match_type,
+                match_confidence=m.match_confidence,
+                covered_from_block=m.covered_from_block,
+                covered_to_block=m.covered_to_block,
+                bytecode_keccak_at_match=m.bytecode_keccak_at_match,
+                verified_at=m.verified_at,
+                equivalence_status=status,
+                equivalence_reason=reason,
+                # Leave equivalence_checked_at NULL until the worker
+                # actually runs — a NOW() stamp on a never-attempted row
+                # is misleading.
+                equivalence_checked_at=None,
+                pinned_commit=m.pinned_commit,
+                proof_kind=m.proof_kind,
+                matched_commit_sha=m.matched_commit_sha,
+            )
+        )
+    return out
+
+
+def _resolve_pinned_commit(
+    session: Session,
+    audit: AuditReport,
+    row: AuditContractCoverage,
+) -> str | None:
+    """Recover the auditor-pinned commit for a ``reviewed_address`` row.
+
+    The inline verify path carries ``pinned_commit`` on the
+    ``CoverageMatch`` dataclass; the DB schema doesn't persist it.
+    Phase F (address-anchored matches) targets a specific commit per
+    scope entry, so the deferred verify worker re-derives that commit
+    from ``audit.scope_entries`` by matching against the row's contract.
+
+    Returns the commit SHA when a scope entry resolves (through proxy
+    history if needed) to the same impl Contract this row covers, else
+    ``None``. ``None`` falls through to "try every reviewed commit" —
+    the proven outcome is identical, only the failure-mode reason text
+    is broader.
+    """
+    if row.match_type != "reviewed_address":
+        return None
+    if not audit.scope_entries:
+        return None
+    audit_ts = _audit_effective_ts(audit.date)
+    row_cache: dict[tuple[int, str, str], Contract | None] = {}
+    proxy_events_cache: dict[int, list[UpgradeEvent]] = {}
+    for entry in audit.scope_entries:
+        if not isinstance(entry, dict):
+            continue
+        commit = entry.get("commit")
+        if not commit:
+            continue
+        target = _resolve_scope_entry_target(
+            session,
+            audit.protocol_id,
+            entry,
+            audit_ts=audit_ts,
+            row_cache=row_cache,
+            proxy_events_cache=proxy_events_cache,
+        )
+        if target is not None and target.id == row.contract_id:
+            return str(commit)
+    return None
+
+
+def _stamp_coverage_row(
+    session: Session,
+    row: AuditContractCoverage,
+    *,
+    status: str,
+    reason: str | None,
+    proven: bool = False,
+    proof_kind: str | None = None,
+    matched_commit_sha: str | None = None,
+    now: datetime | None = None,
+) -> None:
+    """Write a verification verdict back to one coverage row.
+
+    On ``proven=True`` we upgrade ``match_type`` → ``reviewed_commit``
+    and ``match_confidence`` → ``high`` so the timeline view sees the
+    cryptographic proof override the heuristic temporal match.
+    Other statuses leave the heuristic match intact — a failed
+    verification annotates but never deletes.
+    """
+    now = now or datetime.now(timezone.utc)
+    row.equivalence_status = status
+    row.equivalence_reason = reason[:1000] if reason else None
+    row.equivalence_checked_at = now
+    if proven:
+        row.match_type = "reviewed_commit"
+        row.match_confidence = "high"
+        row.proof_kind = proof_kind
+        row.matched_commit_sha = matched_commit_sha
+    else:
+        # Non-proven verdicts must not carry a stale proof_kind /
+        # matched_commit_sha from a prior proven attempt that was later
+        # invalidated. Conservative: NULL them so the UI never shows
+        # "proven" badges next to a non-proven status.
+        row.proof_kind = None
+        row.matched_commit_sha = None
+
+
+def verify_one_coverage_row(
+    session: Session,
+    coverage_row_id: int,
+    *,
+    github_token: str | None = None,
+) -> str | None:
+    """Run source-equivalence on one ``audit_contract_coverage`` row.
+
+    Resolves audit + contract from the row, fetches the impl source
+    (DB-first, Etherscan fallback), and runs ``verify_audit_covers_impl``
+    against the row's ``matched_name``. The verdict is persisted onto
+    the row in the caller's session — caller commits.
+
+    Returns the resulting ``equivalence_status`` or ``None`` if the row
+    vanished. Re-running on a row that's already been verified is safe
+    (it just re-writes the same verdict, possibly with a fresher
+    ``equivalence_checked_at``); the worker only claims rows where
+    ``equivalence_status='pending'`` so this is rarely exercised.
+
+    Network errors are caught and mapped to transient statuses
+    (``etherscan_fetch_failed`` / ``github_fetch_failed``) so the
+    caller's transaction commits cleanly. The verify worker re-claims
+    transients on its next pass after operator intervention promotes
+    them back to ``pending``.
+    """
+    from services.audits.source_equivalence import (
+        EtherscanFetch,
+        VerifiedSource,
+        fetch_db_source_files,
+        fetch_etherscan_source_files,
+        verify_audit_covers_impl,
+    )
+
+    row = session.get(AuditContractCoverage, coverage_row_id)
+    if row is None:
+        return None
+
+    audit = session.get(AuditReport, row.audit_report_id)
+    contract = session.get(Contract, row.contract_id)
+    if audit is None or contract is None:
+        _stamp_coverage_row(session, row, status="not_attempted", reason="audit or contract row vanished")
+        return row.equivalence_status
+
+    reviewed_commits = list(audit.reviewed_commits or [])
+    referenced_repos = list(audit.referenced_repos or [])
+    classified_commits = list(audit.classified_commits or [])
+    source_repo = audit.source_repo
+
+    if not reviewed_commits:
+        _stamp_coverage_row(session, row, status="no_reviewed_commit", reason="audit has no reviewed_commits")
+        return row.equivalence_status
+    if not source_repo and not referenced_repos:
+        _stamp_coverage_row(
+            session, row, status="no_source_repo", reason="audit has no source_repo or referenced_repos"
+        )
+        return row.equivalence_status
+
+    # Resolve impl source: DB rows first (free), Etherscan single-call fallback.
+    # The deferred path makes one Etherscan call per row max — vs. the
+    # inline path's per-batch fan-out — so the global Etherscan rate
+    # limit is the only throttle that matters here.
+    impl_source: VerifiedSource | None = fetch_db_source_files(session, contract.id)
+    fetch_status = "ok"
+    fetch_detail = ""
+    if impl_source is None and contract.address:
+        try:
+            fetch = fetch_etherscan_source_files(contract.address)
+        except Exception as exc:
+            logger.exception(
+                "verify_one_coverage_row: etherscan fetch crashed for contract %s",
+                contract.id,
+            )
+            _stamp_coverage_row(session, row, status="etherscan_fetch_failed", reason=f"crash: {exc}")
+            return row.equivalence_status
+        if isinstance(fetch, EtherscanFetch):
+            impl_source = fetch.source
+            fetch_status = fetch.status
+            fetch_detail = fetch.detail
+        elif isinstance(fetch, VerifiedSource):
+            # Backwards-compat: legacy stubs may still return the unwrapped
+            # type. Treat as a happy fetch with empty detail.
+            impl_source = fetch
+
+    if impl_source is None:
+        if fetch_status == "unverified":
+            _stamp_coverage_row(
+                session,
+                row,
+                status="etherscan_unverified",
+                reason=fetch_detail or "no verified source",
+            )
+        else:
+            _stamp_coverage_row(
+                session,
+                row,
+                status="etherscan_fetch_failed",
+                reason=fetch_detail or "etherscan fetch failed",
+            )
+        return row.equivalence_status
+
+    pinned_commit = _resolve_pinned_commit(session, audit, row)
+
+    try:
+        outcome = verify_audit_covers_impl(
+            reviewed_commits=reviewed_commits,
+            scope_name=row.matched_name,
+            impl_source=impl_source,
+            source_repo=source_repo,
+            github_token=github_token,
+            specific_commit=pinned_commit,
+            fallback_repos=referenced_repos,
+        )
+    except Exception as exc:
+        logger.exception(
+            "verify_one_coverage_row: verify crashed for row %s (audit=%s contract=%s)",
+            coverage_row_id,
+            row.audit_report_id,
+            row.contract_id,
+        )
+        _stamp_coverage_row(session, row, status="github_fetch_failed", reason=f"crash: {exc}")
+        return row.equivalence_status
+
+    proven = outcome.status == "proven"
+    proof_kind: str | None = None
+    matched_commit_sha: str | None = None
+    if proven:
+        matched_commits = {em.commit.lower() for em in outcome.matches}
+        proof_kind = _compute_proof_kind(matched_commits, classified_commits)
+        for entry in classified_commits:
+            sha = str(entry.get("sha") or "").lower()
+            if sha and sha in matched_commits and entry.get("label") == "reviewed":
+                matched_commit_sha = sha
+                break
+        if matched_commit_sha is None and matched_commits:
+            matched_commit_sha = next(iter(matched_commits))
+
+    _stamp_coverage_row(
+        session,
+        row,
+        status=outcome.status,
+        reason=outcome.reason,
+        proven=proven,
+        proof_kind=proof_kind,
+        matched_commit_sha=matched_commit_sha,
+    )
+    return row.equivalence_status
+
+
 def upsert_coverage_for_audit(
     session: Session,
     audit_id: int,
@@ -1315,13 +1610,26 @@ def upsert_coverage_for_audit(
 ) -> int:
     """Replace all coverage rows for ``audit_id`` with a fresh match.
 
-    Two-phase when ``verify_source_equivalence`` is true: a DB phase
-    computes the base temporal matches and pre-loads the inputs for
-    source-equivalence, commits, runs GitHub + Etherscan HTTP with the
-    transaction released, and finally opens a fresh transaction for the
-    delete-then-insert. This keeps long-running HTTP (hundreds of seconds
-    on a wide audit) out of the Postgres row locks that would otherwise
-    wedge concurrent writers. Returns inserted row count; caller commits.
+    Two paths:
+
+    - ``verify_source_equivalence=True`` (legacy): inline two-phase —
+      compute matches, pre-load inputs, commit, run GitHub + Etherscan
+      HTTP with the tx released, then open a fresh tx for the
+      delete-then-insert. Used by the admin ``refresh_coverage`` endpoint
+      where the caller is willing to wait minutes for cryptographic
+      proof to land synchronously.
+
+    - ``verify_source_equivalence=False`` (default): defer the verify
+      pass to ``workers.coverage_verify``. Rows that *could* be proven
+      land with ``equivalence_status='pending'`` so the verify worker
+      drains them at a controlled rate; rows whose audit lacks inputs
+      (``no_reviewed_commit`` / ``no_source_repo``) get a terminal
+      status immediately. This keeps the synchronous coverage write
+      under a second instead of holding the worker thread through tens
+      of Etherscan calls — the Etherscan rate-limit storm that used to
+      cascade across every worker on the box (#82).
+
+    Returns inserted row count; caller commits.
     """
     audit = session.get(AuditReport, audit_id)
     if audit is None:
@@ -1351,10 +1659,15 @@ def upsert_coverage_for_audit(
 
     if verify_source_equivalence and equiv_inputs is not None:
         matches = _apply_equivalence_http(matches, equiv_inputs)
+    else:
+        # Deferred path: stamp ``pending`` for rows the verify worker
+        # can later prove; stamp the appropriate terminal otherwise.
+        matches = _stamp_pending_when_verifiable(matches, {audit_id: audit})
 
     # Bytecode anchor — one eth_getCode per distinct impl. Runs outside
     # the tx; keccak stays NULL on RPC failure (drift-unknown, not
-    # drift-detected).
+    # drift-detected). Cheap enough (one RPC per impl, not Etherscan)
+    # to keep inline on both paths.
     matches = _apply_bytecode_anchor(session, matches)
 
     # Phase B: fresh transaction for the delete-then-insert.
@@ -1370,9 +1683,11 @@ def upsert_coverage_for_contract(
     """Refresh coverage rows for one contract (delete-then-insert by contract_id).
 
     Called after a live upgrade changes the contract's impl windows.
-    ``verify_source_equivalence`` forwards to the source-equivalence pass
-    with the same two-phase tx-release-during-HTTP pattern as
-    :func:`upsert_coverage_for_audit`.
+    ``verify_source_equivalence`` selects between the inline-verify and
+    deferred paths described on :func:`upsert_coverage_for_audit`. The
+    coverage worker calls in with ``verify=False`` so the tens of
+    Etherscan calls that used to ride on every coverage job now land
+    on the dedicated ``CoverageVerifyWorker`` instead.
     """
     matches = match_audits_for_contract(session, contract_id)
     if matches:
@@ -1380,6 +1695,10 @@ def upsert_coverage_for_contract(
         session.commit()
         if verify_source_equivalence and equiv_inputs is not None:
             matches = _apply_equivalence_http(matches, equiv_inputs)
+        else:
+            audit_ids = {m.audit_report_id for m in matches}
+            audits_by_id: dict[int, AuditReport | None] = {aid: session.get(AuditReport, aid) for aid in audit_ids}
+            matches = _stamp_pending_when_verifiable(matches, audits_by_id)
         matches = _apply_bytecode_anchor(session, matches)
     return _persist_coverage_for_contract(session, contract_id, matches)
 
