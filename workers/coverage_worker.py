@@ -168,13 +168,22 @@ class CoverageWorker(BaseWorker):
     # -- Process ----------------------------------------------------------
 
     def process(self, session: Session, job: Job) -> None:
-        """Refresh coverage for this job's Contract with source-equivalence on.
+        """Refresh coverage for this job's Contract — fast path, defer verify.
 
         Finds the Contract via the job_id link the discovery worker set,
-        then delegates to ``upsert_coverage_for_contract``. The match
-        side is symmetric to the audit-side refresh triggered from the
-        scope worker — we fetch all audits whose scope mentions the
-        contract name and write one coverage row per match.
+        then delegates to ``upsert_coverage_for_contract`` with
+        ``verify_source_equivalence=False``. The match side is symmetric
+        to the audit-side refresh triggered from the scope worker — we
+        fetch all audits whose scope mentions the contract name and
+        write one coverage row per match.
+
+        Source-equivalence verification (the Etherscan + GitHub HTTP
+        pass) is deferred to ``workers.coverage_verify``: a coverage
+        rebuild here lands rows with ``equivalence_status='pending'``,
+        and the dedicated verify worker drains them at a steady rate.
+        Holding verify inline used to fan out 4-way Etherscan bursts per
+        coverage job, which 429'd the global rate-limit window and
+        cascaded into every other Etherscan-using worker on the box.
         """
         from services.audits.coverage import upsert_coverage_for_contract
 
@@ -193,11 +202,11 @@ class CoverageWorker(BaseWorker):
         inserted = upsert_coverage_for_contract(
             session,
             contract.id,
-            verify_source_equivalence=True,
+            verify_source_equivalence=False,
         )
         session.commit()
         logger.info(
-            "Coverage stage complete for job %s (contract %s): %d coverage row(s)",
+            "Coverage stage complete for job %s (contract %s): %d coverage row(s) — verification deferred",
             job.id,
             contract.id,
             inserted,

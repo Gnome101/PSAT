@@ -396,35 +396,58 @@ def test_update_detail_delegates_to_queue(mock_update, mock_signal):
 # ---------------------------------------------------------------------------
 
 
+@patch("workers.base.SessionLocal")
 @patch("workers.base.signal.signal")
-def test_heartbeat_issues_update_and_commits(mock_signal):
-    """``_heartbeat`` issues a stand-alone UPDATE and commits, leaving detail alone."""
+def test_heartbeat_issues_update_and_commits(mock_signal, SessionLocalMock):
+    """``_heartbeat`` issues a stand-alone UPDATE and commits, leaving detail alone.
+
+    The legacy (no-lease) path opens a fresh ``SessionLocal()`` rather
+    than reusing the worker's main session — see
+    ``test_heartbeat_fresh_session.py`` for why.
+    """
+    fresh = MagicMock()
+    fresh.__enter__ = MagicMock(return_value=fresh)
+    fresh.__exit__ = MagicMock(return_value=False)
+    SessionLocalMock.return_value = fresh
+
     w = _TestWorker()
-    mock_session = MagicMock()
+    worker_session = MagicMock()
     mock_job = _make_job(detail="processing 42 deps")
 
-    w._heartbeat(mock_session, cast(Any, mock_job))
+    w._heartbeat(worker_session, cast(Any, mock_job))
 
-    assert mock_session.execute.call_count == 1
-    update_stmt = mock_session.execute.call_args[0][0]
-    # The compiled UPDATE must mention updated_at and not detail.
+    SessionLocalMock.assert_called_once()
+    assert fresh.execute.call_count == 1
+    update_stmt = fresh.execute.call_args[0][0]
     compiled = str(update_stmt.compile(compile_kwargs={"literal_binds": False}))
     assert "updated_at" in compiled.lower()
     assert "detail" not in compiled.lower()
-    mock_session.commit.assert_called_once()
+    fresh.commit.assert_called_once()
+    # Worker's main session must NOT be touched.
+    worker_session.execute.assert_not_called()
 
 
+@patch("workers.base.SessionLocal")
 @patch("workers.base.signal.signal")
-def test_heartbeat_swallows_db_failure(mock_signal):
-    """A DB failure inside heartbeat is non-fatal — the loop continues."""
+def test_heartbeat_swallows_db_failure(mock_signal, SessionLocalMock):
+    """A DB failure inside the fresh-session UPDATE is non-fatal — the loop
+    continues. The failure is now logged at WARNING (used to be a silent
+    DEBUG-level rollback log, which hid the original heartbeat-stall bug).
+    """
+    fresh = MagicMock()
+    fresh.__enter__ = MagicMock(return_value=fresh)
+    fresh.__exit__ = MagicMock(return_value=False)
+    fresh.execute.side_effect = RuntimeError("db gone")
+    SessionLocalMock.return_value = fresh
+
     w = _TestWorker()
-    mock_session = MagicMock()
-    mock_session.execute.side_effect = RuntimeError("db gone")
+    worker_session = MagicMock()
     mock_job = _make_job()
 
     # Should not raise.
-    w._heartbeat(mock_session, cast(Any, mock_job))
-    mock_session.rollback.assert_called_once()
+    w._heartbeat(worker_session, cast(Any, mock_job))
+    SessionLocalMock.assert_called_once()
+    worker_session.execute.assert_not_called()
 
 
 def test_stale_job_timeout_default_is_600():

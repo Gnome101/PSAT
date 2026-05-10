@@ -1099,24 +1099,29 @@ def test_run_upgrade_history_handles_missing_timestamp(db_session, seed_protocol
 
 
 # ---------------------------------------------------------------------------
-# 7. Regression — backfill's coverage refresh must run source-equivalence
+# 7. Regression — backfill enqueues verifiable rows for the deferred verify
+#    worker instead of running source-equivalence inline (#82)
 # ---------------------------------------------------------------------------
 
 
-def test_backfill_coverage_refresh_runs_source_equivalence(
+def test_backfill_coverage_refresh_defers_source_equivalence(
     db_session, seed_protocol, worker, stub_etherscan, monkeypatch
 ):
-    """Regression for the "LiquidityPool shows no audit coverage" bug —
-    the source-equivalence half.
+    """Backfill must enqueue verifiable coverage rows for ``CoverageVerifyWorker``
+    instead of running source-equivalence inline.
 
     When ``_backfill_historical_impls`` creates a Contract row for a
-    historical impl, there's no downstream Job for this impl (it's
-    ``job_id=None``), so ``workers.coverage_worker`` never runs for it.
+    historical impl, there's no downstream Job for this impl
+    (``job_id=None``), so ``workers.coverage_worker`` never runs for it.
     The backfill's inline ``upsert_coverage_for_contract`` call is the
-    only coverage path for these rows — and it must invoke source-
-    equivalence, so audits whose ``reviewed_commits`` + ``source_repo``
-    can prove byte-equality with the impl's Etherscan source are promoted
-    to ``reviewed_commit`` / ``high`` at creation time.
+    only coverage path for these rows — but the verify HTTP pass must
+    NOT run inline here. Holding it inline fanned out 4-way Etherscan +
+    GitHub bursts per backfilled impl, which 429'd the global rate-limit
+    window and cascaded into Resolution / Static (#82). Verifiable rows
+    instead land with ``equivalence_status='pending'`` so the dedicated
+    ``CoverageVerifyWorker`` drains them at a controlled rate; promotion
+    to ``reviewed_commit`` / ``high`` is exercised by
+    ``tests/test_coverage_verify_worker.py::test_process_row_proves_pending_to_proven``.
     """
     from db.models import (
         AuditContractCoverage,
@@ -1147,10 +1152,11 @@ def test_backfill_coverage_refresh_runs_source_equivalence(
             tx_hash="0x" + "a" * 64,
         )
     )
-    # Audit published BEFORE the upgrade — normal workflow: auditor
-    # reviewed a commit, protocol deployed that commit days later.
-    # Temporal matching alone would land this at 'medium' or 'low'; the
-    # source-equivalence proof is what drives it to 'reviewed_commit'/'high'.
+    # Audit has the inputs the verify worker needs: reviewed_commits +
+    # source_repo. Per ``_stamp_pending_when_verifiable`` that's enough
+    # to land the row as ``equivalence_status='pending'`` so the worker
+    # picks it up; without those it would terminal-stamp immediately
+    # (no_reviewed_commit / no_source_repo) and the worker would skip.
     audit = AuditReport(
         protocol_id=protocol_id,
         url=f"https://example.com/{uuid.uuid4().hex}.pdf",
@@ -1165,67 +1171,26 @@ def test_backfill_coverage_refresh_runs_source_equivalence(
     db_session.add(audit)
     db_session.commit()
 
-    # Monkeypatch source-equivalence at the HTTP-phase seam used by the
-    # new two-phase coverage upsert. ``check_audit_covers_impl`` takes
-    # pre-loaded ``VerifiedSource`` so the stub can return a truthy list
-    # without touching the DB. ``fetch_etherscan_source_files`` is the
-    # fallback path used when DB sources are absent; stubbing it avoids
-    # real Etherscan traffic and provides the ``VerifiedSource`` the
-    # preload step hands to the HTTP phase.
+    # Trip-wires on the inline verify seams. With the deferred contract
+    # neither should be touched during backfill; if a future regression
+    # re-enables ``verify_source_equivalence=True`` here these will
+    # surface immediately rather than silently re-introducing the
+    # rate-limit cascade in prod.
     import services.audits.source_equivalence as se_mod
 
-    def fake_check(*, reviewed_commits, scope_contracts, impl_source, source_repo, github_token=None):
-        return [
-            se_mod.EquivalenceMatch(
-                commit="3b6b81b",
-                scope_name="LiquidityPool",
-                etherscan_path="src/LiquidityPool.sol",
-                source_sha256="c3a3c06f00000000000000000000000000000000000000000000000000006ebd39",
+    inline_calls: list[str] = []
+
+    def _trip(name: str):
+        def _f(*_a, **_kw):
+            inline_calls.append(name)
+            raise AssertionError(
+                f"{name} called inline during backfill — verify must be deferred to CoverageVerifyWorker (#82)"
             )
-        ]
 
-    # The coverage layer now calls ``verify_audit_covers_impl`` per
-    # matched_name (not the legacy multi-scope ``check_audit_covers_impl``).
-    # Stub the new one to return a proven outcome so the row ends up as
-    # reviewed_commit/high.
-    def fake_verify(
-        *,
-        reviewed_commits,
-        scope_name,
-        impl_source,
-        source_repo,
-        github_token=None,
-        specific_commit=None,
-        fallback_repos=None,
-    ):
-        return se_mod.EquivalenceOutcome(
-            status="proven",
-            reason="test",
-            matches=tuple(
-                fake_check(
-                    reviewed_commits=reviewed_commits,
-                    scope_contracts=[scope_name],
-                    impl_source=impl_source,
-                    source_repo=source_repo,
-                )
-            ),
-        )
+        return _f
 
-    monkeypatch.setattr(se_mod, "check_audit_covers_impl", fake_check)
-    monkeypatch.setattr(se_mod, "verify_audit_covers_impl", fake_verify)
-    monkeypatch.setattr(
-        se_mod,
-        "fetch_etherscan_source_files",
-        lambda _addr: se_mod.EtherscanFetch(
-            source=se_mod.VerifiedSource(
-                contract_name="LiquidityPool",
-                compiler_version="0.8",
-                files={"src/LiquidityPool.sol": "stubhash"},
-            ),
-            status="ok",
-            detail="",
-        ),
-    )
+    monkeypatch.setattr(se_mod, "verify_audit_covers_impl", _trip("verify_audit_covers_impl"))
+    monkeypatch.setattr(se_mod, "fetch_etherscan_source_files", _trip("fetch_etherscan_source_files"))
 
     _backfill(
         db_session,
@@ -1242,13 +1207,18 @@ def test_backfill_coverage_refresh_runs_source_equivalence(
         .all()
     )
     assert len(rows) == 1, (
-        "backfill created the Contract row but did not upgrade coverage to "
-        "reviewed_commit/high via source-equivalence — the proof path "
-        "exists in the code but isn't triggered automatically"
+        "backfill created the Contract row but did not enqueue the audit ↔ "
+        "impl pair for verification — the deferred-verify hand-off is broken"
     )
     r = rows[0]
-    # The key assertions — before the fix, verify_source_equivalence defaults
-    # to False at the backfill call site, so the match stays at impl_era/low
-    # or impl_era/medium instead of reviewed_commit/high.
-    assert r.match_type == "reviewed_commit"
-    assert r.match_confidence == "high"
+    # Verifiable audit → row lands as 'pending' so the verify worker
+    # drains it. equivalence_checked_at stays NULL until the worker
+    # actually runs (a NOW() stamp on a never-attempted row would lie).
+    assert r.equivalence_status == "pending", (
+        f"verifiable audit landed with status={r.equivalence_status!r}, expected 'pending' for deferred verification"
+    )
+    assert r.equivalence_checked_at is None
+    assert inline_calls == [], (
+        f"inline source-equivalence ran during backfill: {inline_calls} — "
+        "verify_source_equivalence=False contract was not honored"
+    )

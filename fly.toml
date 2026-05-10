@@ -12,7 +12,9 @@ kill_timeout = 30
 [env]
   PORT = "8000"
   PYTHONUNBUFFERED = "1"
-  # Bumped from start_workers.sh defaults (2/1) — fits within shared-cpu-2x:4GB workers VM.
+  # Bumped from start_workers.sh defaults (2/1). Sized for the workers VM
+  # (shared-cpu-8x:16GB) — 8 cores fit ~12 always-on Python procs plus
+  # forge subprocess bursts without queueing.
   PSAT_STATIC_WORKERS = "3"
   PSAT_RESOLUTION_WORKERS = "2"
 
@@ -62,8 +64,13 @@ kill_timeout = 30
 
 [[vm]]
   processes = ["workers"]
-  size = "shared-cpu-2x"
-  memory = "4gb"
+  # Sized for peak run-queue depth: ~12 always-on Python worker procs +
+  # forge/solc subprocess bursts during recursive resolution + audit
+  # PyPDF parse threads. On 2 vCPUs this oversubscribed at load avg ~9
+  # and discovery / audit / static throughput all dropped 10-30×; 8
+  # cores brings peak contenders per core back to a healthy ~3.
+  size = "shared-cpu-8x"
+  memory = "16gb"
 
 # Playwright Chromium is RAM-heavy; give it its own headroom.
 [[vm]]

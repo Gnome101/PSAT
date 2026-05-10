@@ -710,15 +710,19 @@ def backfill_historical_impl_contracts(
         refreshed = 0
         for contract_id in refresh_ids:
             try:
-                # Source-equivalence ON: historical impls have no Job, so
-                # the coverage_worker path never runs for them. This inline
-                # call is the only chance to promote matches to
-                # reviewed_commit/high when an audit's reviewed_commits
-                # byte-equal the deployed impl's Etherscan source.
+                # Defer source-equivalence to ``CoverageVerifyWorker``: rows
+                # land as ``equivalence_status='pending'`` and the worker
+                # drains them at a controlled rate. Historical impls still
+                # get their coverage links written here; the verdict
+                # promotion to ``reviewed_commit`` arrives a few seconds-
+                # to-minutes later instead of synchronously. Holding verify
+                # inline fanned out 4-way Etherscan + GitHub bursts per
+                # backfilled impl, which 429'd the global rate-limit and
+                # cascaded into Resolution / Static (#82).
                 refreshed += upsert_coverage_for_contract(
                     session,
                     contract_id,
-                    verify_source_equivalence=True,
+                    verify_source_equivalence=False,
                 )
             except Exception as exc:
                 # One flaky match shouldn't poison the rest; admin

@@ -251,44 +251,44 @@ def materialize_or_wait(
 ) -> ContractMaterialization:
     """Look up or build the materialization row for the given content key.
 
-    Behaviour:
-      1. Open a short-lived session, take the advisory lock for the
-         ``(chain, bytecode_keccak)`` pair. Concurrent callers serialize
-         on this lock.
-      2. Inside the lock, re-read the row. If ``status='ready'``,
-         return it (the lock loser path).
-      3. Otherwise, call ``builder()`` to produce the bundle. The
+    Three phases, each in its own short-lived transaction so no PG
+    connection sits idle during ``builder()``:
+
+      1. **Ready check** — open a session, take the advisory lock for
+         ``(chain, bytecode_keccak)``, re-read the row. If ``status='ready'``,
+         return it. Otherwise commit (releasing the lock) and proceed.
+      2. **Build** — call ``builder()`` with no DB session held. The
          builder returns a dict with at minimum ``contract_name``,
-         ``analysis``, ``tracking_plan``.
-      4. If object storage is configured (``ARTIFACT_STORAGE_*`` env),
-         upload analysis/tracking_plan as JSON blobs and persist only
-         their keys on the row — JSONB columns stay NULL. If storage is
-         unconfigured, persist inline as before. Both writes are inside
-         the advisory-locked transaction so a concurrent loser sees the
-         committed result on its second read.
-      5. Commit, releasing the advisory lock. Return the persisted row.
+         ``analysis``, ``tracking_plan``. Blob uploads (if storage is
+         configured) happen in this phase too — same idle-connection
+         concern, same fix.
+      3. **Write** — open a fresh session, take the advisory lock, recheck
+         (a concurrent caller may have written ``status='ready'`` while
+         our builder was running — we serve their bundle and drop ours),
+         else upsert this build's bundle to ``status='ready'``, commit.
 
-    On builder failure, the row is upserted to ``status='failed'`` with
-    the exception text so an operator can triage; the exception is
-    re-raised so the caller's retry logic kicks in.
+    Why split the lock: the original design held the lock across the
+    builder, which kept the PG connection idle for the 1-3 minutes a
+    real forge+Slither run takes. Neon's pooler-side SSL idle timeout
+    closes that connection mid-build, the final UPSERT raises
+    ``OperationalError``, and the cache row is never written — the
+    recursive resolver then falls back to rebuilding the same bytecode.
+    Dropping the lock between phases makes both transactions sub-second
+    so the timeout never fires; the recheck in phase 3 handles the rare
+    case where two callers raced through phase 1 and both built.
 
-    On a blob upload failure inside step 4 the transaction rolls back
-    and the exception propagates — better to leave the row pending
-    (next caller retries the build) than to write a row pointing at a
-    key that doesn't exist.
+    On builder failure, a fresh session writes a ``status='failed'`` row
+    with the exception text so an operator can triage, then re-raises.
+
+    On a blob upload failure the exception propagates without writing a
+    row — better to leave nothing committed than a row pointing at a
+    blob key the bucket doesn't have.
     """
     chain_norm, addr_norm, keccak_norm = _normalize(chain, address, bytecode_keccak)
 
-    session = SessionLocal()
-    try:
-        # Single transaction from lock acquisition through the final
-        # commit — ``pg_advisory_xact_lock`` releases on commit, so any
-        # intermediate commit before persisting the bundle would let a
-        # concurrent loser race past and rebuild.
+    # ── Phase 1: ready check under a short-lived lock ──────────────
+    with SessionLocal() as session:
         _advisory_lock(session, chain_norm, keccak_norm)
-
-        # Inside the lock — read sees the result of any concurrent
-        # winner that committed before us.
         row = session.execute(
             select(ContractMaterialization).where(
                 ContractMaterialization.chain == chain_norm,
@@ -298,14 +298,18 @@ def materialize_or_wait(
         if row is not None and row.status == "ready":
             session.commit()
             return row
+        # Release the lock before the long-running builder. Concurrent
+        # callers may now proceed past their own phase-1 check; the
+        # phase-3 recheck is what collapses the resulting race to one
+        # stored bundle.
+        session.commit()
 
-        try:
-            bundle = builder()
-        except Exception as exc:
-            # Persist the failure breadcrumb so an operator can triage,
-            # then re-raise. Upsert because the row may not exist yet on
-            # a first-time keccak.
-            err = f"{type(exc).__name__}: {exc}"[:4000]
+    # ── Phase 2: builder + blob uploads, no DB connection held ─────
+    try:
+        bundle = builder()
+    except Exception as exc:
+        err = f"{type(exc).__name__}: {exc}"[:4000]
+        with SessionLocal() as session:
             stmt = pg_insert(ContractMaterialization).values(
                 chain=chain_norm,
                 bytecode_keccak=keccak_norm,
@@ -319,38 +323,48 @@ def materialize_or_wait(
             )
             session.execute(stmt)
             session.commit()
-            raise
+        raise
 
-        # Decide blob vs inline by whether storage is configured. If a
-        # write to the blob path fails, the rollback below leaves no
-        # stale blob_key pointing at a missing object.
-        analysis_payload = bundle.get("analysis")
-        tracking_plan_payload = bundle.get("tracking_plan")
-        analysis_blob_key: str | None = None
-        tracking_plan_blob_key: str | None = None
-        analysis_inline: dict | None = analysis_payload if isinstance(analysis_payload, dict) else None
-        tracking_plan_inline: dict | None = tracking_plan_payload if isinstance(tracking_plan_payload, dict) else None
+    analysis_payload = bundle.get("analysis")
+    tracking_plan_payload = bundle.get("tracking_plan")
+    analysis_blob_key: str | None = None
+    tracking_plan_blob_key: str | None = None
+    analysis_inline: dict | None = analysis_payload if isinstance(analysis_payload, dict) else None
+    tracking_plan_inline: dict | None = tracking_plan_payload if isinstance(tracking_plan_payload, dict) else None
 
-        client = get_storage_client()
-        if client is not None:
-            try:
-                if analysis_inline is not None:
-                    analysis_blob_key = _blob_key(chain_norm, keccak_norm, "analysis")
-                    _put_blob(client, analysis_blob_key, analysis_inline)
-                    analysis_inline = None  # don't double-store
-                if tracking_plan_inline is not None:
-                    tracking_plan_blob_key = _blob_key(chain_norm, keccak_norm, "tracking_plan")
-                    _put_blob(client, tracking_plan_blob_key, tracking_plan_inline)
-                    tracking_plan_inline = None
-            except StorageError:
-                # Roll back the transaction (releasing the lock) so the
-                # next caller can retry without a half-written row.
-                session.rollback()
-                raise
+    client = get_storage_client()
+    if client is not None:
+        # Blob uploads happen before reacquiring the PG lock so a slow
+        # Tigris PUT doesn't push us back into idle-connection territory.
+        # On failure, propagate without writing a row — the next caller
+        # retries the build cleanly.
+        if analysis_inline is not None:
+            analysis_blob_key = _blob_key(chain_norm, keccak_norm, "analysis")
+            _put_blob(client, analysis_blob_key, analysis_inline)
+            analysis_inline = None
+        if tracking_plan_inline is not None:
+            tracking_plan_blob_key = _blob_key(chain_norm, keccak_norm, "tracking_plan")
+            _put_blob(client, tracking_plan_blob_key, tracking_plan_inline)
+            tracking_plan_inline = None
 
-        # Upsert the successful bundle in one statement so the lock
-        # holds across the whole write. ``pg_insert`` lets SQLAlchemy
-        # bind the dict→JSONB and key→Text columns correctly.
+    # ── Phase 3: write under a short-lived lock ────────────────────
+    with SessionLocal() as session:
+        _advisory_lock(session, chain_norm, keccak_norm)
+
+        # Recheck: a concurrent caller may have raced past phase 1 with
+        # us and committed first. Their bundle is keccak-equivalent
+        # (same bytecode → same static analysis), so we serve it and
+        # discard ours.
+        existing = session.execute(
+            select(ContractMaterialization).where(
+                ContractMaterialization.chain == chain_norm,
+                ContractMaterialization.bytecode_keccak == keccak_norm,
+            )
+        ).scalar_one_or_none()
+        if existing is not None and existing.status == "ready":
+            session.commit()
+            return existing
+
         stmt = pg_insert(ContractMaterialization).values(
             chain=chain_norm,
             bytecode_keccak=keccak_norm,
@@ -380,7 +394,6 @@ def materialize_or_wait(
         session.execute(stmt)
         session.commit()
 
-        # Re-read so we return a fresh ORM object reflecting committed values.
         ready = session.execute(
             select(ContractMaterialization).where(
                 ContractMaterialization.chain == chain_norm,
@@ -388,5 +401,3 @@ def materialize_or_wait(
             )
         ).scalar_one()
         return ready
-    finally:
-        session.close()

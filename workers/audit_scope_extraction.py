@@ -311,19 +311,21 @@ class AuditScopeExtractionWorker(AuditRowWorker):
         an unexpected coverage bug never blocks a successful extraction
         from being recorded. Import is local to avoid a circular at
         worker-module import time.
+
+        Source-equivalence verification is deferred — rows that *can* be
+        proven later land as ``equivalence_status='pending'`` and the
+        ``CoverageVerifyWorker`` drains them. Holding verify inline here
+        used to make every scope-completion fan out 4-way Etherscan
+        bursts that hammered the rate-limit window, blocking the
+        Resolution / Static workers' Etherscan calls behind shared
+        backoff sleeps.
         """
         from services.audits.coverage import upsert_coverage_for_audit
 
         try:
-            # Source-equivalence ON at the trigger site: audits that land
-            # with reviewed_commits + source_repo populated should resolve
-            # to reviewed_commit/high at scope-completion time, without
-            # waiting for an admin refresh_coverage call. The opt-in kwarg
-            # default stays False for the admin endpoint that explicitly
-            # forwards a bool.
-            inserted = upsert_coverage_for_audit(session, audit_id, verify_source_equivalence=True)
+            inserted = upsert_coverage_for_audit(session, audit_id, verify_source_equivalence=False)
             logger.info(
-                "Audit %s → coverage refreshed (%d row(s))",
+                "Audit %s → coverage refreshed (%d row(s)) — verification deferred",
                 audit_id,
                 inserted,
             )

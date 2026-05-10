@@ -300,14 +300,30 @@ def test_reclaimed_job_cannot_be_silently_advanced_by_original_holder(session):
 
 
 @requires_postgres
-def test_heartbeat_extends_lease_and_blocks_reclaim(session):
+def test_heartbeat_extends_lease_and_blocks_reclaim(session, monkeypatch):
     """A worker that heartbeats inside a long task must not be reclaimed.
     After the fix the sweep keys on lease_expires_at; the heartbeat
     extends it past now+ttl regardless of updated_at.
+
+    ``_heartbeat`` opens a fresh ``SessionLocal()`` (so a Neon-killed
+    worker session can't silently swallow the write — see
+    ``test_heartbeat_fresh_session.py``). The default ``SessionLocal`` is
+    bound to ``DATABASE_URL`` (the dev DB); we route it to
+    ``TEST_DATABASE_URL`` for this test so the fresh session lands on
+    the same DB the test fixture wrote the job to.
     """
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import Session as _Session
+    from sqlalchemy.orm import sessionmaker
+
     from db.models import JobStage, JobStatus
     from db.queue import claim_job, create_job, reclaim_stuck_jobs
     from workers.base import BaseWorker
+
+    test_engine = create_engine(DATABASE_URL)
+    monkeypatch.setattr(
+        "workers.base.SessionLocal", sessionmaker(bind=test_engine, class_=_Session, expire_on_commit=False)
+    )
 
     class _Probe(BaseWorker):
         stage = JobStage.discovery
@@ -323,6 +339,9 @@ def test_heartbeat_extends_lease_and_blocks_reclaim(session):
     probe = _Probe()
     probe._heartbeat(session, claimed)
 
+    # Refresh test session to see the heartbeat's commit (different connection).
+    session.expire_all()
+
     rescued = reclaim_stuck_jobs(session, stale_timeout_seconds=1)
     assert rescued == [], "heartbeat must keep the lease alive — sweep should leave the row"
 
@@ -331,6 +350,8 @@ def test_heartbeat_extends_lease_and_blocks_reclaim(session):
     assert refreshed is not None
     assert refreshed.status == JobStatus.processing
     assert refreshed.worker_id == "worker-A"
+
+    test_engine.dispose()
 
 
 @requires_postgres

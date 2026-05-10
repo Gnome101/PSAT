@@ -82,7 +82,12 @@ def parallel_map(
             if heartbeat is not None:
                 try:
                     heartbeat()
-                except Exception:
+                except Exception as exc:
+                    if _is_lease_lost(exc):
+                        # The lease has rolled to a sibling worker; finishing this
+                        # batch would just be wasted work on a job we no longer own.
+                        # Propagate so ``_execute_job`` can bail.
+                        raise
                     logger.exception("parallel_map: heartbeat raised — continuing")
         return results
 
@@ -122,10 +127,27 @@ def parallel_map(
         if heartbeat is not None:
             try:
                 heartbeat()
-            except Exception:
+            except Exception as exc:
+                if _is_lease_lost(exc):
+                    # The lease has rolled to a sibling worker. Don't drain the
+                    # remaining futures — the work is for a job we no longer own.
+                    # Propagate so ``_execute_job`` can bail.
+                    raise
                 logger.exception("parallel_map: heartbeat raised — continuing")
 
     return results
+
+
+def _is_lease_lost(exc: BaseException) -> bool:
+    """Lazy import of ``db.queue.LeaseLost`` to keep this utility module
+    free of an unconditional ``utils → db`` import. Returns False if the
+    DB layer is unavailable (test/CLI contexts), letting the heartbeat
+    swallow path stay defensive in those environments."""
+    try:
+        from db.queue import LeaseLost
+    except Exception:
+        return False
+    return isinstance(exc, LeaseLost)
 
 
 def unwrap_results(results: Sequence[tuple[T, R | BaseException]]) -> list[R]:

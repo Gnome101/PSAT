@@ -28,6 +28,8 @@ export const EQUIVALENCE_META = {
   etherscan_fetch_failed: { label: "etherscan error", color: "#475569", bg: "#f1f5f9", border: "#e2e8f0" },
   github_fetch_failed: { label: "github error", color: "#475569", bg: "#f1f5f9", border: "#e2e8f0" },
   not_attempted: { label: "not verified yet", color: "#475569", bg: "#f1f5f9", border: "#e2e8f0" },
+  pending: { label: "verifying…", color: "#1e40af", bg: "#dbeafe", border: "#bfdbfe" },
+  verifying: { label: "verifying…", color: "#1e40af", bg: "#dbeafe", border: "#bfdbfe" },
 };
 
 export const PROOF_KIND_META = {
