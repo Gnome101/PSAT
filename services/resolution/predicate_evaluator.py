@@ -169,7 +169,10 @@ def evaluate_tree(
     children = tree.get("children") or []
     if not children:
         return CapabilityExpr.unsupported("empty_branch")
-    evaluated = [evaluate_tree(c, ctx) for c in children]
+    evaluated = []
+    for child in children:
+        side_condition = _side_condition_capability(child) if op == "AND" and len(children) > 1 else None
+        evaluated.append(side_condition or evaluate_tree(child, ctx))
     if op == "AND":
         result = evaluated[0]
         for child in evaluated[1:]:
@@ -268,13 +271,17 @@ def _evaluate_leaf(leaf: LeafPredicate, ctx: EvaluationContext) -> CapabilityExp
         descriptor = leaf.get("set_descriptor")
         if descriptor is None:
             return CapabilityExpr.unsupported("membership_without_descriptor")
-        cap = ctx.adapter.enumerate(descriptor, ctx.contract_address)
+        cap = _resolve_view_key_membership(descriptor, ctx)
+        if cap is None:
+            cap = ctx.adapter.enumerate(descriptor, ctx.contract_address)
         if operator == "falsy":
             cap = negate(cap)
         return cap
 
     if kind == "equality":
         if operator in ("eq", "ne"):
+            if not _leaf_has_caller_operand(leaf):
+                return _resolve_contextual_equality(leaf, ctx, operator)
             base = _resolve_equality_principal(leaf, ctx)
             return base if operator == "eq" else negate(base)
         return CapabilityExpr.unsupported(f"equality_op_{operator}_unsupported")
@@ -315,6 +322,18 @@ def _evaluate_leaf(leaf: LeafPredicate, ctx: EvaluationContext) -> CapabilityExp
         return CapabilityExpr.conditional_universal(cond)
 
     return CapabilityExpr.unsupported(f"unknown_leaf_kind_{kind}")
+
+
+def _side_condition_capability(tree: PredicateTree) -> CapabilityExpr | None:
+    if tree.get("op") != "LEAF":
+        return None
+    leaf = tree.get("leaf")
+    if not isinstance(leaf, dict) or leaf.get("kind") != "unsupported":
+        return None
+    role = leaf.get("authority_role")
+    if role in ("reentrancy", "pause", "business", "time") and not leaf.get("references_msg_sender"):
+        return CapabilityExpr.conditional_universal(_condition_from_leaf(cast(LeafPredicate, leaf)))
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -370,6 +389,12 @@ def _resolve_equality_principal(
             confidence="partial",
         )
 
+    if src == "self_address":
+        value = ctx.contract_address if ctx is not None else None
+        if isinstance(value, str) and value.startswith("0x") and len(value) == 42:
+            return CapabilityExpr.finite_set([value.lower()], quality="exact", confidence="enumerable")
+        return CapabilityExpr.unsupported("self_address_without_contract")
+
     if src == "view_call":
         # Same as state_variable: resolved via adapter recursion.
         return CapabilityExpr.finite_set(
@@ -396,6 +421,324 @@ def _resolve_equality_principal(
         return CapabilityExpr.unsupported(f"equality_operand_computed_{op.get('computed_kind')}")
 
     return CapabilityExpr.unsupported(f"equality_operand_source_{src}")
+
+
+def _resolve_view_key_membership(descriptor: SetDescriptor, ctx: EvaluationContext) -> CapabilityExpr | None:
+    if descriptor.get("kind") != "mapping_membership":
+        return None
+    key_sources = list(descriptor.get("key_sources") or [])
+    caller_indices = [idx for idx, source in enumerate(key_sources) if source.get("source") in _CALLER_SOURCES]
+    view_indices = [idx for idx, source in enumerate(key_sources) if source.get("source") == "view_call"]
+    if len(caller_indices) != 1 or len(view_indices) != 1:
+        return None
+
+    outer_ctx = getattr(getattr(ctx, "adapter", None), "_outer_ctx", None)
+    session = getattr(outer_ctx, "session", None)
+    rpc_url = getattr(outer_ctx, "rpc_url", None)
+    if session is None or not isinstance(rpc_url, str) or not rpc_url:
+        return None
+
+    view_index = view_indices[0]
+    view_source = key_sources[view_index]
+    selector = view_source.get("callee_selector")
+    if not isinstance(selector, str) or not selector.startswith("0x"):
+        signature = view_source.get("callee_signature")
+        selector = _selector_for_signature(signature) if isinstance(signature, str) else None
+    if not selector:
+        return None
+
+    event_hints: list[dict[str, Any]] = [
+        dict(hint) for hint in (descriptor.get("enumeration_hint") or []) if isinstance(hint, dict)
+    ]
+    if not event_hints:
+        return None
+    role_words = _observed_event_key_words(
+        session=session,
+        outer_ctx=outer_ctx,
+        descriptor=descriptor,
+        event_hints=event_hints,
+        key_index=view_index,
+    )
+    if not role_words:
+        return None
+
+    contract_address = getattr(outer_ctx, "contract_address", None) or ctx.contract_address
+    if not isinstance(contract_address, str) or not contract_address.startswith("0x"):
+        return None
+    admin_words = _call_unary_bytes32_view(
+        rpc_url=rpc_url,
+        contract_address=contract_address,
+        selector=selector,
+        args=role_words,
+        block=getattr(outer_ctx, "block", None) or ctx.block,
+    )
+    if not admin_words:
+        return CapabilityExpr.external_check_only(
+            ExternalCheck(
+                target_address=contract_address.lower(),
+                target_call_selector=selector,
+                extra={"basis": ["view_key_membership_unresolved"]},
+            )
+        )
+
+    result: CapabilityExpr | None = None
+    for admin_word in admin_words:
+        patched = dict(descriptor)
+        patched_keys = [dict(source) for source in key_sources]
+        patched_keys[view_index] = {"source": "constant", "constant_value": admin_word}
+        patched["key_sources"] = patched_keys
+        child = ctx.adapter.enumerate(cast(SetDescriptor, patched), ctx.contract_address)
+        result = child if result is None else union(result, child)
+    return result
+
+
+def _observed_event_key_words(
+    *,
+    session: Any,
+    outer_ctx: Any,
+    descriptor: SetDescriptor,
+    event_hints: list[dict[str, Any]],
+    key_index: int,
+) -> list[str]:
+    from sqlalchemy import func, select
+
+    from db.models import IndexedEventLog
+    from services.resolution.adapters.event_indexed import _resolve_event_address
+    from services.resolution.repos.event_logs_pg import _event_keys, _normalize_word
+
+    out: set[str] = set()
+    for hint in event_hints:
+        topic0 = hint.get("topic0")
+        if not isinstance(topic0, str):
+            continue
+        event_address = _resolve_event_address(cast(dict[str, Any], descriptor), hint, outer_ctx)
+        if event_address is None:
+            continue
+        stmt = (
+            select(IndexedEventLog)
+            .where(IndexedEventLog.chain_id == getattr(outer_ctx, "chain_id", 1))
+            .where(func.lower(IndexedEventLog.event_address) == event_address.lower())
+            .where(func.lower(IndexedEventLog.topic0) == topic0.lower())
+            .order_by(
+                IndexedEventLog.block_number.asc(),
+                IndexedEventLog.transaction_index.asc(),
+                IndexedEventLog.log_index.asc(),
+            )
+        )
+        block = getattr(outer_ctx, "block", None)
+        if isinstance(block, int):
+            stmt = stmt.where(IndexedEventLog.block_number <= block)
+        for row in session.execute(stmt).scalars():
+            keys = _event_keys(
+                row.topics or [],
+                row.data_words or [],
+                hint.get("topics_to_keys") or {},
+                hint.get("data_to_keys") or {},
+            )
+            word = _normalize_word(keys.get(key_index))
+            if word is not None:
+                out.add(word)
+    if not out:
+        out.update(
+            _observed_event_key_words_from_hypersync(
+                outer_ctx=outer_ctx,
+                descriptor=descriptor,
+                event_hints=event_hints,
+                key_index=key_index,
+            )
+        )
+    return sorted(out)
+
+
+def _observed_event_key_words_from_hypersync(
+    *,
+    outer_ctx: Any,
+    descriptor: SetDescriptor,
+    event_hints: list[dict[str, Any]],
+    key_index: int,
+) -> list[str]:
+    import asyncio
+    import os
+    import time
+
+    from services.resolution.adapters.event_indexed import _resolve_event_address
+    from services.resolution.repos.event_logs_hypersync import (
+        _data_words_from_log,
+        _logs_from_response,
+        _topics_from_log,
+    )
+    from services.resolution.repos.event_logs_pg import _event_keys, _normalize_word
+
+    token = os.getenv("ENVIO_API_TOKEN") or getattr(outer_ctx, "meta", {}).get("hypersync_token")
+    if not token:
+        return []
+    address_topics: dict[str, set[str]] = {}
+    hints_by_address_topic: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    for hint in event_hints:
+        topic0 = hint.get("topic0")
+        if not isinstance(topic0, str):
+            continue
+        event_address = _resolve_event_address(cast(dict[str, Any], descriptor), hint, outer_ctx)
+        if event_address is None:
+            continue
+        address_topics.setdefault(event_address.lower(), set()).add(topic0.lower())
+        hints_by_address_topic.setdefault((event_address.lower(), topic0.lower()), []).append(hint)
+    if not address_topics:
+        return []
+
+    async def _scan() -> list[str]:
+        try:
+            import hypersync  # type: ignore
+        except Exception:
+            return []
+        url = str(
+            getattr(outer_ctx, "meta", {}).get("hypersync_url")
+            or os.getenv("PSAT_HYPERSYNC_URL", "https://eth.hypersync.xyz")
+        )
+        timeout_s = float(os.getenv("PSAT_HYPERSYNC_EVENT_FALLBACK_TIMEOUT_S", "45"))
+        max_pages = int(os.getenv("PSAT_HYPERSYNC_EVENT_FALLBACK_MAX_PAGES", "50"))
+        client = hypersync.HypersyncClient(hypersync.ClientConfig(url=url, bearer_token=token))
+        found: set[str] = set()
+        for event_address, topic0s in address_topics.items():
+            current_from = 0
+            page_count = 0
+            started = time.monotonic()
+            while True:
+                if time.monotonic() - started > timeout_s or page_count >= max_pages:
+                    break
+                query = hypersync.Query(
+                    from_block=current_from,
+                    to_block=getattr(outer_ctx, "block", None),
+                    logs=[
+                        hypersync.LogSelection(
+                            address=[event_address],
+                            topics=[sorted(topic0s)],
+                        )
+                    ],
+                    field_selection=hypersync.FieldSelection(log=[field.value for field in hypersync.LogField]),
+                )
+                try:
+                    response = await client.get(query)
+                except Exception:
+                    break
+                page_count += 1
+                for log in _logs_from_response(response):
+                    topics = _topics_from_log(log)
+                    if not topics:
+                        continue
+                    topic0 = topics[0].lower()
+                    for hint in hints_by_address_topic.get((event_address, topic0), []):
+                        keys = _event_keys(
+                            topics,
+                            _data_words_from_log(log),
+                            hint.get("topics_to_keys") or {},
+                            hint.get("data_to_keys") or {},
+                        )
+                        word = _normalize_word(keys.get(key_index))
+                        if word is not None:
+                            found.add(word)
+                next_block = getattr(response, "next_block", None)
+                if next_block is None or next_block <= current_from:
+                    break
+                block = getattr(outer_ctx, "block", None)
+                if isinstance(block, int) and next_block >= block:
+                    break
+                current_from = next_block
+        return sorted(found)
+
+    try:
+        return asyncio.run(_scan())
+    except Exception:
+        return []
+
+
+def _call_unary_bytes32_view(
+    *,
+    rpc_url: str,
+    contract_address: str,
+    selector: str,
+    args: list[str],
+    block: int | None,
+) -> list[str]:
+    from services.resolution.repos.event_logs_pg import _normalize_word
+    from utils.rpc import rpc_batch_request_with_status
+
+    calls: list[tuple[str, list[Any]]] = []
+    for arg in args:
+        word = _normalize_word(arg)
+        if word is None:
+            continue
+        calls.append(
+            (
+                "eth_call",
+                [
+                    {"to": contract_address.lower(), "data": selector + word[2:]},
+                    hex(block) if isinstance(block, int) else "latest",
+                ],
+            )
+        )
+    if not calls:
+        return []
+    out: set[str] = set()
+    for raw, had_error in rpc_batch_request_with_status(rpc_url, calls):
+        if had_error:
+            continue
+        word = _normalize_word(raw)
+        if word is not None:
+            out.add(word)
+    return sorted(out)
+
+
+def _leaf_has_caller_operand(leaf: LeafPredicate) -> bool:
+    return any((op.get("source") in _CALLER_SOURCES) for op in (leaf.get("operands") or []))
+
+
+def _resolve_contextual_equality(
+    leaf: LeafPredicate,
+    ctx: EvaluationContext | None,
+    operator: str,
+) -> CapabilityExpr:
+    """Evaluate equality leaves whose caller operand was already bound.
+
+    Recursive external-call evaluation intentionally rewrites a callee's
+    ``msg.sender`` to the calling contract address. A guard like
+    ``msg.sender == liquidityPool`` then becomes a concrete call-edge
+    condition, not a root-caller principal. Exact true is no caller
+    restriction; exact false means the external call can never authorize
+    this edge. Dynamic non-caller checks remain business side-conditions.
+    """
+    operands = leaf.get("operands") or []
+    if len(operands) != 2:
+        return CapabilityExpr.conditional_universal(_condition_from_leaf(leaf))
+
+    left = _resolve_operand_static_value(cast(dict[str, Any], operands[0]), ctx)
+    right = _resolve_operand_static_value(cast(dict[str, Any], operands[1]), ctx)
+    if left is None or right is None:
+        return CapabilityExpr.conditional_universal(_condition_from_leaf(leaf))
+
+    matches = left == right
+    allowed = matches if operator == "eq" else not matches
+    if allowed:
+        return CapabilityExpr.conditional_universal(
+            Condition(kind="business", description="resolved call-frame equality")
+        )
+    return CapabilityExpr.finite_set([], quality="exact", confidence="enumerable")
+
+
+def _resolve_operand_static_value(operand: dict[str, Any], ctx: EvaluationContext | None) -> str | None:
+    src = operand.get("source")
+    if src == "constant":
+        value = operand.get("constant_value")
+        return value.lower() if isinstance(value, str) else None
+    if src == "state_variable":
+        sv_name = operand.get("state_variable_name")
+        values = ctx.state_var_values if ctx is not None else None
+        value = values.get(sv_name) if values is not None and isinstance(sv_name, str) else None
+        return value.lower() if isinstance(value, str) else None
+    if src == "self_address":
+        value = ctx.contract_address if ctx is not None else None
+        return value.lower() if isinstance(value, str) else None
+    return None
 
 
 def _is_zero_address(value: str) -> bool:
@@ -733,9 +1076,6 @@ def _is_target_call_operand(
     op_selector = operand.get("callee_selector")
     if callee_selector and isinstance(op_selector, str) and op_selector == callee_selector:
         return True
-    op_callee = operand.get("callee")
-    if callee_signature and isinstance(op_callee, str) and callee_signature.startswith(f"{op_callee}("):
-        return True
     return False
 
 
@@ -831,9 +1171,9 @@ def _normalize_tree_for_frame(tree: PredicateTree, frame: Any) -> PredicateTree:
     return cast(PredicateTree, normalized) if isinstance(normalized, dict) else tree
 
 
-def _normalize_value_for_frame(value: Any, frame: Any) -> Any:
+def _normalize_value_for_frame(value: Any, frame: Any, seen_parameters: frozenset[int] = frozenset()) -> Any:
     if isinstance(value, list):
-        return [_normalize_value_for_frame(item, frame) for item in value]
+        return [_normalize_value_for_frame(item, frame, seen_parameters) for item in value]
     if not isinstance(value, dict):
         return value
 
@@ -853,11 +1193,16 @@ def _normalize_value_for_frame(value: Any, frame: Any) -> Any:
         if isinstance(selector, str) and selector.startswith("0x"):
             return {"source": "constant", "constant_value": selector.lower()}
     if source == "parameter":
+        idx = value.get("parameter_index")
+        if isinstance(idx, int):
+            if idx in seen_parameters:
+                return deepcopy(value)
+            seen_parameters = seen_parameters | {idx}
         bound = _bound_parameter_operand(value, frame)
         if bound is not None:
-            return _normalize_value_for_frame(bound, frame)
+            return _normalize_value_for_frame(bound, frame, seen_parameters)
 
-    return {k: _normalize_value_for_frame(v, frame) for k, v in value.items()}
+    return {k: _normalize_value_for_frame(v, frame, seen_parameters) for k, v in value.items()}
 
 
 def _bound_parameter_operand(operand: dict[str, Any], frame: Any) -> dict[str, Any] | None:

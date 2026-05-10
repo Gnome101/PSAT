@@ -40,6 +40,7 @@ using the old static summary as an authority source.
 from __future__ import annotations
 
 import logging
+import os
 from dataclasses import asdict, dataclass, is_dataclass
 from typing import Any
 
@@ -56,6 +57,7 @@ from .predicate_evaluator import evaluate_tree_with_registry
 from .repos import PostgresEventLogRepo
 
 logger = logging.getLogger(__name__)
+DEFAULT_RPC_URL = os.getenv("ETH_RPC", "https://ethereum-rpc.publicnode.com")
 
 
 @dataclass(frozen=True)
@@ -143,12 +145,17 @@ def resolve_contract_capabilities(
     ``job_id`` is None.
     """
     addr = address.lower()
+    runtime_addr = addr
     if job_id is not None:
         job = session.get(Job, job_id)
         if job is None or (job.address or "").lower() != addr:
             return None
         runtime_job = job
         analysis_job = job
+        request = job.request if isinstance(job.request, dict) else {}
+        proxy_address = request.get("proxy_address")
+        if isinstance(proxy_address, str) and proxy_address.startswith("0x") and len(proxy_address) == 42:
+            runtime_addr = proxy_address.lower()
     else:
         lookup = find_analysis_job_for_address(
             session,
@@ -161,6 +168,7 @@ def resolve_contract_capabilities(
             return None
         runtime_job = lookup.runtime_job
         analysis_job = lookup.analysis_job
+        runtime_addr = (runtime_job.address or addr).lower()
 
     artifact = get_artifact(session, analysis_job.id, "predicate_trees")
     if not isinstance(artifact, dict) or "trees" not in artifact:
@@ -196,6 +204,8 @@ def resolve_contract_capabilities(
         if isinstance(candidate_job.request, dict) and isinstance(candidate_job.request.get("rpc_url"), str):
             rpc_url = candidate_job.request["rpc_url"]
             break
+    if not rpc_url:
+        rpc_url = DEFAULT_RPC_URL
 
     registry = AdapterRegistry()
     registry.register(EventIndexedAdapter)
@@ -213,14 +223,14 @@ def resolve_contract_capabilities(
     for fn_signature, tree in (artifact["trees"] or {}).items():
         ctx = EvaluationContext(
             chain_id=chain_id,
-            contract_address=addr,
+            contract_address=runtime_addr,
             block=block,
             event_log_repo=event_log_repo,
             rpc_url=rpc_url,
             state_var_values=state_var_values,
             session=session,
             call_frame=CallFrame.root(
-                contract_address=addr,
+                contract_address=runtime_addr,
                 function_signature=fn_signature if isinstance(fn_signature, str) else None,
                 function_selector=_selector_for_signature(fn_signature if isinstance(fn_signature, str) else None),
             ),

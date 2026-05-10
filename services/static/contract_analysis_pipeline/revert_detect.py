@@ -6,7 +6,7 @@ Returns a list of ``RevertGate`` records, each describing:
     "not C"`` means if(C) revert (predicate builder pushes the NOT into
     each leaf's operator).
   * the kind: ``require / assert / custom_revert / inline_asm /
-    try_catch_revert / function_pointer_check / opaque``
+    try_catch_revert / external_call_revert / function_pointer_check / opaque``
 
 Per the v4 plan (round-2 finding #8 on edge-case soundness), we cover:
   1. require / require with msg
@@ -64,6 +64,7 @@ RevertKind = Literal[
     "if_revert",
     "inline_asm",
     "try_catch_revert",
+    "external_call_revert",
     "opaque",
 ]
 
@@ -274,12 +275,30 @@ class RevertDetector:
                     )
                 )
                 return
+            return
+
+        for ir in getattr(node, "irs_ssa", None) or getattr(node, "irs", []) or []:
+            if isinstance(ir, HighLevelCall) and getattr(ir, "lvalue", None) is None:
+                self._gates.append(
+                    RevertGate(
+                        kind="external_call_revert",
+                        condition_value=ir,
+                        polarity="allowed_when_true",
+                        node=node,
+                        containing_function=container,
+                        call_chain=list(self._call_chain_irs),
+                        expression_text=_expression_text(node) or str(ir),
+                        basis=["external call must not revert"],
+                    )
+                )
 
         # Cross-function revert detection: recurse into InternalCall /
         # LibraryCall callees to find gates the modifier doesn't directly
         # contain.
         for ir in getattr(node, "irs_ssa", None) or getattr(node, "irs", []) or []:
             if isinstance(ir, (InternalCall, LibraryCall)):
+                if getattr(ir, "lvalue", None) is not None:
+                    continue
                 callee = getattr(ir, "function", None)
                 if callee is None:
                     continue

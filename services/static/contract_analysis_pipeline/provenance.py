@@ -109,6 +109,7 @@ class Source:
     callee_signature: str | None = None
     callee_selector: str | None = None
     constant_value: str | None = None
+    value_type: str | None = None
     computed_kind: str | None = None
     block_context_kind: str | None = None
 
@@ -120,6 +121,14 @@ class Source:
 SourceSet = frozenset[Source]
 EMPTY: SourceSet = frozenset()
 TOP: SourceSet = frozenset({Source(kind="top")})
+
+
+def _solidity_type_name(value: Any) -> str | None:
+    type_obj = getattr(value, "type", None)
+    if type_obj is None:
+        return None
+    type_name = getattr(type_obj, "name", None) or str(type_obj)
+    return type_name or None
 
 
 def is_top(s: SourceSet) -> bool:
@@ -645,6 +654,13 @@ class ProvenanceEngine:
         callee = getattr(ir, "function", None)
         callee_name = getattr(callee, "full_name", None) or getattr(callee, "name", None)
         # Cycle / depth guard.
+        call_tag = Source(
+            kind="view_call",
+            callee=callee_name,
+            callee_signature=callee_name,
+            callee_selector=_selector_for_signature(callee_name),
+            callee_args_digest=_digest(self._union_of_args(getattr(ir, "arguments", ()))),
+        )
         if callee is None or len(self._call_stack) >= self.internal_call_depth or callee_name in self._call_stack:
             args_union = self._union_of_args(getattr(ir, "arguments", ()))
             tag = frozenset(
@@ -653,6 +669,8 @@ class ProvenanceEngine:
                         kind="view_call",
                         callee=callee_name,
                         callee_args_digest=_digest(args_union),
+                        callee_signature=callee_name,
+                        callee_selector=_selector_for_signature(callee_name),
                     )
                 }
             )
@@ -678,15 +696,9 @@ class ProvenanceEngine:
         # Callee return provenance: union of all returned values' sources.
         return_sources = self._collect_return_sources(callee, sub.provenance)
         if not return_sources:
-            return_sources = frozenset(
-                {
-                    Source(
-                        kind="view_call",
-                        callee=callee_name,
-                        callee_args_digest=_digest(self._union_of_args(getattr(ir, "arguments", ()))),
-                    )
-                }
-            )
+            return_sources = frozenset({call_tag})
+        else:
+            return_sources = union(return_sources, frozenset({call_tag}))
         self._sub_engine_memo[memo_key] = return_sources
         return self.provenance.set(self._var_name(ir.lvalue), return_sources)
 
@@ -736,6 +748,7 @@ class ProvenanceEngine:
                     Source(
                         kind="constant",
                         constant_value=str(value.value),
+                        value_type=_solidity_type_name(value),
                     )
                 }
             )

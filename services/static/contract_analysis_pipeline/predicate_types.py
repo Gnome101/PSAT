@@ -48,6 +48,7 @@ class Operand(TypedDict):
     callee_selector: NotRequired[str | None]
     callee_args: NotRequired[list["Operand"]]
     constant_value: NotRequired[str | None]
+    value_type: NotRequired[str | None]
     computed_kind: NotRequired[str | None]
     block_context_kind: NotRequired[str | None]
 

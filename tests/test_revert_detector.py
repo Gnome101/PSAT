@@ -343,7 +343,7 @@ def test_try_catch_with_require_in_catch_also_emits_gate(tmp_path):
     assert any(g.kind == "opaque" and g.unsupported_reason == "opaque_try_catch" for g in gates)
 
 
-def test_bare_void_state_var_call_is_not_a_revert_gate(tmp_path):
+def test_bare_void_state_var_call_is_semantic_precondition(tmp_path):
     sl = _compile(
         tmp_path,
         """
@@ -362,7 +362,8 @@ def test_bare_void_state_var_call_is_not_a_revert_gate(tmp_path):
     """,
     )
     fn = _function(sl, "f")
-    assert RevertDetector(fn).run() == []
+    gates = RevertDetector(fn).run()
+    assert any(g.kind == "external_call_revert" for g in gates)
 
 
 # ---------------------------------------------------------------------------

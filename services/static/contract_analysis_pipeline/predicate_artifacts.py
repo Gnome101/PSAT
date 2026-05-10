@@ -98,14 +98,18 @@ def build_predicate_artifacts_with_pause_info(
     # caller_authority once it sees the full set of writers, and
     # reentrancy/pause analyzers cross-reference state-vars across
     # the contract's functions.
-    all_trees: dict[str, PredicateTree] = {f"tree:{sig}": tree for sig, tree in trees.items()}
-    all_trees.update({f"check:{sig}": tree for sig, tree in check_trees.items()})
+    all_trees: dict[str, PredicateTree] = dict(trees)
+    check_tree_keys: dict[str, str] = {}
+    for sig, tree in check_trees.items():
+        key = sig if sig not in all_trees else f"check:{sig}"
+        all_trees[key] = tree
+        check_tree_keys[sig] = key
     if all_trees:
         apply_writer_gate_pass(contract, all_trees)
         apply_mapping_event_hint_pass(contract, all_trees)
         pause_info = apply_reentrancy_pause_pass(contract, all_trees)
-        trees = {sig: all_trees[f"tree:{sig}"] for sig in trees}
-        check_trees = {sig: all_trees[f"check:{sig}"] for sig in check_trees}
+        trees = {sig: all_trees[sig] for sig in trees}
+        check_trees = {sig: all_trees[check_tree_keys[sig]] for sig in check_trees}
 
     artifact = {
         "schema_version": SCHEMA_VERSION,
@@ -188,11 +192,19 @@ def _event_hint_from_writer_spec(spec: WriterEventSpec, member_key_index: int) -
     topic0 = "0x" + keccak(text=spec["event_signature"]).hex()
     key_position = int(spec["key_position"])
     indexed_positions = [int(pos) for pos in spec.get("indexed_positions") or []]
-    topics_to_keys, data_to_keys = _event_arg_to_key_maps(
-        event_arg_position=key_position,
-        key_index=member_key_index,
-        indexed_positions=indexed_positions,
-    )
+    key_positions = spec.get("key_positions_by_index") or {member_key_index: key_position}
+    topics_to_keys: dict[int, int] = {}
+    data_to_keys: dict[int, int] = {}
+    for key_index_raw, event_arg_position_raw in key_positions.items():
+        key_index = int(key_index_raw)
+        event_arg_position = int(event_arg_position_raw)
+        topic_map, data_map = _event_arg_to_key_maps(
+            event_arg_position=event_arg_position,
+            key_index=key_index,
+            indexed_positions=indexed_positions,
+        )
+        topics_to_keys.update(topic_map)
+        data_to_keys.update(data_map)
     return {
         "topic0": topic0,
         "topics_to_keys": topics_to_keys,

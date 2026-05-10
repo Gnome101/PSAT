@@ -179,6 +179,81 @@ def test_artifact_omits_internal_functions(tmp_path):
     assert "_helper()" not in artifact["trees"]
 
 
+def test_void_external_precondition_is_callee_selector_based(tmp_path):
+    sl = _compile(
+        tmp_path,
+        """
+        pragma solidity ^0.8.19;
+        interface IGate {
+            function renamed(address who) external view;
+        }
+        contract C {
+            IGate public gate;
+            address public impl;
+            function entry(address next) external {
+                route(next);
+                impl = next;
+            }
+            function route(address) internal view {
+                gate.renamed(msg.sender);
+            }
+        }
+    """,
+    )
+    artifact = build_predicate_artifacts(_contract(sl, "C"))
+    leaves = _leaves(artifact["trees"]["entry(address)"])
+    external = [leaf for leaf in leaves if leaf.get("kind") == "external_bool"]
+    assert len(external) == 1
+    leaf = external[0]
+    assert leaf["authority_role"] == "delegated_authority"
+    descriptor = leaf["set_descriptor"]
+    assert descriptor["authority_contract"]["address_source"]["state_variable_name"] == "gate"
+    assert descriptor["callee_signature"] == "renamed(address)"
+
+
+def test_void_external_guard_survives_non_caller_try_catch(tmp_path):
+    sl = _compile(
+        tmp_path,
+        """
+        pragma solidity ^0.8.19;
+        interface IGate {
+            function arbitrary(address who) external view;
+        }
+        interface IProbe {
+            function probe() external view returns (bytes32);
+        }
+        contract C {
+            IGate public gate;
+            bytes32 public constant SLOT = bytes32(uint256(1));
+            address public impl;
+            function change(address next) external {
+                guard();
+                try IProbe(next).probe() returns (bytes32 slot) {
+                    require(slot == SLOT);
+                } catch {
+                    revert("bad impl");
+                }
+                impl = next;
+            }
+            function guard() internal view {
+                gate.arbitrary(msg.sender);
+            }
+        }
+    """,
+    )
+    artifact = build_predicate_artifacts(_contract(sl, "C"))
+    leaves = _leaves(artifact["trees"]["change(address)"])
+    delegated = [
+        leaf
+        for leaf in leaves
+        if leaf.get("kind") == "external_bool" and leaf.get("authority_role") == "delegated_authority"
+    ]
+    assert len(delegated) == 1
+    assert delegated[0]["set_descriptor"]["callee_signature"] == "arbitrary(address)"
+    unsupported = [leaf for leaf in leaves if leaf.get("kind") == "unsupported"]
+    assert all(not leaf.get("references_msg_sender") for leaf in unsupported)
+
+
 def test_artifact_omits_constructor(tmp_path):
     sl = _compile(
         tmp_path,
@@ -367,6 +442,60 @@ def test_artifact_does_not_invent_role_event_hints_from_names(tmp_path):
     hints = leaf["set_descriptor"].get("enumeration_hint") or []
 
     assert hints == []
+
+
+def test_non_address_constant_does_not_make_caller_authority():
+    from services.static.contract_analysis_pipeline.predicates import _classify_authority_equality
+
+    leaf = {
+        "kind": "equality",
+        "operator": "eq",
+        "operands": [
+            {"source": "msg_sender"},
+            {"source": "constant", "constant_value": "0"},
+        ],
+    }
+
+    assert _classify_authority_equality(leaf, "equality") == "business"  # type: ignore[arg-type]
+
+
+def test_struct_field_mapping_membership_gets_writer_event_hints(tmp_path):
+    """Nested mapping fields still resolve to the base storage var."""
+    sl = _compile(
+        tmp_path,
+        """
+        pragma solidity ^0.8.19;
+        contract C {
+            struct RoleData {
+                mapping(address => bool) members;
+            }
+            mapping(bytes32 => RoleData) private _roles;
+            bytes32 public constant MINTER = keccak256("MINTER");
+            event Granted(bytes32 indexed role, address indexed account, address indexed sender);
+            event Revoked(bytes32 indexed role, address indexed account, address indexed sender);
+            function grant(bytes32 role, address account) external {
+                _roles[role].members[account] = true;
+                emit Granted(role, account, msg.sender);
+            }
+            function revoke(bytes32 role, address account) external {
+                _roles[role].members[account] = false;
+                emit Revoked(role, account, msg.sender);
+            }
+            function f() external view {
+                require(_roles[MINTER].members[msg.sender]);
+            }
+        }
+    """,
+    )
+    artifact = build_predicate_artifacts(_contract(sl))
+    leaf = _leaves(artifact["trees"]["f()"])[0]
+    descriptor = leaf["set_descriptor"]
+    hints = descriptor.get("enumeration_hint") or []
+
+    assert descriptor["storage_var"] == "_roles"
+    assert {h["direction"] for h in hints} == {"add", "remove"}
+    assert all(h["mapping_name"] == "_roles" for h in hints)
+    assert all(h["topics_to_keys"] == {1: 0, 2: 1} for h in hints)
 
 
 def test_artifact_preserves_bitmask_value_predicate_and_set_hint(tmp_path):

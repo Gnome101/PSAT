@@ -555,7 +555,7 @@ def test_external_bool_descriptor_is_not_name_based(tmp_path):
     assert descriptor.get("callee_function") == "permitted"
 
 
-def test_bare_void_state_var_call_does_not_become_delegated_authority(tmp_path):
+def test_bare_void_state_var_call_becomes_delegated_authority(tmp_path):
     sl = _compile(
         tmp_path,
         """
@@ -574,7 +574,19 @@ def test_bare_void_state_var_call_does_not_become_delegated_authority(tmp_path):
     """,
     )
     fn = _function(sl, "f")
-    assert build_predicate_tree(fn) is None
+    tree = build_predicate_tree(fn)
+    assert tree is not None
+    leaves = _all_leaves(tree)
+    assert len(leaves) == 1
+    leaf = leaves[0]
+    assert leaf["kind"] == "external_bool"
+    assert leaf["authority_role"] == "delegated_authority"
+    descriptor = leaf.get("set_descriptor")
+    assert isinstance(descriptor, dict)
+    assert descriptor.get("callee_signature") == "check(address)"
+    authority = descriptor.get("authority_contract")
+    assert isinstance(authority, dict)
+    assert authority.get("address_source") == {"source": "state_variable", "state_variable_name": "gate"}
 
 
 def test_try_catch_external_bool_call_builds_delegated_authority(tmp_path):

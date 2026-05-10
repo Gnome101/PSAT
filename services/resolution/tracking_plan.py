@@ -12,7 +12,7 @@ def _is_address_like_read_spec(read_spec: object) -> bool:
     type_name = str(read_spec.get("type") or "").strip().lower()
     if not type_name:
         return True
-    return type_name in {"address", "address payable"}
+    return _is_external_contract_read_spec(read_spec)
 
 
 def _is_external_contract_read_spec(read_spec: object) -> bool:

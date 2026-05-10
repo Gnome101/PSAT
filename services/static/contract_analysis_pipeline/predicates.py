@@ -218,16 +218,23 @@ def _build_subtree_from_gate(
         leaf = _unsupported_leaf(
             reason=gate.unsupported_reason or "opaque_control_flow",
             expression=gate.expression_text,
+            references_msg_sender=_gate_references_caller(gate),
         )
         return make_leaf_node(leaf)
 
-    if gate.kind == "try_catch_revert" and isinstance(gate.condition_value, HighLevelCall):
+    if gate.kind in {"try_catch_revert", "external_call_revert"} and isinstance(gate.condition_value, HighLevelCall):
         leaf = _build_external_bool_leaf(gate.condition_value, prov, gate)
         return make_leaf_node(leaf)
 
     cond = gate.condition_value
     if cond is None:
-        return make_leaf_node(_unsupported_leaf(reason="missing_condition", expression=gate.expression_text))
+        return make_leaf_node(
+            _unsupported_leaf(
+                reason="missing_condition",
+                expression=gate.expression_text,
+                references_msg_sender=_gate_references_caller(gate),
+            )
+        )
 
     # If gate is in a cross-fn helper, walk the call chain to build
     # parameter bindings for the helper, then run provenance on the
@@ -1413,7 +1420,14 @@ def _operand_for_value(value: Any, prov: ProvenanceMap) -> Operand:
     present."""
     sources = _sources_for_value(value, prov)
     if not sources:
-        return {"source": "constant", "constant_value": str(value) if value is not None else ""}
+        op: Operand = {"source": "constant", "constant_value": str(value) if value is not None else ""}
+        _attach_value_type(op, value)
+        return op
+    view_call = _derived_view_call_source(sources)
+    if view_call is not None:
+        op = _source_to_operand(view_call)
+        _attach_state_constant_value(op, value)
+        return op
     # Priority: msg_sender > signature_recovery > parameter > state_variable
     # > view_call > external_call > computed > constant > block_context > top.
     priority = (
@@ -1442,6 +1456,16 @@ def _operand_for_value(value: Any, prov: ProvenanceMap) -> Operand:
     return op
 
 
+def _derived_view_call_source(sources: SourceSet) -> Source | None:
+    if any(s.kind in ("msg_sender", "tx_origin", "signature_recovery", "root_caller") for s in sources):
+        return None
+    has_state = any(s.kind == "state_variable" for s in sources)
+    has_parameter = any(s.kind == "parameter" for s in sources)
+    if not has_state or not has_parameter:
+        return None
+    return next((s for s in sources if s.kind == "view_call"), None)
+
+
 def _source_to_operand(source: Source) -> Operand:
     op: Operand = {"source": source.kind}  # type: ignore[typeddict-item]
     if source.parameter_index is not None:
@@ -1458,6 +1482,8 @@ def _source_to_operand(source: Source) -> Operand:
         op["callee_selector"] = source.callee_selector
     if source.constant_value is not None:
         op["constant_value"] = source.constant_value
+    if getattr(source, "value_type", None) is not None:
+        op["value_type"] = source.value_type
     if source.computed_kind is not None:
         op["computed_kind"] = source.computed_kind
     if source.block_context_kind is not None:
@@ -1471,6 +1497,15 @@ def _attach_state_constant_value(op: Operand, value: Any) -> None:
     constant_value = _state_variable_bytes32_constant_value(value)
     if constant_value is not None:
         op["constant_value"] = constant_value
+
+
+def _attach_value_type(op: Operand, value: Any) -> None:
+    type_obj = getattr(value, "type", None)
+    if type_obj is None:
+        return
+    type_name = getattr(type_obj, "name", None) or str(type_obj)
+    if type_name:
+        op["value_type"] = type_name
 
 
 def _state_variable_bytes32_constant_value(value: Any) -> str | None:
@@ -1537,6 +1572,14 @@ def _coerce_bytes32_hex(value: Any) -> str | None:
     return "0x" + body.rjust(64, "0")
 
 
+def _value_type_name(value: Any) -> str | None:
+    type_obj = getattr(value, "type", None)
+    if type_obj is None:
+        return None
+    type_name = getattr(type_obj, "name", None) or str(type_obj)
+    return type_name or None
+
+
 def _sources_for_value(value: Any, prov: ProvenanceMap) -> SourceSet:
     """Read provenance for a Slither value.
 
@@ -1550,7 +1593,15 @@ def _sources_for_value(value: Any, prov: ProvenanceMap) -> SourceSet:
     if value is None:
         return EMPTY
     if isinstance(value, Constant):
-        return frozenset({Source(kind="constant", constant_value=str(value.value))})
+        return frozenset(
+            {
+                Source(
+                    kind="constant",
+                    constant_value=str(value.value),
+                    value_type=_value_type_name(value),
+                )
+            }
+        )
     if isinstance(value, SolidityVariable):
         return _classify_solidity_variable(value)
     if isinstance(value, StateVariable):
@@ -1616,7 +1667,6 @@ _ADDRESS_TYPED_SOURCES = (
     "view_call",
     "parameter",
     "signature_recovery",
-    "constant",
     # ``address(this)`` self-call gate. Used by Compound Timelock
     # setDelay / setPendingAdmin and many module patterns. Self-call
     # is auth (``msg.sender == address(this)`` allows only the
@@ -1658,12 +1708,24 @@ def _classify_authority_equality(leaf: LeafPredicate, kind: LeafKind) -> Authori
         if not non_caller:
             return "caller_authority"
         # Every non-caller operand must look address-typed. A leaf
-        # like ``require(msg.sender == 0x1234)`` (constant), ``==
+        # like ``require(msg.sender == 0xabc...`` (address literal), ``==
         # ownerVar`` (state_variable), ``== auth.admin()``
         # (view_call), or ``== adminParam`` (parameter) all qualify.
-        if all(o.get("source") in _ADDRESS_TYPED_SOURCES for o in non_caller):
+        if all(_operand_is_address_typed(o) for o in non_caller):
             return "caller_authority"
     return "business"
+
+
+def _operand_is_address_typed(operand: Operand) -> bool:
+    source = operand.get("source")
+    if source in _ADDRESS_TYPED_SOURCES:
+        return True
+    if source == "constant":
+        if operand.get("value_type") == "address":
+            return True
+        value = operand.get("constant_value")
+        return isinstance(value, str) and value.startswith("0x") and len(value) == 42
+    return False
 
 
 def _classify_authority_membership(leaf: LeafPredicate, descriptor: SetDescriptor) -> AuthorityRole:
@@ -1847,18 +1909,27 @@ def _make_leaf(
     }
 
 
-def _unsupported_leaf(reason: str, expression: str) -> LeafPredicate:
+def _unsupported_leaf(reason: str, expression: str, *, references_msg_sender: bool = False) -> LeafPredicate:
     return {
         "kind": "unsupported",
         "operator": "truthy",  # placeholder; ignored for unsupported
         "authority_role": "business",
         "operands": [],
         "unsupported_reason": reason,
-        "references_msg_sender": False,
+        "references_msg_sender": references_msg_sender,
         "parameter_indices": [],
         "expression": expression,
         "basis": [reason],
     }
+
+
+def _gate_references_caller(gate: RevertGate) -> bool:
+    node = gate.node
+    values: list[Any] = []
+    for attr in ("variables_read", "solidity_variables_read"):
+        values.extend(getattr(node, attr, []) or [])
+    text = " ".join(str(v) for v in values)
+    return "msg.sender" in text or "tx.origin" in text
 
 
 def _find_defining_ir(value: Any, node: Any, function: Any) -> Any | None:
@@ -2022,7 +2093,7 @@ def _find_index_base(ir: Any, function: Any | None = None) -> Any | None:
     current = ir
     visited: set[str] = set()
     while isinstance(current, Index):
-        left = current.variable_left
+        left = getattr(current, "variable_left", None)
         left_name = getattr(left, "name", None)
         if left_name in visited:
             return left
@@ -2031,6 +2102,14 @@ def _find_index_base(ir: Any, function: Any | None = None) -> Any | None:
         if function is None:
             return left
         defining = _find_defining_ir(left, None, function)
+        while isinstance(defining, Member):
+            base = defining.variable_left
+            base_name = getattr(base, "name", None)
+            if base_name in visited:
+                return left
+            if base_name is not None:
+                visited.add(base_name)
+            defining = _find_defining_ir(base, None, function)
         if not isinstance(defining, Index):
             return left
         current = defining

@@ -272,7 +272,7 @@ def test_emit_without_matching_key_arg_is_skipped():
     assert discover_mapping_writer_events(_contract([fn])) == []
 
 
-def test_non_address_keyed_mapping_skipped():
+def test_non_address_keyed_mapping_writer_event_is_tracked():
     subclass = type("StateVariable", (SimpleNamespace,), {})
     subclass.__name__ = "StateVariable"
     role_mapping = subclass(name="roleByIndex", type="mapping(uint256 => bool)")
@@ -291,7 +291,19 @@ def test_non_address_keyed_mapping_skipped():
         ],
         written=[role_mapping],
     )
-    assert discover_mapping_writer_events(_contract([fn])) == []
+    assert discover_mapping_writer_events(_contract([fn])) == [
+        {
+            "mapping_name": "roleByIndex",
+            "event_signature": "RoleSet(uint256)",
+            "event_name": "RoleSet",
+            "key_position": 0,
+            "indexed_positions": [],
+            "key_positions_by_index": {0: 0},
+            "direction": "add",
+            "value_position": None,
+            "writer_function": "setRole(address)",
+        }
+    ]
 
 
 def test_constructor_skipped():

@@ -231,6 +231,20 @@ def test_build_control_tracking_plan_filters_non_controller_runtime_reads():
             },
             {
                 **base_target,
+                "controller_id": "state_variable:redemptionManager",
+                "label": "redemptionManager",
+                "source": "redemptionManager",
+                "kind": "state_variable",
+                "read_spec": {
+                    "strategy": "getter_call",
+                    "target": "redemptionManager",
+                    "kind": "state_variable",
+                    "state_variable_name": "redemptionManager",
+                    "type": "IRedemptionManager",
+                },
+            },
+            {
+                **base_target,
                 "controller_id": "state_variable:minters",
                 "label": "minters",
                 "source": "minters",
@@ -273,4 +287,5 @@ def test_build_control_tracking_plan_filters_non_controller_runtime_reads():
     assert [target["controller_id"] for target in plan["tracked_controllers"]] == [
         "role_identifier:PAUSER_ROLE",
         "state_variable:owner",
+        "state_variable:redemptionManager",
     ]

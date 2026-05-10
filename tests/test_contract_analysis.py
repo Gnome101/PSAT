@@ -378,7 +378,7 @@ def test_non_authority_external_calls_with_caller_args_not_classified_as_authori
     assert "external_authority_check" not in semantic["guard_kinds"]
 
 
-def test_void_role_registry_upgrader_is_not_a_controller_ref(tmp_path):
+def test_void_role_registry_upgrader_is_controller_ref(tmp_path):
     project_dir = _write_project(
         tmp_path,
         "RoleRegistryUpgradeTarget",
@@ -409,7 +409,7 @@ def test_void_role_registry_upgrader_is_not_a_controller_ref(tmp_path):
     analysis = collect_contract_analysis(project_dir)
     semantic = _semantic_function(analysis, "upgradeTo(address)")
 
-    assert "roleRegistry" not in semantic["controller_refs"]
+    assert "roleRegistry" in semantic["controller_refs"]
     assert "delegatecall_execution" in semantic["effect_labels"]
 
 
@@ -501,7 +501,7 @@ def test_modifier_helper_preserves_opaque_role_identifier(tmp_path):
     assert tracked["kind"] == "role_identifier"
 
 
-def test_opaque_external_void_helper_guard_would_need_semantic_execution(tmp_path):
+def test_opaque_external_void_helper_guard_is_controller_ref(tmp_path):
     project_dir = _write_project(
         tmp_path,
         "OpaqueExternalGuard",
@@ -544,11 +544,11 @@ def test_opaque_external_void_helper_guard_would_need_semantic_execution(tmp_pat
 
     analysis = collect_contract_analysis(project_dir)
     semantic = _semantic_function(analysis, "pause()")
-    assert "gate" not in semantic["controller_refs"]
+    assert "gate" in semantic["controller_refs"]
     assert "external_contract_call" in semantic["effect_labels"]
 
 
-def test_opaque_external_role_helper_would_need_semantic_execution(tmp_path):
+def test_opaque_external_role_helper_is_controller_ref(tmp_path):
     project_dir = _write_project(
         tmp_path,
         "OpaqueExternalRoleGuard",
@@ -592,11 +592,11 @@ def test_opaque_external_role_helper_would_need_semantic_execution(tmp_path):
 
     analysis = collect_contract_analysis(project_dir)
     semantic = _semantic_function(analysis, "pause()")
-    assert "auth" not in semantic["controller_refs"]
+    assert "auth" in semantic["controller_refs"]
     assert "external_contract_call" in semantic["effect_labels"]
 
 
-def test_opaque_external_policy_helper_would_need_semantic_execution(tmp_path):
+def test_opaque_external_policy_helper_is_controller_ref(tmp_path):
     project_dir = _write_project(
         tmp_path,
         "OpaqueExternalPolicyGuard",
@@ -641,5 +641,5 @@ def test_opaque_external_policy_helper_would_need_semantic_execution(tmp_path):
 
     analysis = collect_contract_analysis(project_dir)
     semantic = _semantic_function(analysis, "execute()")
-    assert "policy" not in semantic["controller_refs"]
+    assert "policy" in semantic["controller_refs"]
     assert "external_contract_call" in semantic["effect_labels"]

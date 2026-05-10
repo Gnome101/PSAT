@@ -135,7 +135,7 @@ def test_oz_ownable_pattern(tmp_path):
         }
     """,
     )
-    contract = sl.contracts[0]
+    contract = next(c for c in sl.contracts if c.name == "C")
     trees = _build_pipeline(contract)
     leaves = _all_leaves(trees["setX(uint256)"])
     assert len(leaves) == 1
@@ -251,7 +251,7 @@ def test_oz_role_mapping_grantrole_via_onlyrole(tmp_path):
         }
     """,
     )
-    contract = sl.contracts[0]
+    contract = next(c for c in sl.contracts if c.name == "C")
     trees = _build_pipeline(contract)
     tree = trees["grantRole(bytes32,address)"]
     assert tree is not None, "cross-fn revert detection should find _checkRole gate"
@@ -262,6 +262,47 @@ def test_oz_role_mapping_grantrole_via_onlyrole(tmp_path):
     # cross-function recursion).
     assert leaves[0]["authority_role"] == "caller_authority"
     assert leaves[0]["kind"] == "membership"
+    assert leaves[0]["set_descriptor"]["key_sources"][0]["source"] == "view_call"
+
+
+def test_revert_message_helpers_do_not_become_guards(tmp_path):
+    sl = _compile(
+        tmp_path,
+        """
+        pragma solidity ^0.8.19;
+        library StringsLike {
+            function toHexString(uint256 value) internal pure returns (string memory) {
+                require(value == 0, "hex length insufficient");
+                return "";
+            }
+        }
+        contract C {
+            mapping(bytes32 => mapping(address => bool)) private _roles;
+            mapping(bytes32 => bytes32) private _roleAdmins;
+            modifier onlyRole(bytes32 role) {
+                _checkRole(role);
+                _;
+            }
+            function _checkRole(bytes32 role) internal view {
+                if (!_roles[role][msg.sender]) {
+                    revert(string(abi.encodePacked("account ", StringsLike.toHexString(uint160(msg.sender)))));
+                }
+            }
+            function getRoleAdmin(bytes32 role) public view returns (bytes32) {
+                return _roleAdmins[role];
+            }
+            function grantRole(bytes32 role, address account) public onlyRole(getRoleAdmin(role)) {
+                _roles[role][account] = true;
+            }
+        }
+    """,
+    )
+    contract = next(c for c in sl.contracts if c.name == "C")
+    tree = _build_pipeline(contract)["grantRole(bytes32,address)"]
+    leaves = _all_leaves(tree)
+
+    assert any(leaf["kind"] == "membership" for leaf in leaves)
+    assert all("hex length insufficient" not in leaf.get("expression", "") for leaf in leaves)
 
 
 # ---------------------------------------------------------------------------

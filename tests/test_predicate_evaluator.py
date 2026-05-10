@@ -9,6 +9,7 @@ import sys
 import textwrap
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any, cast
 
 import pytest
 
@@ -21,6 +22,7 @@ from services.resolution.predicate_evaluator import (  # noqa: E402
     EvaluationContext,
     evaluate_tree,
 )
+from services.static.contract_analysis_pipeline.predicate_types import PredicateTree  # noqa: E402
 from services.static.contract_analysis_pipeline.predicates import (  # noqa: E402
     build_predicate_tree,
 )
@@ -96,6 +98,49 @@ def test_caller_equals_state_var_yields_finite_set_placeholder(tmp_path):
     assert cap.kind == "finite_set"
     assert cap.confidence == "partial"
     assert cap.membership_quality == "lower_bound"
+
+
+def test_non_caller_unsupported_side_condition_preserves_principals():
+    owner = "0x" + "ab" * 20
+    tree = {
+        "op": "AND",
+        "children": [
+            {
+                "op": "LEAF",
+                "leaf": {
+                    "kind": "equality",
+                    "operator": "eq",
+                    "authority_role": "caller_authority",
+                    "operands": [
+                        {"source": "msg_sender"},
+                        {"source": "state_variable", "state_variable_name": "owner"},
+                    ],
+                    "references_msg_sender": True,
+                    "expression": "msg.sender == owner",
+                    "basis": [],
+                },
+            },
+            {
+                "op": "LEAF",
+                "leaf": {
+                    "kind": "unsupported",
+                    "operator": "truthy",
+                    "authority_role": "business",
+                    "operands": [],
+                    "unsupported_reason": "opaque_try_catch",
+                    "references_msg_sender": False,
+                    "expression": "implementation compatibility check",
+                    "basis": ["opaque_try_catch"],
+                },
+            },
+        ],
+    }
+
+    cap = evaluate_tree(cast(PredicateTree, tree), EvaluationContext(state_var_values={"owner": owner}))
+
+    assert cap.kind == "finite_set"
+    assert cap.members == [owner]
+    assert [c.description for c in cap.conditions] == ["implementation compatibility check"]
 
 
 def test_renounce_role_self_service_pattern(tmp_path):
@@ -322,18 +367,17 @@ def test_evaluate_none_tree_yields_conditional_universal():
     assert cap.kind == "conditional_universal"
 
 
-def test_evaluator_dispatches_on_unsupported_first():
-    """Per v6 round-5 #3 fix, kind == unsupported is checked before
-    authority_role-based side-condition routing."""
+def test_caller_dependent_unsupported_stays_unsupported():
+    """Caller-dependent unknown gates remain fail-closed."""
     tree = {
         "op": "LEAF",
         "leaf": {
             "kind": "unsupported",
             "operator": "truthy",
-            "authority_role": "business",  # would otherwise route to conditional_universal
+            "authority_role": "business",
             "operands": [],
             "unsupported_reason": "test_unsupported",
-            "references_msg_sender": False,
+            "references_msg_sender": True,
             "parameter_indices": [],
             "expression": "",
             "basis": [],
@@ -365,6 +409,239 @@ def test_zero_address_equality_is_empty_principal_set():
     assert cap.kind == "finite_set"
     assert cap.members == []
     assert cap.membership_quality == "exact"
+
+
+def test_self_address_equality_resolves_to_contract_principal():
+    contract_address = "0x" + "12" * 20
+    tree = {
+        "op": "LEAF",
+        "leaf": {
+            "kind": "equality",
+            "operator": "eq",
+            "authority_role": "caller_authority",
+            "operands": [{"source": "msg_sender"}, {"source": "self_address"}],
+            "references_msg_sender": True,
+            "parameter_indices": [],
+            "expression": "msg.sender == address(this)",
+            "basis": [],
+        },
+    }
+
+    cap = evaluate_tree(tree, EvaluationContext(contract_address=contract_address))  # type: ignore[arg-type]
+
+    assert cap.kind == "finite_set"
+    assert cap.members == [contract_address]
+    assert cap.membership_quality == "exact"
+
+
+def test_call_frame_normalization_keeps_self_bound_parameters_symbolic():
+    from services.resolution.adapters import CallFrame
+    from services.resolution.predicate_evaluator import _normalize_tree_for_frame
+
+    operand = {"source": "parameter", "parameter_index": 0, "parameter_name": "role"}
+    tree = {
+        "op": "LEAF",
+        "leaf": {
+            "kind": "membership",
+            "operator": "truthy",
+            "authority_role": "caller_authority",
+            "operands": [operand],
+        },
+    }
+    frame = CallFrame(bound_parameters=(operand,))
+
+    normalized = _normalize_tree_for_frame(tree, frame)  # type: ignore[arg-type]
+
+    normalized_leaf = cast(dict[str, Any], normalized.get("leaf"))
+    assert normalized_leaf["operands"] == [operand]
+
+
+def test_inlined_callee_msg_sender_equality_is_call_edge_condition(monkeypatch):
+    from eth_utils.crypto import keccak
+
+    import db.queue as queue_mod
+    import services.resolution.capability_resolver as resolver_mod
+    import services.resolution.external_check_materializer as materializer_mod
+    from services.resolution.adapters import AdapterRegistry, CallFrame
+    from services.resolution.adapters import EvaluationContext as ResolverContext
+    from services.resolution.predicate_evaluator import evaluate_tree_with_registry
+
+    target_addr = "0x" + "11" * 20
+    authority_addr = "0x" + "22" * 20
+    manager_addr = "0x" + "33" * 20
+    root_selector = "0x" + keccak(text="burn(uint256)").hex()[:8]
+    burn_selector = "0x" + keccak(text="burnShares(address,uint256)").hex()[:8]
+
+    target_tree = {
+        "op": "AND",
+        "children": [
+            {
+                "op": "LEAF",
+                "leaf": {
+                    "kind": "equality",
+                    "operator": "eq",
+                    "authority_role": "caller_authority",
+                    "operands": [
+                        {"source": "msg_sender"},
+                        {"source": "state_variable", "state_variable_name": "manager"},
+                    ],
+                    "references_msg_sender": True,
+                },
+            },
+            {
+                "op": "LEAF",
+                "leaf": {
+                    "kind": "external_bool",
+                    "operator": "truthy",
+                    "authority_role": "delegated_authority",
+                    "operands": [{"source": "msg_sender"}, {"source": "parameter", "parameter_index": 0}],
+                    "set_descriptor": {
+                        "kind": "external_set",
+                        "authority_contract": {
+                            "address_source": {"source": "state_variable", "state_variable_name": "token"}
+                        },
+                        "callee_signature": "burnShares(address,uint256)",
+                        "callee_selector": burn_selector,
+                    },
+                    "references_msg_sender": True,
+                },
+            },
+        ],
+    }
+    authority_artifact = {
+        "schema_version": "semantic",
+        "contract_name": "RenamedToken",
+        "trees": {
+            "burnShares(address,uint256)": {
+                "op": "AND",
+                "children": [
+                    {
+                        "op": "LEAF",
+                        "leaf": {
+                            "kind": "equality",
+                            "operator": "eq",
+                            "authority_role": "caller_authority",
+                            "operands": [
+                                {"source": "msg_sender"},
+                                {"source": "state_variable", "state_variable_name": "liquidityPool"},
+                            ],
+                            "references_msg_sender": True,
+                        },
+                    },
+                    {
+                        "op": "LEAF",
+                        "leaf": {
+                            "kind": "comparison",
+                            "operator": "gte",
+                            "authority_role": "business",
+                            "operands": [{"source": "parameter", "parameter_index": 1}],
+                            "expression": "shares[user] >= amount",
+                            "references_msg_sender": False,
+                        },
+                    },
+                ],
+            }
+        },
+    }
+
+    job = SimpleNamespace(id="authority-job", address=authority_addr)
+    monkeypatch.setattr(
+        resolver_mod,
+        "find_analysis_job_for_address",
+        lambda *_args, **_kwargs: SimpleNamespace(analysis_job=job, runtime_job=job),
+    )
+    monkeypatch.setattr(
+        resolver_mod, "_load_state_var_values", lambda *_args, **_kwargs: {"liquidityPool": target_addr}
+    )
+    monkeypatch.setattr(queue_mod, "get_artifact", lambda *_args, **_kwargs: authority_artifact)
+    monkeypatch.setattr(
+        materializer_mod,
+        "materialize_external_check_from_events",
+        lambda **_kwargs: pytest.fail("exact call-edge equality should not materialize"),
+    )
+
+    ctx = ResolverContext(
+        chain_id=1,
+        contract_address=target_addr,
+        state_var_values={"manager": manager_addr, "token": authority_addr},
+        session=object(),
+        call_frame=CallFrame.root(
+            contract_address=target_addr,
+            function_signature="burn(uint256)",
+            function_selector=root_selector,
+        ),
+    )
+
+    cap = evaluate_tree_with_registry(target_tree, AdapterRegistry(), ctx)  # type: ignore[arg-type]
+
+    assert cap.kind == "finite_set"
+    assert cap.members == [manager_addr]
+    assert cap.membership_quality == "exact"
+
+
+def test_view_call_mapping_key_expands_to_returned_role_members(monkeypatch):
+    import services.resolution.predicate_evaluator as evaluator_mod
+    from services.resolution.capabilities import CapabilityExpr
+    from services.resolution.predicate_evaluator import EvaluationContext, evaluate_tree
+
+    admin_role = "0x" + "aa" * 32
+    member = "0x" + "44" * 20
+    calls = []
+
+    class Adapter:
+        _outer_ctx = SimpleNamespace(
+            session=object(),
+            rpc_url="http://rpc",
+            contract_address="0x" + "11" * 20,
+            chain_id=1,
+            block=None,
+        )
+
+        def enumerate(self, descriptor, contract_address):
+            calls.append((descriptor, contract_address))
+            assert descriptor["key_sources"][0] == {"source": "constant", "constant_value": admin_role}
+            return CapabilityExpr.finite_set([member], quality="exact", confidence="enumerable")
+
+    monkeypatch.setattr(
+        evaluator_mod,
+        "_observed_event_key_words",
+        lambda **_kwargs: ["0x" + "bb" * 32],
+    )
+    monkeypatch.setattr(
+        evaluator_mod,
+        "_call_unary_bytes32_view",
+        lambda **_kwargs: [admin_role],
+    )
+
+    tree = {
+        "op": "LEAF",
+        "leaf": {
+            "kind": "membership",
+            "operator": "truthy",
+            "authority_role": "caller_authority",
+            "operands": [
+                {"source": "view_call", "callee_signature": "adminOf(bytes32)", "callee_selector": "0x12345678"},
+                {"source": "msg_sender"},
+            ],
+            "set_descriptor": {
+                "kind": "mapping_membership",
+                "storage_var": "_roles",
+                "key_sources": [
+                    {"source": "view_call", "callee_signature": "adminOf(bytes32)", "callee_selector": "0x12345678"},
+                    {"source": "msg_sender"},
+                ],
+                "enumeration_hint": [{"topic0": "0x" + "12" * 32, "direction": "add"}],
+            },
+            "references_msg_sender": True,
+            "parameter_indices": [],
+        },
+    }
+
+    cap = evaluate_tree(tree, EvaluationContext(contract_address="0x" + "11" * 20, adapter=Adapter()))  # type: ignore[arg-type]
+
+    assert cap.kind == "finite_set"
+    assert cap.members == [member]
+    assert calls
 
 
 def test_delegated_check_conditional_inline_preserves_structural_result(monkeypatch):
