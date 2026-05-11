@@ -72,7 +72,7 @@
       "display_name": "BoringVault enter/exit contract",
       "labels": [
         "boringvault_operator",
-        "boringvault_controlled",
+        "boringvault_permissioned",
         "boringvault_role_2_holder",
         "boringvault_role_3_holder",
         "contract",
@@ -131,7 +131,7 @@
       "display_name": "BoringVault manager contract",
       "labels": [
         "boringvault_manager",
-        "boringvault_controlled",
+        "boringvault_permissioned",
         "boringvault_role_1_holder",
         "contract",
         "contract_controller",
@@ -247,7 +247,7 @@
       "display_name": "BoringVault admin Safe",
       "labels": [
         "boringvault_admin",
-        "boringvault_controlled",
+        "boringvault_permissioned",
         "boringvault_role_8_holder",
         "controller_value",
         "owner_controller",

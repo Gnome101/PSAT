@@ -9,6 +9,7 @@ Per-kind row representation:
   threshold_group (Safe)        -> 1 row,  resolved_type=safe, details.owners[]
   signature_witness(finite)     -> N rows, principal_type=signature_witness
   signature_witness(non-finite) -> 0 rows
+  finite_set(empty exact)        -> 0 rows + status='resolved_empty'
   cofinite_blacklist            -> 0 rows
   external_check_only           -> 0 rows
   conditional_universal         -> 0 rows + status='public', authority_public=True
@@ -37,7 +38,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from db.models import EffectiveFunction, FunctionPrincipal
-from services.policy.capability_surface import project_capability_surface
+from services.policy.capability_surface import capability_surface_status, project_capability_surface
 from services.resolution.capabilities import CapabilityExpr
 from services.resolution.capability_resolver import capability_to_dict
 
@@ -55,13 +56,6 @@ def _to_dict(cap: CapabilityExpr | dict[str, Any] | None) -> dict[str, Any] | No
     if isinstance(cap, dict):
         return dict(cap)
     return None
-
-
-def _kind_of(cap_dict: dict[str, Any] | None) -> str | None:
-    if not isinstance(cap_dict, dict):
-        return None
-    kind = cap_dict.get("kind")
-    return str(kind) if isinstance(kind, str) else None
 
 
 def _principal_rows_for_capability(
@@ -91,16 +85,13 @@ def _column_values_for_capability(
     ``status`` / ``authority_public`` only set for the kinds that
     require them."""
     surface = project_capability_surface(cap_dict)
-    kind = _kind_of(cap_dict)
     conditions = surface.conditions
     out: dict[str, Any] = {
         "capability_expr": dict(cap_dict),
         "conditions": conditions or None,
-        "status": "public" if surface.authority_public else None,
+        "status": capability_surface_status(cap_dict, surface),
         "authority_public": surface.authority_public,
     }
-    if kind == "unsupported" and not surface.authority_public and not surface.principal_rows:
-        out["status"] = "unsupported"
     return out
 
 

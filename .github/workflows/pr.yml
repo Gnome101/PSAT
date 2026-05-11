@@ -58,21 +58,13 @@ jobs:
       - name: Create Fly app if missing
         run: flyctl apps create "${{ steps.fly.outputs.app }}" --org personal || true
 
-      - name: Stop preview machines before DB reset
-        run: |
-          flyctl machines list -a "${{ steps.fly.outputs.app }}" --json \
-            | jq -r '.[] | select(.state != "stopped") | .id' \
-            | xargs -r -I{} flyctl machines stop {} -a "${{ steps.fly.outputs.app }}" || true
-
-      - name: Reset per-PR Neon database
+      - name: Create per-PR Neon database
         env:
           PGPASSWORD: ${{ secrets.NEON_STAGING_PASSWORD }}
         run: |
-          # Keep merge-gate live tests isolated from stale work left by older pushes.
+          # CREATE DATABASE must hit the direct compute endpoint (pgbouncer txn mode blocks admin).
           psql "sslmode=require host=$NEON_STAGING_HOST user=$NEON_STAGING_USER dbname=neondb" \
-            -c "DROP DATABASE IF EXISTS \"psat_pr_${PR_NUMBER}\" WITH (FORCE);"
-          psql "sslmode=require host=$NEON_STAGING_HOST user=$NEON_STAGING_USER dbname=neondb" \
-            -c "CREATE DATABASE \"psat_pr_${PR_NUMBER}\";"
+            -c "CREATE DATABASE \"psat_pr_${PR_NUMBER}\";" || true
 
       - name: Stage Fly secrets
         run: |
@@ -88,7 +80,6 @@ jobs:
             TAVILY_API_KEY="${{ secrets.TAVILY_API_KEY }}" \
             OPEN_ROUTER_KEY="${{ secrets.OPEN_ROUTER_KEY }}" \
             GITHUB_TOKEN="${{ secrets.PROTOCOL_GITHUB_TOKEN }}" \
-            PSAT_SELECTION_ACTIVITY_CANDIDATE_LIMIT="25" \
             ARTIFACT_STORAGE_ENDPOINT="${{ secrets.ARTIFACT_STORAGE_ENDPOINT }}" \
             ARTIFACT_STORAGE_BUCKET="${{ secrets.ARTIFACT_STORAGE_BUCKET }}" \
             ARTIFACT_STORAGE_ACCESS_KEY="${{ secrets.ARTIFACT_STORAGE_ACCESS_KEY }}" \
@@ -179,7 +170,7 @@ jobs:
           PSAT_ADMIN_KEY: ${{ secrets.PSAT_ADMIN_KEY }}
           # Pin to PR head SHA via raw.github — stable in git history regardless of renames.
           PSAT_LIVE_AUDIT_URL: https://raw.githubusercontent.com/${{ github.repository }}/${{ github.event.pull_request.head.sha }}/tests/fixtures/audits/sample_audit.pdf
-        run: uv run pytest -m "live and not expensive_live" -q
+        run: uv run pytest -m live -q
 
       - name: Post sticky result (success)
         if: success()

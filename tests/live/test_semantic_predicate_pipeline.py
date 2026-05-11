@@ -1,51 +1,13 @@
-"""Semantic predicate-pipeline live cutover gate.
-
-These tests are the explicit merge gate for the semantic predicate
-pipeline. They assert that the semantic
-artifacts exist, the typed leaves carry the right shape, the capability
-resolver returns a non-empty payload, and EffectiveFunction rows carry a
-populated ``capability_expr``.
-
-Each test docstring names the cutover phase it gates. Test failures here
-should block the PR #70 merge until the corresponding implementation
-phase lands.
-
-Notes for maintainers:
-  * The fixture chosen is ``analyzed_weth`` (WETH) for parity with the
-    existing live suite. WETH is intentionally controls-free, so the
-    typed-leaf / non-empty-capabilities / capability-expr / principal-
-    consistency tests will all hit ``pytest.skip`` — that is by design.
-    The schema-version assertion in ``test_predicate_trees_artifact_exists``
-    is the only thing WETH alone can gate.
-  * The full merge gate runs in CI's ``live-tests`` job, where
-    ``PSAT_LIVE_AUDIT_URL`` is pinned to a real audit (currently the
-    EtherFi sample at ``tests/fixtures/audits/sample_audit.pdf``). That
-    audit drives ``analyzed_company`` to enroll guarded contracts;
-    downstream tests in this file run against those, not WETH, and the
-    skips become real assertions.
-  * TODO: when a guarded-contract fixture (``analyzed_etherfi_admin``-
-    style) lands in ``conftest.py``, swap the per-test fixture from
-    ``analyzed_weth`` -> ``analyzed_guarded_contract`` so the local
-    (non-CI) live runs also exercise the typed-leaf gates. Until then,
-    treating ``skip`` as ``pass`` is acceptable because CI re-runs
-    against the guarded audit.
-  * ``PSAT_ADMIN_KEY`` missing -> the whole live suite skips via the
-    ``live_admin_key`` fixture in ``conftest.py`` (per CLAUDE.md).
-  * Never use ``requests.post`` directly against admin endpoints — go
-    through ``live_client``. (Per CLAUDE.md.)
-"""
+"""Live gate for the semantic predicate pipeline on a guarded company child."""
 
 from __future__ import annotations
+
+from typing import Any
 
 import pytest
 
 from tests.live.conftest import LiveClient
 
-# Closed kind sets pulled from the semantic type modules — kept here as plain
-# tuples so a future schema bump that introduces a new kind shows up as
-# a clear test failure rather than a silent pass.
-#
-# Source: services/static/contract_analysis_pipeline/predicate_types.py
 EXPECTED_LEAF_KINDS = {
     "membership",
     "equality",
@@ -54,8 +16,6 @@ EXPECTED_LEAF_KINDS = {
     "signature_auth",
     "unsupported",
 }
-# Subset called out by the task spec — at least one leaf must land in this
-# tighter set (the others are diagnostic / fallback states).
 TYPED_LEAF_KINDS = {"equality", "membership", "external_bool", "signature_auth"}
 AUTHORITY_LEAF_ROLES = {"caller_authority", "delegated_authority"}
 
@@ -68,7 +28,6 @@ EXPECTED_AUTHORITY_ROLES = {
     "business",
 }
 
-# Source: services/resolution/capabilities.py CapKind
 EXPECTED_CAPABILITY_KINDS = {
     "finite_set",
     "threshold_group",
@@ -82,12 +41,10 @@ EXPECTED_CAPABILITY_KINDS = {
 }
 
 
-def _iter_leaves(tree: dict):
-    """Yield every leaf-predicate dict in a PredicateTree (DFS)."""
+def _iter_leaves(tree: dict[str, Any]):
     if not isinstance(tree, dict):
         return
-    op = tree.get("op")
-    if op == "LEAF":
+    if tree.get("op") == "LEAF":
         leaf = tree.get("leaf")
         if isinstance(leaf, dict):
             yield leaf
@@ -96,270 +53,162 @@ def _iter_leaves(tree: dict):
         yield from _iter_leaves(child)
 
 
-def test_predicate_trees_artifact_exists(analyzed_weth, live_client: LiveClient):
-    """Gates the semantic static-stage emit (predicate_artifacts.py).
+def _leaves_from_artifact(artifact: dict[str, Any]) -> list[dict[str, Any]]:
+    trees = artifact.get("trees") or {}
+    leaves: list[dict[str, Any]] = []
+    for tree in trees.values():
+        leaves.extend(_iter_leaves(tree))
+    return leaves
 
-    Asserts the ``predicate_trees`` artifact is written for every
-    completed analysis and carries the current schema marker. WETH is
-    controls-free so ``trees`` may legitimately be empty; the
-    schema_version check is what proves the emit ran end-to-end.
-    """
-    art = live_client.artifact(analyzed_weth["name"], "predicate_trees")
-    assert art is not None, (
-        "predicate_trees artifact missing — semantic static-stage emit did not "
-        "run (gates predicate_artifacts.py / contract_analysis_pipeline core)."
+
+@pytest.fixture(scope="module")
+def guarded_company_child(analyzed_company, live_client: LiveClient) -> dict[str, Any]:
+    children = live_client.poll_children_until_done(analyzed_company["job_id"])
+    completed = [child for child in children if child.get("status") == "completed" and child.get("name")]
+    diagnostics: list[str] = []
+
+    for child in completed:
+        artifact = live_client.artifact(child["name"], "predicate_trees")
+        if not isinstance(artifact, dict):
+            diagnostics.append(f"{child.get('address')}: missing predicate_trees")
+            continue
+        trees = artifact.get("trees")
+        if not isinstance(trees, dict) or not trees:
+            diagnostics.append(f"{child.get('address')}: no guarded trees")
+            continue
+        leaves = _leaves_from_artifact(artifact)
+        if any(leaf.get("authority_role") in AUTHORITY_LEAF_ROLES for leaf in leaves):
+            return {"job": child, "predicate_trees": artifact, "leaves": leaves}
+        diagnostics.append(f"{child.get('address')}: no authority leaves")
+
+    pytest.fail(
+        "analyzed_company produced no completed guarded child with semantic predicate trees; "
+        f"checked={len(completed)} diagnostics={diagnostics[:10]}"
     )
-    assert isinstance(art, dict), "predicate_trees should be a JSON object"
-    assert art.get("schema_version") == "semantic", (
-        f"predicate_trees.schema_version must be 'semantic', got {art.get('schema_version')!r} — "
-        "semantic emit produced the wrong schema marker."
+
+
+def test_predicate_trees_artifact_exists(guarded_company_child):
+    artifact = guarded_company_child["predicate_trees"]
+    trees = artifact.get("trees")
+
+    assert artifact.get("schema_version") == "semantic", (
+        f"predicate_trees.schema_version must be 'semantic', got {artifact.get('schema_version')!r}"
     )
-    assert "trees" in art, "predicate_trees missing 'trees' key (semantic schema violation)"
-    assert isinstance(art["trees"], dict), "predicate_trees.trees must be a dict keyed on function name"
+    assert isinstance(trees, dict) and trees, "guarded child predicate_trees.trees must be non-empty"
 
 
-def test_predicate_trees_has_typed_leaves(analyzed_weth, live_client: LiveClient):
-    """Gates leaf-typing in the predicate builder (LeafPredicate types).
-
-    Walks every tree and asserts at least one leaf carries a kind in
-    ``TYPED_LEAF_KINDS`` and an authority_role in
-    ``EXPECTED_AUTHORITY_ROLES``. Skips cleanly when ``trees`` is empty
-    (WETH has no guards) — under that condition this test does not gate
-    anything; the schema-version check in the previous test is the real
-    gate.
-    """
-    art = live_client.artifact(analyzed_weth["name"], "predicate_trees")
-    assert isinstance(art, dict), "predicate_trees artifact missing — see test_predicate_trees_artifact_exists"
-    trees = art.get("trees") or {}
-    if not trees:
-        pytest.skip(
-            "WETH has no guarded controls; trees is empty by design. "
-            "The schema_version assertion in test_predicate_trees_artifact_exists "
-            "is the real semantic-emit gate for controls-free contracts."
-        )
+def test_predicate_trees_has_typed_leaves(guarded_company_child):
+    leaves = guarded_company_child["leaves"]
+    assert leaves, "guarded child predicate_trees must contain at least one leaf"
 
     saw_typed_leaf = False
-    saw_typed_role = False
     saw_authority_leaf = False
-    for fn_sig, tree in trees.items():
-        for leaf in _iter_leaves(tree):
-            kind = leaf.get("kind")
-            role = leaf.get("authority_role")
-            assert kind in EXPECTED_LEAF_KINDS, (
-                f"Leaf kind {kind!r} for {fn_sig} is not in the closed semantic LeafKind set "
-                f"({sorted(EXPECTED_LEAF_KINDS)}) — schema drift."
-            )
-            assert role in EXPECTED_AUTHORITY_ROLES, (
-                f"Leaf authority_role {role!r} for {fn_sig} is not in the closed semantic "
-                f"AuthorityRole set ({sorted(EXPECTED_AUTHORITY_ROLES)}) — schema drift."
-            )
-            if kind in TYPED_LEAF_KINDS:
-                saw_typed_leaf = True
-            if role in EXPECTED_AUTHORITY_ROLES:
-                saw_typed_role = True
-            if role in AUTHORITY_LEAF_ROLES:
-                saw_authority_leaf = True
-
-    if not saw_authority_leaf:
-        pytest.skip(
-            "WETH emitted business-only predicate trees; there are no authority leaves "
-            "for this fixture. The company-level live suite exercises guarded contracts."
+    for leaf in leaves:
+        kind = leaf.get("kind")
+        role = leaf.get("authority_role")
+        assert kind in EXPECTED_LEAF_KINDS, (
+            f"Leaf kind {kind!r} is not in the closed semantic LeafKind set ({sorted(EXPECTED_LEAF_KINDS)})"
         )
+        assert role in EXPECTED_AUTHORITY_ROLES, (
+            f"Leaf authority_role {role!r} is not in the closed semantic AuthorityRole set "
+            f"({sorted(EXPECTED_AUTHORITY_ROLES)})"
+        )
+        saw_typed_leaf = saw_typed_leaf or kind in TYPED_LEAF_KINDS
+        saw_authority_leaf = saw_authority_leaf or role in AUTHORITY_LEAF_ROLES
 
-    assert saw_typed_leaf, (
-        f"No leaf with kind in {sorted(TYPED_LEAF_KINDS)} found across {len(trees)} "
-        "tree(s) — leaf-typing in build_predicate_tree is not producing typed kinds."
-    )
-    assert saw_typed_role, (
-        "No leaf with a typed authority_role found — apply_writer_gate_pass / "
-        "apply_reentrancy_pause_pass did not annotate any leaves."
-    )
+    assert saw_typed_leaf, f"No leaf with kind in {sorted(TYPED_LEAF_KINDS)} found"
+    assert saw_authority_leaf, f"No authority leaf with role in {sorted(AUTHORITY_LEAF_ROLES)} found"
 
 
-def test_capability_resolution_returns_non_empty(analyzed_weth, live_client: LiveClient):
-    """Gates the resolver read path (services/resolution/capability_resolver.py).
+def test_capability_resolution_returns_non_empty(guarded_company_child, live_client: LiveClient):
+    job = guarded_company_child["job"]
+    addr = (job.get("address") or "").lower()
+    assert addr.startswith("0x"), f"guarded child address missing or malformed: {addr!r}"
 
-    Hits ``GET /api/contract/{address}/capabilities`` and
-    asserts the response shape matches the semantic contract. WETH is
-    controls-free, so ``capabilities`` may be ``{}`` (every function
-    unguarded — the resolver convention). When non-empty, asserts at
-    least one entry carries a ``CapabilityExpr.kind`` in the closed kind
-    set.
-
-    TODO(D.1 rename): the route is currently
-    ``/api/contract/{address}/capabilities``. If D.1 renames this, update
-    the path here and drop this TODO.
-    """
-    addr = (analyzed_weth.get("address") or "").lower()
-    assert addr.startswith("0x"), f"analyzed_weth.address missing or malformed: {addr!r}"
-
-    # Use the session directly — LiveClient doesn't expose a typed helper
-    # for the predicate capability route yet (intentional: this lives in
-    # routers/predicate_capabilities.py and post-cutover it'll be the canonical read path,
-    # at which point it should get a method on LiveClient).
     resp = live_client._session.get(
         live_client._url(f"/api/contract/{addr}/capabilities"),
         timeout=30,
     )
     assert resp.status_code == 200, (
-        f"GET /api/contract/{addr}/capabilities returned {resp.status_code} — "
-        "semantic capabilities route is wired but the resolver failed (gates "
-        "capability_resolver.resolve_contract_capabilities). Body: {resp.text[:400]!r}"
+        f"GET /api/contract/{addr}/capabilities returned {resp.status_code}: {resp.text[:400]!r}"
     )
     body = resp.json()
-    assert isinstance(body, dict), "capabilities response must be a JSON object"
-    assert "capabilities" in body, "capabilities response missing 'capabilities' field"
-    caps = body["capabilities"]
-    assert isinstance(caps, dict), "capabilities field must be a dict keyed on function signature"
+    caps = body.get("capabilities")
+    assert isinstance(caps, dict), "capabilities response must include a dict keyed on function signature"
+    assert caps, "guarded child capability map must be non-empty"
 
-    if not caps:
-        pytest.skip(
-            "WETH has no guarded functions; capabilities is empty by design. "
-            "Non-empty content is asserted by the company-level cutover suite."
-        )
-
-    saw_valid_kind = False
     for fn_sig, cap in caps.items():
         assert isinstance(cap, dict), f"capabilities[{fn_sig}] must be a dict"
         kind = cap.get("kind")
         assert kind in EXPECTED_CAPABILITY_KINDS, (
-            f"CapabilityExpr.kind {kind!r} for {fn_sig} not in closed CapKind set "
-            f"({sorted(EXPECTED_CAPABILITY_KINDS)}) — resolver schema drift."
+            f"CapabilityExpr.kind {kind!r} for {fn_sig} not in closed CapKind set ({sorted(EXPECTED_CAPABILITY_KINDS)})"
         )
-        saw_valid_kind = True
-    assert saw_valid_kind, (
-        "Capabilities map non-empty but no entry had a valid kind — capability_to_dict serialization broke."
+
+
+def test_effective_function_has_capability_expr(guarded_company_child, live_client: LiveClient):
+    job = guarded_company_child["job"]
+    detail = live_client.analysis_detail(job["name"])
+    functions = (detail.get("effective_permissions") or {}).get("functions") or []
+
+    assert functions, "guarded child must produce effective_permissions.functions rows"
+    assert any(fn.get("capability_expr") is not None for fn in functions), (
+        f"None of {len(functions)} effective function rows carries capability_expr"
     )
 
 
-def test_effective_function_has_capability_expr(analyzed_weth, live_client: LiveClient):
-    """Gates B.1 — EffectiveFunction.capability_expr population.
-
-    Until B.1 lands, ``capability_expr`` is NULL for every row even when
-    the resolver returned a real CapabilityExpr; the policy-stage
-    persistence path doesn't write the column yet. This test fails today
-    and stays red until B.1 wires the resolver output through to
-    ``EffectiveFunction.capability_expr``.
-
-    Reads through the analysis_detail payload because it's the public
-    surface that downstream consumers (UI, agent tools) use; if the
-    column exists in the DB but doesn't surface here, B.1 isn't done.
-
-    TODO(B.1 surface): once persistence lands, the
-    ``_serialize_effective_functions`` aggregation in
-    ``services/aggregations/analysis_detail.py`` must include
-    ``capability_expr`` in its output. This assertion drives that
-    surfacing.
-    """
-    detail = live_client.analysis_detail(analyzed_weth["name"])
-    eff = (detail.get("effective_permissions") or {}).get("functions") or []
-    if not eff:
-        pytest.skip(
-            "WETH has no effective_functions rows (no guarded controls). "
-            "B.1 gate is exercised on contracts that produce non-empty effective_permissions."
-        )
-
-    have_expr = [fn for fn in eff if fn.get("capability_expr") is not None]
-    assert have_expr, (
-        f"None of {len(eff)} effective_function rows carries a populated "
-        "capability_expr field — B.1 persistence path is not landed. "
-        "Gates: workers/policy_worker.py writing CapabilityExpr -> "
-        "EffectiveFunction.capability_expr, plus _serialize_effective_functions "
-        "surfacing it in analysis_detail.json."
-    )
-
-
-def test_effective_function_principal_consistent_with_capability_expr(analyzed_weth, live_client: LiveClient):
-    """Strongest cutover-correctness gate — principals row reflects capability_expr shape.
-
-    The cutover swaps the principal-resolution implementation. For
-    correctness, the resolved FunctionPrincipal rows must agree with the
-    CapabilityExpr they were derived from:
-
-      * ``finite_set`` -> exactly ``len(members)`` principal rows.
-      * ``threshold_group`` -> exactly 1 principal row, ``resolved_type=='safe'``,
-        ``details.threshold`` populated.
-      * ``cofinite_blacklist`` / ``external_check_only`` /
-        ``conditional_universal`` -> principals empty AND capability_expr
-        populated (these kinds describe sets that cannot be enumerated as
-        principal rows).
-
-    Skips when the WETH fixture has no effective_functions; this gate
-    only asserts on contracts with at least one resolved capability.
-    Until B.1 lands ``capability_expr`` will be None and this test is
-    skip-or-fail; once B.1 lands the consistency assertions become real.
-    """
-    detail = live_client.analysis_detail(analyzed_weth["name"])
-    eff = (detail.get("effective_permissions") or {}).get("functions") or []
-    if not eff:
-        pytest.skip("No effective_functions on WETH; consistency check needs a controls-bearing fixture.")
+def test_effective_function_principal_consistent_with_capability_expr(
+    guarded_company_child,
+    live_client: LiveClient,
+):
+    job = guarded_company_child["job"]
+    detail = live_client.analysis_detail(job["name"])
+    functions = (detail.get("effective_permissions") or {}).get("functions") or []
 
     checked_any = False
-    for fn in eff:
+    for fn in functions:
         cap = fn.get("capability_expr")
         if not isinstance(cap, dict):
-            # B.1 not yet surfaced for this row; covered by the dedicated
-            # test_effective_function_has_capability_expr gate above.
             continue
         kind = cap.get("kind")
-        controllers = fn.get("controllers") or []
         principals = []
-        for c in controllers:
-            principals.extend(c.get("principals") or [])
+        for controller in fn.get("controllers") or []:
+            principals.extend(controller.get("principals") or [])
 
         if kind == "finite_set":
             members = cap.get("members") or []
             assert len(principals) == len(members), (
                 f"finite_set capability for {fn.get('function')!r} has {len(members)} members "
-                f"but {len(principals)} principal rows — principal/expr drift "
-                "(gates B.1 + B.2 consistency)."
+                f"but {len(principals)} principal rows"
             )
             checked_any = True
         elif kind == "threshold_group":
             assert len(principals) == 1, (
-                f"threshold_group for {fn.get('function')!r} expected exactly 1 principal "
-                f"(the safe), got {len(principals)} — gates B.1 safe-collapse path."
+                f"threshold_group for {fn.get('function')!r} expected exactly 1 principal, got {len(principals)}"
             )
-            p = principals[0]
-            assert p.get("resolved_type") == "safe", (
-                f"threshold_group principal for {fn.get('function')!r} must be resolved_type=='safe', "
-                f"got {p.get('resolved_type')!r}."
+            principal = principals[0]
+            assert principal.get("resolved_type") == "safe", (
+                f"threshold_group principal for {fn.get('function')!r} must be resolved_type='safe', "
+                f"got {principal.get('resolved_type')!r}"
             )
-            details = p.get("details") or {}
-            assert "threshold" in details, (
-                f"threshold_group principal for {fn.get('function')!r} missing details.threshold — "
-                "Safe metadata not propagated."
+            assert "threshold" in (principal.get("details") or {}), (
+                f"threshold_group principal for {fn.get('function')!r} missing details.threshold"
             )
             checked_any = True
         elif kind in {"cofinite_blacklist", "external_check_only", "conditional_universal"}:
             assert principals == [], (
-                f"capability kind={kind} for {fn.get('function')!r} should produce zero "
-                f"principal rows (non-enumerable set), got {len(principals)} — gates B.2 "
-                "principal-suppression for non-caller kinds."
+                f"capability kind={kind} for {fn.get('function')!r} should produce zero principal rows, "
+                f"got {len(principals)}"
             )
             checked_any = True
-        # AND / OR / signature_witness / unsupported: shape varies per
-        # branch; intentionally not asserted here. Add targeted gates if
-        # the cutover plan calls them out.
 
-    if not checked_any:
-        pytest.skip(
-            "No effective_function row had an asserted-kind capability_expr; consistency "
-            "gate is dependent on B.1 surfacing the column first."
-        )
+    assert checked_any, "No effective function row had an asserted-kind capability_expr"
 
 
-def test_no_retired_artifacts_present(analyzed_weth, live_client: LiveClient):
-    """Negative gate: retired artifacts stay absent or explicitly deprecated."""
+def test_no_retired_artifacts_present(guarded_company_child, live_client: LiveClient):
+    job = guarded_company_child["job"]
     for retired_name in ("permission_graph", "semantic_guards"):
-        art = live_client.artifact(analyzed_weth["name"], retired_name)
-        if art is None:
-            # Artifact absent — already retired.
+        artifact = live_client.artifact(job["name"], retired_name)
+        if artifact is None:
             continue
-        assert isinstance(art, dict), (
-            f"{retired_name} artifact still emitted but is not a dict — cannot carry a deprecation marker."
-        )
-        assert art.get("deprecated") is True, (
-            f"{retired_name} artifact still emits without a 'deprecated': true marker. "
-            "Remove the writer or add the marker."
-        )
+        assert isinstance(artifact, dict), f"{retired_name} still emits but is not a dict"
+        assert artifact.get("deprecated") is True, f"{retired_name} still emits without deprecated=true"

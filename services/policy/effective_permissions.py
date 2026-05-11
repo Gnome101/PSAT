@@ -26,9 +26,9 @@ from schemas.effective_permissions import (
     ResolvedControllerGrant,
     ResolvedPrincipal,
 )
-from services.policy.capability_surface import project_capability_surface
+from services.policy.capability_surface import capability_surface_status, project_capability_surface
 
-logger = logging.getLogger("services.policy.effective_permissions")
+logger = logging.getLogger(__name__)
 
 ELEMENTARY_TYPE_PREFIXES = (
     "address",
@@ -416,16 +416,13 @@ def _column_values_for_capability(cap_dict: dict[str, Any]) -> dict[str, Any]:
     artifact dict carries the right shape even when the writer isn't
     invoked (read-only callers like the recursive resolver)."""
     surface = project_capability_surface(cap_dict)
-    kind = cap_dict.get("kind")
     conditions = surface.conditions
     out: dict[str, Any] = {
         "capability_expr": dict(cap_dict),
         "conditions": conditions or None,
-        "status": "public" if surface.authority_public else None,
+        "status": capability_surface_status(cap_dict, surface),
         "authority_public": surface.authority_public,
     }
-    if kind == "unsupported" and not surface.authority_public and not surface.principal_rows:
-        out["status"] = "unsupported"
     return out
 
 

@@ -708,6 +708,24 @@ def test_probe_rate_limit_applies_to_signature_route_too(api_client, db_session,
     assert third.status_code == 429
 
 
+def test_probe_rate_limit_prunes_stale_buckets(monkeypatch):
+    import collections
+
+    from routers import predicate_capabilities
+
+    stale_addr = "0x" + "aa" * 20
+    fresh_addr = "0x" + "bb" * 20
+    monkeypatch.setattr(predicate_capabilities, "_PROBE_RATE_LIMIT", 3)
+    monkeypatch.setattr(predicate_capabilities, "_PROBE_RATE_WINDOW_S", 60.0)
+    predicate_capabilities._probe_rate_state.clear()
+    predicate_capabilities._probe_rate_state[("old-key", stale_addr)] = collections.deque([1.0])
+
+    predicate_capabilities._probe_rate_check("new-key", fresh_addr)
+
+    assert ("old-key", stale_addr) not in predicate_capabilities._probe_rate_state
+    assert ("new-key", fresh_addr) in predicate_capabilities._probe_rate_state
+
+
 @requires_postgres
 def test_probe_membership_picks_most_recent_completed_job(api_client, db_session):
     """Two completed jobs for the same address — the route uses

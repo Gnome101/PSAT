@@ -38,6 +38,14 @@ _PROBE_RATE_WINDOW_S = float(os.environ.get("PSAT_PROBE_RATE_WINDOW_S", "60"))
 _probe_rate_state: dict[tuple[str, str], Any] = {}
 
 
+def _prune_probe_rate_state(now: float) -> None:
+    for key, state in list(_probe_rate_state.items()):
+        while state and state[0] + _PROBE_RATE_WINDOW_S < now:
+            state.popleft()
+        if not state:
+            _probe_rate_state.pop(key, None)
+
+
 def _probe_rate_check(admin_key: str | None, address: str) -> None:
     """Raise HTTPException(429) when the (admin_key, address) sliding
     window has hit its limit. No-op when the limit is 0 (env override
@@ -47,10 +55,13 @@ def _probe_rate_check(admin_key: str | None, address: str) -> None:
     import collections as _collections
     import time as _time
 
-    state = _probe_rate_state.setdefault((admin_key or "<no-key>", address.lower()), _collections.deque())
     now = _time.time()
-    while state and state[0] + _PROBE_RATE_WINDOW_S < now:
-        state.popleft()
+    _prune_probe_rate_state(now)
+    key = (admin_key or "<no-key>", address.lower())
+    state = _probe_rate_state.get(key)
+    if state is None:
+        state = _collections.deque()
+        _probe_rate_state[key] = state
     if len(state) >= _PROBE_RATE_LIMIT:
         retry_after = max(0, int(state[0] + _PROBE_RATE_WINDOW_S - now)) + 1
         raise HTTPException(

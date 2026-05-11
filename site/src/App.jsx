@@ -243,7 +243,7 @@ function PermissionsTab({ detail }) {
           <article className="card" key={entry.selector}>
             <div className="card-header-row">
               <h3>{prettyFunctionName(entry.function)}</h3>
-              <span className="chip alt">{(entry.effect_labels || []).join(" · ") || "controlled"}</span>
+              <span className="chip alt">{(entry.effect_labels || []).join(" · ") || "permissioned"}</span>
             </div>
             <p className="muted">{entry.action_summary}</p>
             <div className="kv-grid compact">

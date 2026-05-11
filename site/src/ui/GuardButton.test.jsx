@@ -33,4 +33,27 @@ describe("GuardButton", () => {
     expect(html).toContain("0x9f26..20761");
     expect(html).not.toContain("ps-guard-icon-only");
   });
+
+  it("shows exact empty caller sets as no active principal", () => {
+    const html = renderToStaticMarkup(
+      <GuardButton
+        fnView={{
+          name: "recover",
+          guard: {
+            kind: "resolved_empty",
+            label: "NONE",
+            sublabel: "no active principal",
+            accent: "#64748b",
+            principals: [],
+          },
+        }}
+        onSelect={vi.fn()}
+        onNavigate={vi.fn()}
+      />,
+    );
+
+    expect(html).toContain("NONE");
+    expect(html).toContain("no active principal");
+    expect(html).not.toContain("ps-guard-icon-only");
+  });
 });

@@ -67,10 +67,11 @@ The Graph tab is a graph-first view of:
 
 - upstream controllers and owners
 - authority role gates
-- controlled functions
+- permissioned functions
 - the protected contract
 
 ## Notes
 
 - The backend stores run artifacts under `contracts/`.
 - Recursive artifacts are written as `recursive_*` workspaces under `contracts/`.
+- HyperSync authority-policy backfill only runs when `ENVIO_API_TOKEN` is set.

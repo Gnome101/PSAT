@@ -34,6 +34,16 @@ class CapabilitySurface:
         return _unique_conditions(out)
 
 
+def capability_surface_status(cap_dict: dict[str, Any], surface: CapabilitySurface) -> str | None:
+    if surface.authority_public:
+        return "public"
+    if _is_resolved_empty_capability(cap_dict):
+        return "resolved_empty"
+    if cap_dict.get("kind") == "unsupported" and not surface.principal_rows:
+        return "unsupported"
+    return None
+
+
 def project_capability_surface(
     cap_dict: dict[str, Any],
     *,
@@ -97,6 +107,18 @@ def _project_node(
             surface = _and_surface(surface, child_surface)
         return surface
     return CapabilitySurface(residual=[dict(cap_dict)])
+
+
+def _is_resolved_empty_capability(cap_dict: dict[str, Any]) -> bool:
+    kind = cap_dict.get("kind")
+    if kind == "finite_set":
+        return cap_dict.get("membership_quality") == "exact" and cap_dict.get("members") == []
+    if kind == "AND":
+        return any(_is_resolved_empty_capability(child) for child in _child_dicts(cap_dict))
+    if kind == "OR":
+        children = _child_dicts(cap_dict)
+        return bool(children) and all(_is_resolved_empty_capability(child) for child in children)
+    return False
 
 
 def _or_surface(left: CapabilitySurface, right: CapabilitySurface) -> CapabilitySurface:

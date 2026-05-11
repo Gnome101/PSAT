@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import logging
 import os
-import time
+import signal
 from dataclasses import dataclass
+from threading import Event
 from typing import Any, Mapping, Protocol
 
 from sqlalchemy import delete, func, select
@@ -16,7 +17,7 @@ from db.models import Contract, ControllerValue, IndexedEventCursor, IndexedEven
 from db.queue import get_artifact
 from services.resolution.repos.event_logs_rpc import FetchedEventLog
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("workers.event_log_indexer")
 
 DEFAULT_INTERVAL_S = float(os.getenv("PSAT_EVENT_INDEXER_INTERVAL_S", "60"))
 DEFAULT_CONFIRMATION_DEPTH = int(os.getenv("PSAT_EVENT_INDEXER_FINALITY_DEPTH", "12"))
@@ -293,9 +294,11 @@ def run_event_log_indexer_loop(
     head_fetchers: Mapping[int, HeadBlockFetcher],
     block_hash_fetchers: Mapping[int, BlockHashFetcher],
     interval: float = DEFAULT_INTERVAL_S,
+    stop_event: Event | None = None,
 ) -> None:
     logger.info("starting event log indexer loop interval=%ss", interval)
-    while True:
+    stop_event = stop_event or Event()
+    while not stop_event.is_set():
         with SessionLocal() as session:
             try:
                 enrolled = enroll_from_completed_jobs(session)
@@ -310,13 +313,26 @@ def run_event_log_indexer_loop(
             except Exception:
                 session.rollback()
                 logger.exception("event log indexer pass failed")
-        time.sleep(interval)
+        stop_event.wait(interval)
 
 
 def main() -> None:
     from services.resolution.repos.event_logs_rpc import RpcBlockHashFetcher, RpcEventLogFetcher, RpcHeadBlockFetcher
 
-    logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(name)s %(levelname)s %(message)s",
+        force=True,
+    )
+    stop_event = Event()
+
+    def handle_signal(signum, _frame):
+        logger.info("received signal %s, shutting down", signum)
+        stop_event.set()
+
+    signal.signal(signal.SIGTERM, handle_signal)
+    signal.signal(signal.SIGINT, handle_signal)
+
     rpc_url = os.getenv("PSAT_INDEXER_RPC_URL") or os.getenv("ETH_RPC") or "https://ethereum-rpc.publicnode.com"
     fetchers = {1: RpcEventLogFetcher(rpc_url)}
     head_fetchers = {1: RpcHeadBlockFetcher(rpc_url)}
@@ -325,6 +341,7 @@ def main() -> None:
         fetchers=fetchers,
         head_fetchers=head_fetchers,
         block_hash_fetchers=block_hash_fetchers,
+        stop_event=stop_event,
     )
 
 

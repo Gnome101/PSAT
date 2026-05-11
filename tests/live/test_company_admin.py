@@ -20,7 +20,6 @@ def _drain_etherfi_queue(live_client: LiveClient):
     live_client.cancel_queued_company_jobs(DEFAULT_TEST_COMPANY)
 
 
-@pytest.mark.expensive_live
 def test_analyze_remaining_response_shape(analyzed_company, live_client: LiveClient, _drain_etherfi_queue):
     # Shape-only: ``queued`` count depends on prior runs against this preview's DB.
     body = live_client.analyze_remaining(DEFAULT_TEST_COMPANY)
@@ -64,12 +63,6 @@ def test_refresh_coverage_idempotent(analyzed_company, live_client: LiveClient):
     """Twice-in-a-row should produce the same row count (growth = dup bug, shrink = race bug)."""
     first = live_client.refresh_company_coverage(DEFAULT_TEST_COMPANY)
     second = live_client.refresh_company_coverage(DEFAULT_TEST_COMPANY)
-    active_jobs = [j for j in live_client.jobs() if j.get("status") in ("queued", "processing")]
-    if first["coverage_rows"] != second["coverage_rows"] and active_jobs:
-        pytest.skip(
-            "coverage inventory changed while worker jobs were still active: "
-            f"first={first['coverage_rows']} second={second['coverage_rows']} active_jobs={len(active_jobs)}"
-        )
     assert first["coverage_rows"] == second["coverage_rows"], (
         "refresh_coverage is not idempotent: "
         f"first call={first['coverage_rows']} rows, second={second['coverage_rows']} rows"

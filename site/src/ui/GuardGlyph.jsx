@@ -81,6 +81,15 @@ export function GuardGlyph({ kind, accent, title }) {
     );
   }
 
+  if (kind === "resolved_empty") {
+    return (
+      <svg {...common}>
+        <circle cx="8" cy="8" r="5.4" stroke={accent} strokeWidth="1.4" fill={`${accent}10`} />
+        <path d="M4.8 11.2L11.2 4.8" stroke={accent} strokeWidth="1.5" strokeLinecap="round" />
+      </svg>
+    );
+  }
+
   if (kind === "many") {
     return (
       <svg {...common}>

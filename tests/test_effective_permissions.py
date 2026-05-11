@@ -170,6 +170,55 @@ def test_build_effective_permissions_marks_effect_only_semantic_functions_unsupp
     assert fn.get("capability_expr", {}).get("unsupported_reason") == "missing_semantic_capability_resolver_output"
 
 
+def test_build_effective_permissions_marks_exact_empty_principal_set_resolved_empty():
+    target_analysis = {
+        "subject": {
+            "address": "0x1111111111111111111111111111111111111111",
+            "name": "Target",
+        },
+        "semantic_control": {"semantic_functions": []},
+    }
+    cap = _finite_cap()
+
+    payload = build_effective_permissions(
+        target_analysis,
+        capability_resolver_output={"recover(address)": cap},
+        effects=_effects(_effect("recover(address)", labels=["asset_send"])),
+    )
+
+    fn = payload["functions"][0]
+    assert fn["function"] == "recover(address)"
+    assert fn.get("status") == "resolved_empty"
+    assert fn["authority_public"] is False
+    assert fn.get("capability_expr") == cap
+
+
+def test_build_effective_permissions_keeps_lower_bound_empty_as_unresolved_gap():
+    target_analysis = {
+        "subject": {
+            "address": "0x1111111111111111111111111111111111111111",
+            "name": "Target",
+        },
+        "semantic_control": {"semantic_functions": []},
+    }
+    cap = {
+        "kind": "finite_set",
+        "members": [],
+        "membership_quality": "lower_bound",
+        "confidence": "partial",
+    }
+
+    payload = build_effective_permissions(
+        target_analysis,
+        capability_resolver_output={"recover(address)": cap},
+        effects=_effects(_effect("recover(address)", labels=["asset_send"])),
+    )
+
+    fn = payload["functions"][0]
+    assert fn.get("status") is None
+    assert fn.get("capability_expr") == cap
+
+
 def test_build_effective_permissions_uses_semantic_capabilities_for_principals():
     target_analysis = {
         "subject": {

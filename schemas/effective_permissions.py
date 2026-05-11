@@ -7,6 +7,7 @@ from typing import Any, Literal, TypedDict
 from typing_extensions import NotRequired
 
 ResolvedAddressType = Literal["zero", "eoa", "safe", "timelock", "proxy_admin", "contract", "unknown"]
+EffectiveFunctionStatus = Literal["public", "unsupported", "resolved_empty"]
 PrincipalResolutionStatus = Literal[
     "complete",
     "no_authority",
@@ -56,7 +57,7 @@ class EffectiveFunctionPermission(TypedDict):
     notes: list[str]
     capability_expr: NotRequired[dict[str, Any]]
     conditions: NotRequired[list[dict[str, Any]]]
-    status: NotRequired[str]
+    status: NotRequired[EffectiveFunctionStatus]
     signature_witnesses: NotRequired[list[ResolvedPrincipal]]
 
 

@@ -15,7 +15,7 @@ from eth_utils.crypto import keccak
 
 from services.resolution.capability_resolver import _selector_for_signature
 
-logger = logging.getLogger("services.policy.principal_history")
+logger = logging.getLogger(__name__)
 
 ETHERSCAN_API = "https://api.etherscan.io/v2/api"
 MAX_LOGS_PER_TOPIC = int(os.getenv("PSAT_PRINCIPAL_HISTORY_MAX_LOGS_PER_TOPIC", "10000"))

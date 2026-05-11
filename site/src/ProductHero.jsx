@@ -11,7 +11,7 @@ export default function ProductHero({ form, setForm, onSubmit, loading }) {
         <div className="product-hero-copy">
           <p className="product-hero-eyebrow">Protocol Security Assessment Tool</p>
           <h1 id="product-hero-title" className="product-hero-title">
-            Every controlled path in a protocol.
+            Every privileged path in a protocol.
             <br />
             <span className="product-hero-accent">One surface.</span>
           </h1>

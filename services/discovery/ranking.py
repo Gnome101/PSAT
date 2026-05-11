@@ -35,7 +35,6 @@ from typing import Any
 from db.models import Contract
 
 from .activity import enrich_with_activity
-from .inventory_domain import CHAIN_SORT_ORDER
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -194,7 +193,7 @@ def score_inventory_evidence(
 # ---------------------------------------------------------------------------
 
 
-def rank_contract_rows(rows: Iterable[Contract], activity_candidate_limit: int = 0) -> list[dict[str, Any]]:
+def rank_contract_rows(rows: Iterable[Contract]) -> list[dict[str, Any]]:
     """Rank Contract rows by the shared activity + confidence blend.
 
     The canonical ranking lives in ``enrich_with_activity``, which
@@ -241,18 +240,7 @@ def rank_contract_rows(rows: Iterable[Contract], activity_candidate_limit: int =
                 "discovery_sources": sources,
             }
         )
-    if activity_candidate_limit > 0 and len(shimmed) > activity_candidate_limit:
-        shimmed.sort(
-            key=lambda c: (
-                -c.get("confidence", 0),
-                c.get("name") is None,
-                str(c.get("name") or ""),
-                CHAIN_SORT_ORDER.get(_primary_chain_from_dict(c), 50),
-                c["address"],
-            )
-        )
-
-    return enrich_with_activity(shimmed, max_fetches=activity_candidate_limit)
+    return enrich_with_activity(shimmed)
 
 
 def _resolve_chains(row: Contract) -> list[str]:
@@ -268,11 +256,6 @@ def _resolve_chains(row: Contract) -> list[str]:
     if row.chain:
         return [row.chain]
     return ["unknown"]
-
-
-def _primary_chain_from_dict(contract: dict[str, Any]) -> str:
-    chains = contract.get("chains", [])
-    return str(chains[0]) if chains else "unknown"
 
 
 __all__ = [

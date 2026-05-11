@@ -12,6 +12,7 @@ counts match the Option A table:
 | threshold_group               | capability_expr only             | 1       |
 | signature_witness(finite)     | capability_expr only             | N       |
 | signature_witness(non-finite) | capability_expr only             | 0       |
+| finite_set(empty exact)       | + status='resolved_empty'        | 0       |
 | cofinite_blacklist            | capability_expr only             | 0       |
 | external_check_only           | capability_expr only             | 0       |
 | conditional_universal         | + conditions, status='public',   | 0       |
@@ -223,6 +224,43 @@ def test_finite_set_with_conditions_writes_rows_and_preserves_conditions(db_sess
     assert ef.conditions == expected_conditions
     assert ef.status is None
     assert ef.authority_public is False
+
+
+def test_exact_empty_finite_set_marks_resolved_empty(db_session) -> None:
+    cap = CapabilityExpr.finite_set([], quality="exact", confidence="enumerable")
+
+    write_effective_function_rows(
+        db_session,
+        contract_id=1,
+        function_records=[_fn_record("renounceOnly()")],
+        capability_by_function={"renounceOnly()": cap},
+    )
+    db_session.commit()
+
+    assert len(_principals(db_session)) == 0
+    ef = _ef_row(db_session)
+    assert ef.status == "resolved_empty"
+    assert ef.authority_public is False
+    assert ef.capability_expr["kind"] == "finite_set"
+    assert ef.capability_expr["members"] == []
+    assert ef.capability_expr["membership_quality"] == "exact"
+
+
+def test_lower_bound_empty_finite_set_stays_unresolved_gap(db_session) -> None:
+    cap = CapabilityExpr.finite_set([], quality="lower_bound", confidence="partial")
+
+    write_effective_function_rows(
+        db_session,
+        contract_id=1,
+        function_records=[_fn_record("guardedButNotEnumerated()")],
+        capability_by_function={"guardedButNotEnumerated()": cap},
+    )
+    db_session.commit()
+
+    assert len(_principals(db_session)) == 0
+    ef = _ef_row(db_session)
+    assert ef.status is None
+    assert ef.capability_expr["membership_quality"] == "lower_bound"
 
 
 # ---------------------------------------------------------------------------
@@ -531,6 +569,20 @@ def test_column_values_conditional_universal() -> None:
     assert cols["status"] == "public"
     assert cols["authority_public"] is True
     assert cols["conditions"] and cols["conditions"][0]["kind"] == "pause"
+
+
+def test_column_values_resolved_empty() -> None:
+    cap_dict = capability_to_dict(CapabilityExpr.finite_set([], quality="exact", confidence="enumerable"))
+    cols = _column_values_for_capability(cap_dict)
+    assert cols["status"] == "resolved_empty"
+    assert cols["authority_public"] is False
+
+
+def test_column_values_lower_bound_empty_is_not_resolved_empty() -> None:
+    cap_dict = capability_to_dict(CapabilityExpr.finite_set([], quality="lower_bound", confidence="partial"))
+    cols = _column_values_for_capability(cap_dict)
+    assert cols["status"] is None
+    assert cols["authority_public"] is False
 
 
 def test_column_values_public_or_composite() -> None:

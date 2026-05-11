@@ -78,6 +78,7 @@ const TYPE_META = {
   proxy_admin: { label: "ADM", accent: "#8880a0" },
   address: { label: "ADDR", accent: "#94a3b8" },
   unknown: { label: "UNK", accent: "#94a3b8" },
+  resolved_empty: { label: "NONE", accent: "#64748b" },
   open: { label: "OPEN", accent: "#64748b" },
   many: { label: "MULTI", accent: "#8a80a0" },
 };
@@ -372,6 +373,21 @@ function collectPrincipals(fn, companyData) {
   return { direct, indirect };
 }
 
+function isExactEmptyCapability(cap) {
+  if (!cap || typeof cap !== "object") return false;
+  if (cap.kind === "finite_set") {
+    return cap.membership_quality === "exact" && Array.isArray(cap.members) && cap.members.length === 0;
+  }
+  const children = Array.isArray(cap.children) ? cap.children : [];
+  if (cap.kind === "AND") return children.some(isExactEmptyCapability);
+  if (cap.kind === "OR") return children.length > 0 && children.every(isExactEmptyCapability);
+  return false;
+}
+
+function isResolvedEmptyFunction(fn) {
+  return fn?.status === "resolved_empty" || isExactEmptyCapability(fn?.capability_expr);
+}
+
 function guardSummary(fn, companyData) {
   const { direct, indirect } = collectPrincipals(fn, companyData);
   // `principals` stays as the direct list for backward compatibility — every
@@ -380,11 +396,12 @@ function guardSummary(fn, companyData) {
   const principals = direct;
 
   if (!direct.length) {
-    const meta = TYPE_META[fn.authority_public ? "open" : "unknown"];
+    const kind = fn.authority_public ? "open" : isResolvedEmptyFunction(fn) ? "resolved_empty" : "unknown";
+    const meta = TYPE_META[kind];
     return {
-      kind: fn.authority_public ? "open" : "unknown",
+      kind,
       label: meta.label,
-      sublabel: fn.authority_public ? "public" : "unresolved",
+      sublabel: fn.authority_public ? "public" : kind === "resolved_empty" ? "no active principal" : "unresolved",
       accent: meta.accent,
       principals,
       indirect,
@@ -1326,7 +1343,7 @@ function InspectorCard({ selected, onNavigate }) {
 
       <div className="ps-inspector-block">
         <div className="ps-inspector-label">Action</div>
-        <p className="ps-inspector-body">{selected.action || "Controlled path"}</p>
+        <p className="ps-inspector-body">{selected.action || "Permissioned path"}</p>
       </div>
 
       <div className="ps-inspector-block">
@@ -1359,7 +1376,11 @@ function InspectorCard({ selected, onNavigate }) {
           </div>
         ) : (
           <p className="ps-inspector-empty">
-            {selected.authorityPublic ? "This function is marked public in the authority state." : "No controlling principal was resolved for this path."}
+            {selected.authorityPublic
+              ? "This function is marked public in the authority state."
+              : selected.guard.kind === "resolved_empty"
+                ? "No active principal can call this path right now."
+                : "No controlling principal was resolved for this path."}
           </p>
         )}
       </div>
@@ -1552,7 +1573,7 @@ function PrincipalDetail({ principal, machines, onNavigate, onFocusContract, add
                 function-level permissions. Labeling it "Controls" would claim
                 direct call rights — which we can't guarantee without per-
                 function role-holder validation (see service/policy TODO). */}
-            <span title="Computed from the recursive control graph — does not imply direct call rights on these contracts' controlled functions">
+            <span title="Computed from the recursive control graph — does not imply direct call rights on these contracts' privileged functions">
               Appears In Governance Path For ({controlledMachines.length})
             </span>
             {controlledMachines.length > 1 && (

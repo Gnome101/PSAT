@@ -131,7 +131,7 @@ jobs:
           fetch-depth: 0  # diff-cover needs origin/main history
       - uses: foundry-rs/foundry-toolchain@v1
         with:
-          version: v1.7.1
+          version: stable
       - uses: astral-sh/setup-uv@v5
       - name: Start minio
         run: |

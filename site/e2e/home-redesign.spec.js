@@ -112,7 +112,7 @@ test.describe("home redesign", () => {
 
     // Hero eyebrow is the distinctive landing marker
     await expect(page.locator(".product-hero-eyebrow")).toBeVisible();
-    await expect(page.locator(".product-hero-title")).toContainText(/Every controlled path/i);
+    await expect(page.locator(".product-hero-title")).toContainText(/Every privileged path/i);
 
     // Protocol list
     await expect(page.locator(".home-protocol-row")).toHaveCount(2);

@@ -61,7 +61,7 @@ const NODES = [
   { id: "router",    col: 0, row: 0, name: "ProtocolRouter", tags: "proxy · upgradeable", spec: "EIP1967", value: 2_400_000_000, valueLabel: "$2.4B", risk: "ok",   appearAt: 0.03, badges: ["2P"] },
   { id: "staking",   col: 1, row: 0, name: "StakingVault",   tags: "value · stakeable",   spec: "ERC20",   value: 890_000_000,   valueLabel: "$890M", risk: "ok",   appearAt: 0.05, badges: ["POOL"] },
   { id: "rewards",   col: 2, row: 0, name: "RewardsMgr",     tags: "accrual · payable",   spec: "CLAIMS",  value: 120_000_000,   valueLabel: "$120M", risk: "ok",   appearAt: 0.07, badges: ["4/7"] },
-  { id: "roles",     col: 0, row: 1, name: "RoleController", tags: "roles · pause",       spec: "GNOSIS",  value: null,          valueLabel: null,    risk: "ok",   appearAt: 0.09, badges: ["4/7"] },
+  { id: "access",    col: 0, row: 1, name: "AccessControl",  tags: "roles · pause",       spec: "GNOSIS",  value: null,          valueLabel: null,    risk: "ok",   appearAt: 0.09, badges: ["4/7"] },
   { id: "fees",      col: 1, row: 1, name: "FeeHandler",     tags: "timelock · value-in", spec: "TL·3d",   value: 41_000_000,    valueLabel: "$41M",  risk: "warn", appearAt: 0.11, badges: ["TL"] },
   { id: "withdrawq", col: 2, row: 1, name: "WithdrawQueue",  tags: "erc721 · claim",      spec: "ERC721",  value: 78_000_000,    valueLabel: "$78M",  risk: "ok",   appearAt: 0.13, badges: ["QUEUE"] },
   { id: "oracle",    col: 0, row: 2, name: "OracleV2",       tags: "price · chainlink",   spec: "FEED",    value: null,          valueLabel: null,    risk: "ok",   appearAt: 0.15, badges: ["ADMIN"] },

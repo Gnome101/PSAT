@@ -12,7 +12,7 @@ export default function HomeHero({ onScrollToProtocols, protocolCount, contractC
           of any DeFi protocol.
         </h1>
         <p className="home-hero-lede">
-          PSAT discovers every contract, controlled role and upgrade path for a protocol and
+          PSAT discovers every contract, privileged role and upgrade path for a protocol and
           lays them out in one navigable surface. Start from an address or a name — get audit
           coverage, control flow and risk posture in minutes.
         </p>

@@ -80,17 +80,14 @@ def company_second_run(company_first_run, live_client: LiveClient) -> dict[str, 
     return parent
 
 
-@pytest.mark.expensive_live
 def test_first_company_run_completes(company_first_run):
     assert company_first_run["status"] == "completed"
 
 
-@pytest.mark.expensive_live
 def test_first_company_run_has_children(company_first_children):
     assert any(c["status"] == "completed" for c in company_first_children)
 
 
-@pytest.mark.expensive_live
 def test_first_company_run_has_inventory(company_first_inventory, company_first_children):
     # contract_inventory is the dapp_crawl artifact; if Tavily can't pick a domain it's empty.
     # Discovery may still have succeeded via DefiLlama → fall back to children with addresses.
@@ -102,7 +99,6 @@ def test_first_company_run_has_inventory(company_first_inventory, company_first_
     )
 
 
-@pytest.mark.expensive_live
 def test_second_company_run_deduplicates(
     company_first_children,
     company_second_run,
@@ -134,7 +130,6 @@ def test_second_company_run_deduplicates(
         raise AssertionError("Run 2 re-spawned jobs for already-analyzed non-proxy addresses:\n" + "\n".join(lines))
 
 
-@pytest.mark.expensive_live
 def test_second_company_run_inventory_merged(
     company_first_inventory,
     company_second_run,
