@@ -26,6 +26,7 @@ from schemas.effective_permissions import (
     ResolvedControllerGrant,
     ResolvedPrincipal,
 )
+from services.policy.capability_surface import project_capability_surface
 
 logger = logging.getLogger("services.policy.effective_permissions")
 
@@ -414,37 +415,18 @@ def _column_values_for_capability(cap_dict: dict[str, Any]) -> dict[str, Any]:
     """Mirror of the writer's per-kind column rules — kept here so the
     artifact dict carries the right shape even when the writer isn't
     invoked (read-only callers like the recursive resolver)."""
+    surface = project_capability_surface(cap_dict)
     kind = cap_dict.get("kind")
+    conditions = surface.conditions
     out: dict[str, Any] = {
         "capability_expr": dict(cap_dict),
-        "conditions": None,
-        "status": None,
-        "authority_public": False,
+        "conditions": conditions or None,
+        "status": "public" if surface.authority_public else None,
+        "authority_public": surface.authority_public,
     }
-    if kind == "conditional_universal":
-        out["conditions"] = list(cap_dict.get("conditions") or [])
-        out["status"] = "public"
-        out["authority_public"] = True
-    elif _is_public_composite_capability(cap_dict):
-        out["status"] = "public"
-        out["authority_public"] = True
-    elif kind == "unsupported":
+    if kind == "unsupported" and not surface.authority_public and not surface.principal_rows:
         out["status"] = "unsupported"
     return out
-
-
-def _is_public_composite_capability(cap_dict: dict[str, Any]) -> bool:
-    kind = cap_dict.get("kind")
-    if kind == "conditional_universal":
-        return True
-    if kind not in {"AND", "OR"}:
-        return False
-    children = cap_dict.get("children")
-    return (
-        isinstance(children, list)
-        and bool(children)
-        and all(isinstance(child, dict) and _is_public_composite_capability(child) for child in children)
-    )
 
 
 def build_effective_permissions(

@@ -17,7 +17,8 @@ counts match the Option A table:
 | conditional_universal         | + conditions, status='public',   | 0       |
 |                               |   authority_public=True          |         |
 | unsupported                   | + status='unsupported'           | 0       |
-| AND/OR irreducible composite  | full tree in capability_expr     | 0       |
+| resolvable composite paths    | full tree + projected path cols  | path N  |
+| irreducible composite         | full tree in capability_expr     | 0       |
 | OR pure-finite                | resolver simplifies to union     | union   |
 
 Tests don't go through Slither; they instantiate ``CapabilityExpr``
@@ -196,6 +197,30 @@ def test_finite_set_emits_n_principal_rows(db_session) -> None:
     assert ef.capability_expr["kind"] == "finite_set"
     assert sorted(ef.capability_expr["members"]) == sorted(m.lower() for m in members)
     assert ef.conditions is None
+    assert ef.status is None
+    assert ef.authority_public is False
+
+
+def test_finite_set_with_conditions_writes_rows_and_preserves_conditions(db_session) -> None:
+    condition = Condition(kind="business", description="token transfer return data accepted")
+    member = "0x" + "a" * 40
+    cap = CapabilityExpr.finite_set([member], conditions=[condition])
+
+    write_effective_function_rows(
+        db_session,
+        contract_id=1,
+        function_records=[_fn_record("recoverToken(address,address,uint256)")],
+        capability_by_function={"recoverToken(address,address,uint256)": cap},
+    )
+    db_session.commit()
+
+    expected_conditions = [{"kind": "business", "description": "token transfer return data accepted"}]
+    rows = _principals(db_session)
+    assert len(rows) == 1
+    assert rows[0].address == member
+    assert rows[0].details["conditions"] == expected_conditions
+    ef = _ef_row(db_session)
+    assert ef.conditions == expected_conditions
     assert ef.status is None
     assert ef.authority_public is False
 
@@ -434,6 +459,58 @@ def test_or_pure_set_emits_union(db_session) -> None:
     }
 
 
+def test_mixed_or_public_and_finite_writes_public_and_principal(db_session) -> None:
+    finite = CapabilityExpr.finite_set(["0x" + "a" * 40])
+    public = CapabilityExpr.conditional_universal(
+        Condition(kind="business", description="public capability enabled"),
+    )
+    cap = CapabilityExpr.structural_or([finite, public])
+
+    write_effective_function_rows(
+        db_session,
+        contract_id=1,
+        function_records=[_fn_record("send((uint32,bytes32,bytes,bytes,bytes),address)")],
+        capability_by_function={"send((uint32,bytes32,bytes,bytes,bytes),address)": cap},
+    )
+    db_session.commit()
+
+    rows = _principals(db_session)
+    assert len(rows) == 1
+    assert rows[0].address == "0x" + "a" * 40
+    ef = _ef_row(db_session)
+    assert ef.authority_public is True
+    assert ef.status == "public"
+    assert ef.conditions == [{"kind": "business", "description": "public capability enabled"}]
+
+
+def test_and_of_mixed_or_and_side_condition_preserves_both_paths(db_session) -> None:
+    finite = CapabilityExpr.finite_set(["0x" + "b" * 40])
+    public = CapabilityExpr.conditional_universal(
+        Condition(kind="business", description="public capability enabled"),
+    )
+    paused = CapabilityExpr.conditional_universal(Condition(kind="pause", description="not paused"))
+    cap = CapabilityExpr.structural_and([CapabilityExpr.structural_or([finite, public]), paused])
+
+    write_effective_function_rows(
+        db_session,
+        contract_id=1,
+        function_records=[_fn_record("verify((uint32,bytes32,uint64),address,bytes32)")],
+        capability_by_function={"verify((uint32,bytes32,uint64),address,bytes32)": cap},
+    )
+    db_session.commit()
+
+    rows = _principals(db_session)
+    assert len(rows) == 1
+    assert rows[0].details["conditions"] == [{"kind": "pause", "description": "not paused"}]
+    ef = _ef_row(db_session)
+    assert ef.authority_public is True
+    assert ef.status == "public"
+    assert ef.conditions == [
+        {"kind": "pause", "description": "not paused"},
+        {"kind": "business", "description": "public capability enabled"},
+    ]
+
+
 # ---------------------------------------------------------------------------
 # Pure-function helpers
 # ---------------------------------------------------------------------------
@@ -465,7 +542,10 @@ def test_column_values_public_or_composite() -> None:
 
     assert cols["status"] == "public"
     assert cols["authority_public"] is True
-    assert cols["conditions"] is None
+    assert cols["conditions"] == [
+        {"kind": "business", "description": "initialized branch"},
+        {"kind": "business", "description": "constructor branch"},
+    ]
 
 
 def test_column_values_unsupported() -> None:

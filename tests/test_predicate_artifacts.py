@@ -125,6 +125,27 @@ def test_bool_returning_checker_keeps_literal_true_branch(tmp_path):
     assert "users" in storage_vars
 
 
+def test_bool_returning_checker_keeps_unconditional_literal_true(tmp_path):
+    sl = _compile(
+        tmp_path,
+        """
+        pragma solidity ^0.8.19;
+        contract C {
+            function canCall(address, address, bytes4) external pure returns (bool) {
+                return true;
+            }
+        }
+    """,
+    )
+    artifact = build_predicate_artifacts(_contract(sl))
+    tree = artifact["check_trees"]["canCall(address,address,bytes4)"]
+    leaves = _leaves(tree)
+    assert len(leaves) == 1
+    assert leaves[0]["authority_role"] == "business"
+    assert leaves[0]["references_msg_sender"] is False
+    assert leaves[0]["expression"] == "literal true"
+
+
 def test_guarded_bool_returning_checker_gets_tree_and_check_tree(tmp_path):
     """A guarded bool checker is both a callable function and a
     resolver-side authorization provider."""

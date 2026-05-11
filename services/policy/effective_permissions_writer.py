@@ -13,14 +13,17 @@ Per-kind row representation:
   external_check_only           -> 0 rows
   conditional_universal         -> 0 rows + status='public', authority_public=True
   unsupported                   -> 0 rows + status='unsupported'
-  AND/OR (irreducible)          -> 0 rows + capability_expr=full tree
+  OR with resolved caller/public paths -> resolved path rows/public marker
+  AND with caller path + side conditions -> caller rows with conditions
+  AND/OR irreducible residuals -> 0 rows + capability_expr=full tree
 
 Caller-shaped kinds (``finite_set``, ``threshold_group``,
-``signature_witness(finite)``) are the only kinds that produce
-``FunctionPrincipal`` rows. ``FunctionPrincipal.address`` semantically
-means "this address can call as itself"; putting blacklists, registry
-contracts, or external-check targets there is a category error that
-produces false-authority claims downstream
+``signature_witness(finite)``) are the only leaf kinds that produce
+``FunctionPrincipal`` rows, either directly or through a composite path.
+``FunctionPrincipal.address`` semantically means "this address can call
+as itself"; putting blacklists, registry contracts, or external-check
+targets there is a category error that produces false-authority claims
+downstream
 (``ProtocolSurface.jsx:303``, ``protocolScore.js:124``).
 """
 
@@ -34,11 +37,9 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from db.models import EffectiveFunction, FunctionPrincipal
+from services.policy.capability_surface import project_capability_surface
 from services.resolution.capabilities import CapabilityExpr
 from services.resolution.capability_resolver import capability_to_dict
-
-# Caller-shaped kinds: only these produce ``FunctionPrincipal`` rows.
-_CALLER_SHAPED_KINDS = {"finite_set", "threshold_group", "signature_witness"}
 
 
 def _to_dict(cap: CapabilityExpr | dict[str, Any] | None) -> dict[str, Any] | None:
@@ -75,121 +76,11 @@ def _principal_rows_for_capability(
     Returns a list of dicts with keys ``address``, ``resolved_type``,
     ``origin``, ``principal_type``, ``details``. Caller persists them.
     """
-    kind = _kind_of(cap_dict)
-    if kind not in _CALLER_SHAPED_KINDS:
-        return []
-
-    if kind == "finite_set":
-        return _rows_for_finite_set(cap_dict)
-    if kind == "threshold_group":
-        return _rows_for_threshold_group(
-            cap_dict,
-            safe_address_lookup=safe_address_lookup,
-            function_signature=function_signature,
-        )
-    if kind == "signature_witness":
-        return _rows_for_signature_witness(cap_dict)
-    return []
-
-
-def _rows_for_finite_set(cap_dict: dict[str, Any]) -> list[dict[str, Any]]:
-    rows: list[dict[str, Any]] = []
-    members = cap_dict.get("members") or []
-    for member in members:
-        if not isinstance(member, str) or not member.startswith("0x") or len(member) != 42:
-            continue
-        rows.append(
-            {
-                "address": member.lower(),
-                "resolved_type": None,
-                "origin": "semantic_capability:finite_set",
-                "principal_type": "controller",
-                "details": {
-                    "source": "semantic_predicate_capability_resolver",
-                    "membership_quality": cap_dict.get("membership_quality"),
-                    "confidence": cap_dict.get("confidence"),
-                    "trace": cap_dict.get("trace") or [],
-                },
-            }
-        )
-    return rows
-
-
-def _rows_for_threshold_group(
-    cap_dict: dict[str, Any],
-    *,
-    safe_address_lookup: dict[str, str] | None,
-    function_signature: str | None,
-) -> list[dict[str, Any]]:
-    """One synthetic row per Safe — address is the Safe contract,
-    ``details`` carries threshold + owners. Owners live in details so
-    ``ix_function_principals_safe_owners`` (GIN on ``details->'owners'``)
-    handles the two-hop "does Alice have permission via Safe?" query
-    without a separate join table."""
-    threshold = cap_dict.get("threshold") or {}
-    if not isinstance(threshold, dict):
-        return []
-    m = threshold.get("m")
-    signers = threshold.get("signers") or []
-    if not isinstance(signers, list):
-        signers = []
-    owners = [s.lower() for s in signers if isinstance(s, str) and s.startswith("0x") and len(s) == 42]
-    safe_address = None
-    if safe_address_lookup:
-        # Caller-supplied lookup — keyed on function signature when the
-        # graph node maps a Safe to a specific function, or by a sentinel
-        # ("default") for tests that have no graph context.
-        if function_signature and function_signature in safe_address_lookup:
-            safe_address = safe_address_lookup[function_signature]
-        elif "default" in safe_address_lookup:
-            safe_address = safe_address_lookup["default"]
-    if not safe_address:
-        # Fall back to the zero address sentinel — codex flagged: a Safe
-        # with unknown contract address still gets one principal row,
-        # owners populated, so the two-hop Alice query still works.
-        safe_address = "0x" + "0" * 40
-    return [
-        {
-            "address": safe_address.lower(),
-            "resolved_type": "safe",
-            "origin": "semantic_capability:threshold_group",
-            "principal_type": "controller",
-            "details": {
-                "threshold": int(m) if isinstance(m, int) else None,
-                "owners": owners,
-                "total_signers": len(owners),
-                "source": "semantic_predicate_capability_resolver",
-            },
-        }
-    ]
-
-
-def _rows_for_signature_witness(cap_dict: dict[str, Any]) -> list[dict[str, Any]]:
-    """signature_witness wrapping a finite_set signer → N rows tagged
-    ``principal_type=signature_witness``. Non-finite signer (e.g.
-    external_check) → 0 rows; the descriptor lives in ``capability_expr``."""
-    signer = cap_dict.get("signer")
-    if not isinstance(signer, dict):
-        return []
-    if signer.get("kind") != "finite_set":
-        return []
-    rows: list[dict[str, Any]] = []
-    for member in signer.get("members") or []:
-        if not isinstance(member, str) or not member.startswith("0x") or len(member) != 42:
-            continue
-        rows.append(
-            {
-                "address": member.lower(),
-                "resolved_type": None,
-                "origin": "semantic_capability:signature_witness",
-                "principal_type": "signature_witness",
-                "details": {
-                    "signer_kind": "finite_set",
-                    "source": "semantic_predicate_capability_resolver",
-                },
-            }
-        )
-    return rows
+    return project_capability_surface(
+        cap_dict,
+        safe_address_lookup=safe_address_lookup,
+        function_signature=function_signature,
+    ).principal_rows
 
 
 def _column_values_for_capability(
@@ -199,37 +90,18 @@ def _column_values_for_capability(
     capability. Always populates ``capability_expr``; ``conditions`` /
     ``status`` / ``authority_public`` only set for the kinds that
     require them."""
+    surface = project_capability_surface(cap_dict)
     kind = _kind_of(cap_dict)
+    conditions = surface.conditions
     out: dict[str, Any] = {
         "capability_expr": dict(cap_dict),
-        "conditions": None,
-        "status": None,
-        "authority_public": False,
+        "conditions": conditions or None,
+        "status": "public" if surface.authority_public else None,
+        "authority_public": surface.authority_public,
     }
-    if kind == "conditional_universal":
-        out["conditions"] = list(cap_dict.get("conditions") or [])
-        out["status"] = "public"
-        out["authority_public"] = True
-    elif _is_public_composite_capability(cap_dict):
-        out["status"] = "public"
-        out["authority_public"] = True
-    elif kind == "unsupported":
+    if kind == "unsupported" and not surface.authority_public and not surface.principal_rows:
         out["status"] = "unsupported"
     return out
-
-
-def _is_public_composite_capability(cap_dict: dict[str, Any]) -> bool:
-    kind = cap_dict.get("kind")
-    if kind == "conditional_universal":
-        return True
-    if kind not in {"AND", "OR"}:
-        return False
-    children = cap_dict.get("children")
-    return (
-        isinstance(children, list)
-        and bool(children)
-        and all(isinstance(child, dict) and _is_public_composite_capability(child) for child in children)
-    )
 
 
 def write_effective_function_rows(

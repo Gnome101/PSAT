@@ -492,8 +492,12 @@ def _role_principals_from_effective_permissions(effective_permissions: dict[str,
 def _mapping_writer_specs_from_predicate_trees(predicate_trees: Mapping[str, Any] | None) -> list[WriterEventSpec]:
     if not isinstance(predicate_trees, Mapping):
         return []
-    trees = predicate_trees.get("trees")
-    if not isinstance(trees, Mapping):
+    tree_maps = [
+        tree_map
+        for tree_map in (predicate_trees.get("trees"), predicate_trees.get("check_trees"))
+        if isinstance(tree_map, Mapping)
+    ]
+    if not tree_maps:
         return []
 
     specs: list[WriterEventSpec] = []
@@ -555,8 +559,9 @@ def _mapping_writer_specs_from_predicate_trees(predicate_trees: Mapping[str, Any
                 )
             )
 
-    for tree in trees.values():
-        visit(tree)
+    for tree_map in tree_maps:
+        for tree in tree_map.values():
+            visit(tree)
     return specs
 
 

@@ -273,6 +273,43 @@ def test_build_effective_permissions_uses_semantic_capabilities_for_principals()
     assert hook_cap["members"] == ["0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"]
 
 
+def test_build_effective_permissions_projects_mixed_public_or_capability():
+    target_analysis = {
+        "subject": {
+            "address": "0x1111111111111111111111111111111111111111",
+            "name": "Target",
+        },
+        "semantic_control": {"semantic_functions": []},
+    }
+    cap = {
+        "kind": "OR",
+        "children": [
+            _finite_cap("0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
+            {
+                "kind": "conditional_universal",
+                "conditions": [{"kind": "business", "description": "public capability enabled"}],
+                "membership_quality": "exact",
+                "confidence": "enumerable",
+            },
+        ],
+        "membership_quality": "exact",
+        "confidence": "enumerable",
+    }
+
+    payload = build_effective_permissions(
+        target_analysis,
+        capability_resolver_output={"send(bytes,address)": cap},
+        effects=_effects(_effect("send(bytes,address)", labels=["asset_send"])),
+    )
+
+    fn = payload["functions"][0]
+    assert fn["function"] == "send(bytes,address)"
+    assert fn["authority_public"] is True
+    assert fn["status"] == "public"
+    assert fn["conditions"] == [{"kind": "business", "description": "public capability enabled"}]
+    assert fn["capability_expr"] == cap
+
+
 def test_build_effective_permissions_with_authority_snapshot():
     target_analysis = {
         "subject": {

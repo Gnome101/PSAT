@@ -143,6 +143,66 @@ def test_non_caller_unsupported_side_condition_preserves_principals():
     assert [c.description for c in cap.conditions] == ["implementation compatibility check"]
 
 
+def test_non_caller_or_side_condition_under_and_preserves_principals():
+    owner = "0x" + "cd" * 20
+    tree = {
+        "op": "AND",
+        "children": [
+            {
+                "op": "LEAF",
+                "leaf": {
+                    "kind": "equality",
+                    "operator": "eq",
+                    "authority_role": "caller_authority",
+                    "operands": [
+                        {"source": "msg_sender"},
+                        {"source": "state_variable", "state_variable_name": "owner"},
+                    ],
+                    "references_msg_sender": True,
+                    "expression": "msg.sender == owner",
+                    "basis": [],
+                },
+            },
+            {
+                "op": "OR",
+                "children": [
+                    {
+                        "op": "LEAF",
+                        "leaf": {
+                            "kind": "comparison",
+                            "operator": "eq",
+                            "authority_role": "business",
+                            "operands": [],
+                            "references_msg_sender": False,
+                            "expression": "token transfer returned true",
+                            "basis": ["safe_erc20_return_check"],
+                        },
+                    },
+                    {
+                        "op": "LEAF",
+                        "leaf": {
+                            "kind": "unsupported",
+                            "operator": "truthy",
+                            "authority_role": "business",
+                            "operands": [],
+                            "unsupported_reason": "solidity_call_abi.decode()_unsupported_as_gate",
+                            "references_msg_sender": False,
+                            "expression": "abi.decode(returnData, (bool))",
+                            "basis": ["safe_erc20_return_check"],
+                        },
+                    },
+                ],
+            },
+        ],
+    }
+
+    cap = evaluate_tree(cast(PredicateTree, tree), EvaluationContext(state_var_values={"owner": owner}))
+
+    assert cap.kind == "finite_set"
+    assert cap.members == [owner]
+    assert [c.description for c in cap.conditions] == ["token transfer returned true OR abi.decode(returnData, (bool))"]
+
+
 def test_renounce_role_self_service_pattern(tmp_path):
     """``require(account == msg.sender)`` — the canonical self-service
     pattern. Resolves to conditional_universal(self_service)."""

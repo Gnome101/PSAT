@@ -709,6 +709,20 @@ def _build_if_else_returns_or_children(callee: Any, sub_prov: ProvenanceMap, gat
                         break
                 break
             if cond_value is None:
+                children.append(
+                    make_leaf_node(
+                        {
+                            "kind": "comparison",
+                            "operator": "truthy",
+                            "authority_role": "business",
+                            "operands": [],
+                            "references_msg_sender": False,
+                            "parameter_indices": [],
+                            "expression": "literal true",
+                            "basis": list(gate.basis) + ["literal_true_return"],
+                        }
+                    )
+                )
                 continue
             # Use a fresh per-branch gate so polarity matches the
             # outer require's allowed_when_true (children are

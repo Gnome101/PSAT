@@ -93,6 +93,60 @@ def test_mapping_writer_specs_come_from_predicate_tree_hints():
     ]
 
 
+def test_mapping_writer_specs_include_check_trees():
+    artifact = {
+        "schema_version": "semantic",
+        "check_trees": {
+            "allowed(address,address,bytes4)": {
+                "op": "LEAF",
+                "leaf": {
+                    "kind": "membership",
+                    "operator": "truthy",
+                    "authority_role": "delegated_authority",
+                    "operands": [{"source": "msg_sender"}],
+                    "references_msg_sender": True,
+                    "parameter_indices": [],
+                    "expression": "users[user]",
+                    "basis": [],
+                    "set_descriptor": {
+                        "kind": "mapping_membership",
+                        "storage_var": "users",
+                        "key_sources": [{"source": "parameter", "parameter_index": 0}],
+                        "enumeration_hint": [
+                            {
+                                "topic0": "0xbbb",
+                                "topics_to_keys": {1: 0},
+                                "data_to_keys": {},
+                                "direction": "add",
+                                "event_signature": "UserAllowed(address)",
+                                "event_name": "UserAllowed",
+                                "mapping_name": "users",
+                                "key_position": 0,
+                                "indexed_positions": [0],
+                                "value_position": None,
+                                "writer_function": "allow(address)",
+                            }
+                        ],
+                    },
+                },
+            }
+        },
+    }
+
+    assert _mapping_writer_specs_from_predicate_trees(artifact) == [
+        {
+            "mapping_name": "users",
+            "event_signature": "UserAllowed(address)",
+            "event_name": "UserAllowed",
+            "key_position": 0,
+            "indexed_positions": [0],
+            "direction": "add",
+            "writer_function": "allow(address)",
+            "value_position": None,
+        }
+    ]
+
+
 def test_resolve_control_graph_recurses_to_contract_and_safe(monkeypatch):
     root_address = "0x1111111111111111111111111111111111111111"
     authority_address = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"

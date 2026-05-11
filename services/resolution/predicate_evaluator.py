@@ -325,15 +325,54 @@ def _evaluate_leaf(leaf: LeafPredicate, ctx: EvaluationContext) -> CapabilityExp
 
 
 def _side_condition_capability(tree: PredicateTree) -> CapabilityExpr | None:
-    if tree.get("op") != "LEAF":
+    conditions = _side_conditions_from_tree(tree)
+    if conditions is None:
         return None
-    leaf = tree.get("leaf")
-    if not isinstance(leaf, dict) or leaf.get("kind") != "unsupported":
+    return CapabilityExpr(
+        kind="conditional_universal",
+        conditions=conditions,
+        confidence="enumerable",
+    )
+
+
+def _side_conditions_from_tree(tree: PredicateTree) -> list[Condition] | None:
+    op = tree.get("op")
+    if op == "LEAF":
+        leaf = tree.get("leaf")
+        if not isinstance(leaf, dict):
+            return None
+        role = leaf.get("authority_role")
+        if role in ("reentrancy", "pause", "business", "time") and not leaf.get("references_msg_sender"):
+            return [_condition_from_leaf(cast(LeafPredicate, leaf))]
         return None
-    role = leaf.get("authority_role")
-    if role in ("reentrancy", "pause", "business", "time") and not leaf.get("references_msg_sender"):
-        return CapabilityExpr.conditional_universal(_condition_from_leaf(cast(LeafPredicate, leaf)))
+
+    children = tree.get("children") or []
+    if not children:
+        return None
+
+    branch_conditions: list[list[Condition]] = []
+    for child in children:
+        child_conditions = _side_conditions_from_tree(child)
+        if child_conditions is None:
+            return None
+        branch_conditions.append(child_conditions)
+
+    if op == "AND":
+        return [condition for group in branch_conditions for condition in group]
+    if op == "OR":
+        descriptions = [_condition_group_description(group) for group in branch_conditions]
+        description = " OR ".join(description for description in descriptions if description)
+        return [Condition(kind="business", description=description or "non-caller side condition")]
     return None
+
+
+def _condition_group_description(conditions: list[Condition]) -> str:
+    descriptions = [condition.description for condition in conditions if condition.description]
+    if not descriptions:
+        return ""
+    if len(descriptions) == 1:
+        return descriptions[0]
+    return " AND ".join(f"({description})" for description in descriptions)
 
 
 # ---------------------------------------------------------------------------
