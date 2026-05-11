@@ -115,6 +115,72 @@ def test_authority_state_var_promoted_to_external_contract(tmp_path):
     assert by_id["external_contract:roleRegistry"]["kind"] == "external_contract"
 
 
+def test_struct_state_var_read_spec_preserves_field_components(tmp_path):
+    source = """
+    pragma solidity ^0.8.19;
+    contract C {
+        struct AccountantState {
+            address payoutAddress;
+            uint96 highwaterMark;
+            bool isPaused;
+        }
+
+        AccountantState public accountantState;
+
+        function sweep() external view {
+            require(msg.sender == accountantState.payoutAddress, "not payout");
+        }
+    }
+    """
+    contract = _compile(tmp_path, source)
+    predicate_trees = build_predicate_artifacts(contract)
+    effects = build_effects(contract)
+    semantic_control = _build_semantic_control_summary(contract, tmp_path, predicate_trees, effects)
+    targets = build_controller_tracking(contract, tmp_path, predicate_trees, effects, semantic_control)
+    by_id = {t["controller_id"]: t for t in targets}
+
+    assert "state_variable:accountantState" in by_id, list(by_id.keys())
+    assert "state_variable:accountantState.payoutAddress" in by_id, list(by_id.keys())
+    leaf = predicate_trees["trees"]["sweep()"]["leaf"]
+    projected_operand = next(operand for operand in leaf["operands"] if operand.get("source") == "state_variable")
+    assert projected_operand["state_variable_name"] == "accountantState"
+    assert projected_operand["member_path"] == ["payoutAddress"]
+
+    read_spec = by_id["state_variable:accountantState"]["read_spec"]
+    assert isinstance(read_spec, dict)
+    assert read_spec["target"] == "accountantState"
+    assert read_spec.get("type") == "C.AccountantState"
+    assert read_spec.get("type_kind") == "struct"
+    assert read_spec.get("components") == [
+        {
+            "name": "payoutAddress",
+            "type": "address",
+            "abi_type": "address",
+            "type_kind": "address",
+        },
+        {
+            "name": "highwaterMark",
+            "type": "uint96",
+            "abi_type": "uint96",
+            "type_kind": "primitive",
+        },
+        {
+            "name": "isPaused",
+            "type": "bool",
+            "abi_type": "bool",
+            "type_kind": "primitive",
+        },
+    ]
+    projected_spec = by_id["state_variable:accountantState.payoutAddress"]["read_spec"]
+    assert isinstance(projected_spec, dict)
+    assert projected_spec["target"] == "accountantState"
+    assert projected_spec.get("parent_type") == "C.AccountantState"
+    assert projected_spec.get("type") == "address"
+    assert projected_spec.get("type_kind") == "address"
+    assert projected_spec.get("member_path") == ["payoutAddress"]
+    assert projected_spec.get("components") == read_spec.get("components")
+
+
 def test_role_identifier_does_not_infer_authority_contract_source(tmp_path):
     """A local bytes32 constant can be tracked without a standard-specific
     registry-source assumption."""

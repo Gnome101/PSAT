@@ -19,6 +19,7 @@ from schemas.contract_analysis import (
     AssociatedEventInput,
     ControllerReadSpec,
     ControllerTrackingTarget,
+    ControllerTypeComponent,
     ControllerWriterFunction,
     Evidence,
     SemanticControlAnalysis,
@@ -61,6 +62,51 @@ def _abi_type(type_obj) -> str:
             return f"{base}[]"
         return f"{base}[{length}]"
     return str(type_obj)
+
+
+def _type_kind(type_obj) -> str:
+    if type_obj is None:
+        return "unknown"
+
+    type_name = type(type_obj).__name__
+    if type_name == "ElementaryType":
+        type_str = str(type_obj).lower()
+        if type_str in {"address", "address payable"}:
+            return "address"
+        return "primitive"
+    if type_name == "UserDefinedType":
+        underlying = getattr(type_obj, "type", None)
+        underlying_name = type(underlying).__name__
+        if underlying_name == "Contract":
+            return "contract"
+        if underlying_name in {"Structure", "StructureContract"}:
+            return "struct"
+        if underlying_name in {"Enum", "EnumContract"}:
+            return "enum"
+        return "unknown"
+    if type_name == "ArrayType":
+        return "array"
+    if type_name == "MappingType":
+        return "mapping"
+    return "unknown"
+
+
+def _type_components(type_obj) -> list[ControllerTypeComponent]:
+    if _type_kind(type_obj) != "struct":
+        return []
+    struct_decl = getattr(type_obj, "type", None)
+    components: list[ControllerTypeComponent] = []
+    for elem in getattr(struct_decl, "elems_ordered", []) or []:
+        elem_type = getattr(elem, "type", None)
+        components.append(
+            {
+                "name": getattr(elem, "name", "") or "",
+                "type": str(elem_type) if elem_type is not None else "unknown",
+                "abi_type": _abi_type(elem_type),
+                "type_kind": _type_kind(elem_type),
+            }
+        )
+    return components
 
 
 def _event_signature(event_decl) -> str:
@@ -219,6 +265,31 @@ def _collect_state_var_operands(predicate_trees: Mapping[str, Any] | None) -> se
     for tree in trees.values():
         _walk_leaves(tree, visit)
     return state_vars
+
+
+def _collect_state_var_member_operands(predicate_trees: Mapping[str, Any] | None) -> set[tuple[str, tuple[str, ...]]]:
+    if not isinstance(predicate_trees, dict):
+        return set()
+    trees = predicate_trees.get("trees")
+    if not isinstance(trees, dict):
+        return set()
+
+    refs: set[tuple[str, tuple[str, ...]]] = set()
+
+    def visit(leaf: dict[str, Any]) -> None:
+        for operand in leaf.get("operands") or []:
+            if not isinstance(operand, dict) or operand.get("source") != "state_variable":
+                continue
+            name = operand.get("state_variable_name")
+            member_path = operand.get("member_path")
+            if isinstance(name, str) and name and isinstance(member_path, list) and member_path:
+                path = tuple(part for part in member_path if isinstance(part, str) and part)
+                if path:
+                    refs.add((name, path))
+
+    for tree in trees.values():
+        _walk_leaves(tree, visit)
+    return refs
 
 
 def _collect_authority_state_vars(predicate_trees: Mapping[str, Any] | None) -> set[str]:
@@ -396,15 +467,28 @@ def _build_getter_index(contract) -> dict[str, str]:
     return out
 
 
+def _component_for_member_path(
+    components: list[ControllerTypeComponent],
+    member_path: tuple[str, ...] | None,
+) -> ControllerTypeComponent | None:
+    if not member_path or len(member_path) != 1:
+        return None
+    return next((component for component in components if component["name"] == member_path[0]), None)
+
+
 def _state_var_read_spec(
     name: str,
     state_vars_by_name: dict[str, Any],
     getter_by_var: dict[str, str],
+    member_path: tuple[str, ...] | None = None,
 ) -> ControllerReadSpec:
     sv = state_vars_by_name.get(name)
-    type_str = str(getattr(sv, "type", "")) if sv is not None else ""
+    type_obj = getattr(sv, "type", None) if sv is not None else None
+    type_str = str(type_obj) if type_obj is not None else ""
     is_public = bool(getattr(sv, "visibility", None) == "public") if sv is not None else False
     getter_name = name if is_public else getter_by_var.get(name, name)
+    components = _type_components(type_obj)
+    projected_component = _component_for_member_path(components, member_path)
     spec: ControllerReadSpec = cast(
         ControllerReadSpec,
         {
@@ -412,9 +496,16 @@ def _state_var_read_spec(
             "target": getter_name,
             "kind": "state_variable",
             "state_variable_name": name,
-            "type": type_str,
+            "type": projected_component["type"] if projected_component is not None else type_str,
+            "type_kind": projected_component["type_kind"] if projected_component is not None else _type_kind(type_obj),
         },
     )
+    if projected_component is not None:
+        spec["parent_type"] = type_str
+    if member_path:
+        spec["member_path"] = list(member_path)
+    if components:
+        spec["components"] = components
     return spec
 
 
@@ -453,6 +544,7 @@ def build_controller_tracking(
     getter_by_var = _build_getter_index(contract)
 
     referenced_state_vars = _collect_state_var_operands(predicate_trees)
+    referenced_member_paths = _collect_state_var_member_operands(predicate_trees)
     external_contract_vars_from_effects = _collect_external_contract_state_vars_from_effects(
         effects,
         set(state_vars_by_name.keys()),
@@ -593,6 +685,45 @@ def build_controller_tracking(
                 "source": name,
                 "kind": kind,  # type: ignore[typeddict-item]
                 "read_spec": read_spec_var,
+                "confidence": None,
+                "tracking_mode": tracking_mode,  # type: ignore[typeddict-item]
+                "writer_functions": writer_functions,
+                "associated_events": associated_events,
+                "polling_sources": [name],
+                "notes": notes,
+            }
+        )
+        seen_ids.add(controller_id)
+
+    for name, member_path in sorted(referenced_member_paths):
+        if name in role_def_names:
+            continue
+        label = f"{name}.{'.'.join(member_path)}"
+        controller_id = f"state_variable:{label}"
+        if controller_id in seen_ids:
+            continue
+        read_spec_member = _state_var_read_spec(name, state_vars_by_name, getter_by_var, member_path)
+        if read_spec_member.get("type_kind") not in {"address", "contract"}:
+            continue
+        writer_functions, associated_events = _writer_records_from_effects(
+            contract,
+            project_dir,
+            [name],
+            event_lookup,
+            effects,
+        )
+        tracking_mode = "event_plus_state" if associated_events else "state_only"
+        notes = [
+            "Read the projected struct field through its parent getter and "
+            "treat only that address field as controller state."
+        ]
+        tracking_targets.append(
+            {
+                "controller_id": controller_id,
+                "label": label,
+                "source": label,
+                "kind": "state_variable",
+                "read_spec": read_spec_member,
                 "confidence": None,
                 "tracking_mode": tracking_mode,  # type: ignore[typeddict-item]
                 "writer_functions": writer_functions,

@@ -73,11 +73,47 @@ def _log_classify_pressure() -> None:
         logger.info("[CACHE_PRESSURE] %s", msg)
 
 
-def _decode_controller_value(raw_value: Any, controller_kind: str) -> str:
+def _decode_controller_value(
+    raw_value: Any,
+    controller_kind: str,
+    read_spec: ControllerReadSpec | None = None,
+) -> str:
     value = _normalize_hex(raw_value if isinstance(raw_value, str) else "0x")
+    if isinstance(read_spec, dict) and read_spec.get("member_path"):
+        return _decode_projected_member_value(value, read_spec)
     if controller_kind in {"state_variable", "external_contract"} and len(value) == 66:
         return "0x" + value[-40:]
     return value
+
+
+def _decode_projected_member_value(raw_value: str, read_spec: ControllerReadSpec) -> str:
+    member_path = read_spec.get("member_path")
+    components = read_spec.get("components")
+    if not isinstance(member_path, list) or len(member_path) != 1:
+        raise RuntimeError(f"Unsupported projected member path: {member_path!r}")
+    if not isinstance(components, list) or not components:
+        raise RuntimeError("Projected member read is missing struct components")
+
+    names = [component.get("name") for component in components if isinstance(component, dict)]
+    abi_types = [component.get("abi_type") for component in components if isinstance(component, dict)]
+    if member_path[0] not in names or not all(isinstance(abi_type, str) and abi_type for abi_type in abi_types):
+        raise RuntimeError(f"Projected member {member_path[0]!r} is not present in struct components")
+
+    data = bytes.fromhex(_normalize_hex(raw_value)[2:])
+    values = decode(list(abi_types), data)
+    value = values[names.index(member_path[0])]
+    projected_type = read_spec.get("type")
+    if projected_type in {"address", "address payable"}:
+        return str(value).lower()
+    if projected_type == "bytes32":
+        if isinstance(value, bytes):
+            return "0x" + value.hex()
+        return str(value)
+    if isinstance(value, bool):
+        return "1" if value else "0"
+    if isinstance(value, int):
+        return str(value)
+    return str(value)
 
 
 def _eth_call_raw(rpc_url: str, contract_address: str, signature: str, block_tag: str = "latest") -> str:
@@ -412,7 +448,7 @@ def _read_polling_source(
         if isinstance(read_target, str) and read_target:
             target = read_target
     raw = _eth_call_raw(rpc_url, contract_address, f"{target}()", block_tag)
-    return _decode_controller_value(raw, controller_kind)
+    return _decode_controller_value(raw, controller_kind, read_spec)
 
 
 def build_control_snapshot(

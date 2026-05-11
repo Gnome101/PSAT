@@ -9,6 +9,9 @@ from schemas.control_tracking import ControlTrackingPlan, EventWatch, PollingFal
 def _is_address_like_read_spec(read_spec: object) -> bool:
     if not isinstance(read_spec, dict):
         return True
+    type_kind = str(read_spec.get("type_kind") or "").strip().lower()
+    if type_kind:
+        return type_kind in {"address", "contract"}
     type_name = str(read_spec.get("type") or "").strip().lower()
     if not type_name:
         return True
@@ -18,6 +21,9 @@ def _is_address_like_read_spec(read_spec: object) -> bool:
 def _is_external_contract_read_spec(read_spec: object) -> bool:
     if not isinstance(read_spec, dict):
         return True
+    type_kind = str(read_spec.get("type_kind") or "").strip().lower()
+    if type_kind:
+        return type_kind in {"address", "contract"}
     type_name = str(read_spec.get("type") or "").strip().lower()
     if not type_name:
         return True

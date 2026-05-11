@@ -471,6 +471,37 @@ def test_zero_address_equality_is_empty_principal_set():
     assert cap.membership_quality == "exact"
 
 
+def test_state_variable_member_path_equality_uses_projected_controller_value():
+    payout = "0x2222222222222222222222222222222222222222"
+    tree = {
+        "op": "LEAF",
+        "leaf": {
+            "kind": "equality",
+            "operator": "eq",
+            "authority_role": "caller_authority",
+            "operands": [
+                {"source": "msg_sender"},
+                {
+                    "source": "state_variable",
+                    "state_variable_name": "accountantState",
+                    "member_path": ["payoutAddress"],
+                },
+            ],
+            "references_msg_sender": True,
+            "parameter_indices": [],
+            "expression": "msg.sender == accountantState.payoutAddress",
+            "basis": [],
+        },
+    }
+    cap = evaluate_tree(
+        cast(PredicateTree, tree),
+        EvaluationContext(state_var_values={"accountantState.payoutAddress": payout}),
+    )  # type: ignore[arg-type]
+    assert cap.kind == "finite_set"
+    assert cap.members == [payout]
+    assert cap.membership_quality == "exact"
+
+
 def test_self_address_equality_resolves_to_contract_principal():
     contract_address = "0x" + "12" * 20
     tree = {

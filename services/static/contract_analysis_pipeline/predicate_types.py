@@ -43,6 +43,7 @@ class Operand(TypedDict):
     parameter_index: NotRequired[int | None]
     parameter_name: NotRequired[str | None]
     state_variable_name: NotRequired[str | None]
+    member_path: NotRequired[list[str]]
     callee: NotRequired[str | None]
     callee_signature: NotRequired[str | None]
     callee_selector: NotRequired[str | None]

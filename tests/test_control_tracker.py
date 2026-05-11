@@ -5,6 +5,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import pytest
+from eth_abi.abi import encode
 
 from schemas.control_tracking import ControlTrackingPlan
 from services.resolution.tracking import build_control_snapshot, clear_classify_cache
@@ -84,6 +85,70 @@ def test_build_control_snapshot(monkeypatch):
     assert first["controller_values"]["state_variable:owner"]["value"] == "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
     assert first["controller_values"]["state_variable:owner"]["resolved_type"] == "eoa"
     assert second["controller_values"]["state_variable:owner"]["value"] == "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+
+
+def test_build_control_snapshot_decodes_projected_struct_address(monkeypatch):
+    payout = "0x2222222222222222222222222222222222222222"
+    raw_struct = "0x" + encode(["address", "uint96", "bool"], [payout, 123, False]).hex()
+    contract_address = "0x1111111111111111111111111111111111111111"
+    plan: ControlTrackingPlan = {
+        "schema_version": "0.1",
+        "contract_address": contract_address,
+        "contract_name": "Mock",
+        "tracking_strategy": "event_first_with_polling_fallback",
+        "tracked_controllers": [
+            {
+                "controller_id": "state_variable:accountantState.payoutAddress",
+                "label": "accountantState.payoutAddress",
+                "source": "accountantState.payoutAddress",
+                "kind": "state_variable",
+                "read_spec": {
+                    "strategy": "getter_call",
+                    "target": "accountantState",
+                    "kind": "state_variable",
+                    "state_variable_name": "accountantState",
+                    "type": "address",
+                    "type_kind": "address",
+                    "parent_type": "Mock.AccountantState",
+                    "member_path": ["payoutAddress"],
+                    "components": [
+                        {"name": "payoutAddress", "type": "address", "abi_type": "address", "type_kind": "address"},
+                        {"name": "highwaterMark", "type": "uint96", "abi_type": "uint96", "type_kind": "primitive"},
+                        {"name": "isPaused", "type": "bool", "abi_type": "bool", "type_kind": "primitive"},
+                    ],
+                },
+                "tracking_mode": "state_only",
+                "event_watch": None,
+                "polling_fallback": {
+                    "contract_address": contract_address,
+                    "polling_sources": ["accountantState"],
+                    "cadence": "state_only",
+                    "notes": [],
+                },
+                "notes": [],
+            }
+        ],
+    }
+
+    def fake_rpc(_rpc_url, method, params):
+        if method == "eth_blockNumber":
+            return "0x10"
+        if method == "eth_call":
+            call = params[0]
+            if call.get("to") == contract_address:
+                return raw_struct
+            return "0x"
+        if method == "eth_getCode":
+            return "0x"
+        raise AssertionError(f"Unexpected RPC call: {method} {params}")
+
+    monkeypatch.setattr("services.resolution.tracking._rpc_request", fake_rpc)
+
+    snapshot = build_control_snapshot(plan, "https://rpc.example")
+
+    value = snapshot["controller_values"]["state_variable:accountantState.payoutAddress"]
+    assert value["value"] == payout
+    assert value["resolved_type"] == "eoa"
 
 
 def test_build_control_snapshot_heartbeats_while_reading_latest_block(monkeypatch):

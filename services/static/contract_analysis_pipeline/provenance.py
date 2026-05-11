@@ -24,7 +24,7 @@ shape and operand type.
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Iterable
 
 from eth_utils.crypto import keccak
@@ -112,6 +112,7 @@ class Source:
     value_type: str | None = None
     computed_kind: str | None = None
     block_context_kind: str | None = None
+    member_path: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if self.kind not in SOURCE_KINDS:
@@ -522,6 +523,11 @@ class ProvenanceEngine:
             field_name = getattr(field, "value", None) or getattr(field, "name", None) or str(field)
         if not field_name or is_top(base_sources):
             return self.provenance.set(self._var_name(ir.lvalue), base_sources)
+        projected_sources = frozenset(
+            replace(source, member_path=source.member_path + (field_name,))
+            for source in base_sources
+            if source.kind == "state_variable"
+        )
         wrapper = frozenset(
             {
                 Source(
@@ -531,7 +537,7 @@ class ProvenanceEngine:
                 )
             }
         )
-        return self.provenance.set(self._var_name(ir.lvalue), union(base_sources, wrapper))
+        return self.provenance.set(self._var_name(ir.lvalue), union(union(base_sources, projected_sources), wrapper))
 
     def _handle_solidity_call(self, ir: Any) -> bool:
         """``ecrecover``, ``keccak256``, ``addmod``, etc. ecrecover

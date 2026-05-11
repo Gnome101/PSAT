@@ -179,9 +179,26 @@ class AssociatedEvent(TypedDict):
     inputs: list[AssociatedEventInput]
 
 
-class ControllerReadSpec(TypedDict):
+class ControllerTypeComponent(TypedDict):
+    name: str
+    type: str
+    abi_type: str
+    type_kind: str
+
+
+class ControllerReadSpecRequired(TypedDict):
     strategy: ControllerReadStrategy
     target: str
+
+
+class ControllerReadSpec(ControllerReadSpecRequired, total=False):
+    kind: str
+    state_variable_name: str
+    type: str
+    type_kind: str
+    parent_type: str
+    member_path: list[str]
+    components: list[ControllerTypeComponent]
 
 
 class ControllerWriterFunction(TypedDict):

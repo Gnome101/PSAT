@@ -259,6 +259,54 @@ def test_build_control_tracking_plan_filters_non_controller_runtime_reads():
             },
             {
                 **base_target,
+                "controller_id": "state_variable:accountantState",
+                "label": "accountantState",
+                "source": "accountantState",
+                "kind": "state_variable",
+                "read_spec": {
+                    "strategy": "getter_call",
+                    "target": "accountantState",
+                    "kind": "state_variable",
+                    "state_variable_name": "accountantState",
+                    "type": "Example.AccountantState",
+                    "type_kind": "struct",
+                    "components": [
+                        {
+                            "name": "payoutAddress",
+                            "type": "address",
+                            "abi_type": "address",
+                            "type_kind": "address",
+                        }
+                    ],
+                },
+            },
+            {
+                **base_target,
+                "controller_id": "state_variable:accountantState.payoutAddress",
+                "label": "accountantState.payoutAddress",
+                "source": "accountantState.payoutAddress",
+                "kind": "state_variable",
+                "read_spec": {
+                    "strategy": "getter_call",
+                    "target": "accountantState",
+                    "kind": "state_variable",
+                    "state_variable_name": "accountantState",
+                    "type": "address",
+                    "type_kind": "address",
+                    "parent_type": "Example.AccountantState",
+                    "member_path": ["payoutAddress"],
+                    "components": [
+                        {
+                            "name": "payoutAddress",
+                            "type": "address",
+                            "abi_type": "address",
+                            "type_kind": "address",
+                        }
+                    ],
+                },
+            },
+            {
+                **base_target,
                 "controller_id": "external_contract:name",
                 "label": "name",
                 "source": "name",
@@ -286,6 +334,7 @@ def test_build_control_tracking_plan_filters_non_controller_runtime_reads():
 
     assert [target["controller_id"] for target in plan["tracked_controllers"]] == [
         "role_identifier:PAUSER_ROLE",
+        "state_variable:accountantState.payoutAddress",
         "state_variable:owner",
         "state_variable:redemptionManager",
     ]

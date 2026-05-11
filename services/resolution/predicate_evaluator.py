@@ -48,6 +48,19 @@ from .capabilities import (
 
 _CALLER_SOURCES = {"msg_sender", "tx_origin", "signature_recovery", "root_caller"}
 
+
+def _state_var_lookup_key(operand: dict[str, Any]) -> str | None:
+    name = operand.get("state_variable_name")
+    if not isinstance(name, str) or not name:
+        return None
+    member_path = operand.get("member_path")
+    if isinstance(member_path, list) and member_path:
+        parts = [part for part in member_path if isinstance(part, str) and part]
+        if parts:
+            return ".".join([name, *parts])
+    return name
+
+
 # ---------------------------------------------------------------------------
 # Adapter protocol (placeholder — week-5 fully-typed registry replaces this)
 # ---------------------------------------------------------------------------
@@ -408,7 +421,7 @@ def _resolve_equality_principal(
         return CapabilityExpr.unsupported(f"equality_constant_non_address_{val}")
 
     if src == "state_variable":
-        sv_name = op.get("state_variable_name")
+        sv_name = _state_var_lookup_key(cast(dict[str, Any], op))
         if ctx is not None and sv_name and sv_name in ctx.state_var_values:
             value = ctx.state_var_values[sv_name]
             if isinstance(value, str) and value.startswith("0x") and len(value) == 42:
@@ -770,7 +783,7 @@ def _resolve_operand_static_value(operand: dict[str, Any], ctx: EvaluationContex
         value = operand.get("constant_value")
         return value.lower() if isinstance(value, str) else None
     if src == "state_variable":
-        sv_name = operand.get("state_variable_name")
+        sv_name = _state_var_lookup_key(operand)
         values = ctx.state_var_values if ctx is not None else None
         value = values.get(sv_name) if values is not None and isinstance(sv_name, str) else None
         return value.lower() if isinstance(value, str) else None
@@ -838,7 +851,7 @@ def _maybe_inline_cross_contract_call(
     address_source = authority_contract.get("address_source") or {}
     if address_source.get("source") != "state_variable":
         return None
-    sv_name = address_source.get("state_variable_name")
+    sv_name = _state_var_lookup_key(cast(dict[str, Any], address_source))
     if not isinstance(sv_name, str) or not sv_name:
         return None
     state_vars = getattr(outer_ctx, "state_var_values", None) or {}
@@ -1164,7 +1177,7 @@ def _normalize_operand_for_call_arg(
                 block=block,
             )
     if source == "state_variable":
-        name = operand.get("state_variable_name")
+        name = _state_var_lookup_key(operand)
         value = ctx.state_var_values.get(name) if isinstance(name, str) else None
         if isinstance(value, str) and value.startswith("0x") and len(value) in {42, 66}:
             return {"source": "constant", "constant_value": value.lower()}
@@ -1359,7 +1372,7 @@ def _target_address_from_descriptor(descriptor: SetDescriptor, ctx: EvaluationCo
         return raw.lower()
     source = authority.get("address_source") or {}
     if source.get("source") == "state_variable":
-        name = source.get("state_variable_name")
+        name = _state_var_lookup_key(cast(dict[str, Any], source))
         value = ctx.state_var_values.get(name) if isinstance(name, str) else None
         if isinstance(value, str) and value.startswith("0x") and len(value) == 42:
             return value.lower()

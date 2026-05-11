@@ -1459,11 +1459,13 @@ def _operand_for_value(value: Any, prov: ProvenanceMap) -> Operand:
         "top",
     )
     for kind in priority:
-        for s in sources:
-            if s.kind == kind:
-                op = _source_to_operand(s)
-                _attach_state_constant_value(op, value)
-                return op
+        matches = [s for s in sources if s.kind == kind]
+        if kind == "state_variable":
+            matches = sorted(matches, key=lambda source: len(getattr(source, "member_path", ()) or ()), reverse=True)
+        for s in matches:
+            op = _source_to_operand(s)
+            _attach_state_constant_value(op, value)
+            return op
     # Fallback: any source.
     op = _source_to_operand(next(iter(sources)))
     _attach_state_constant_value(op, value)
@@ -1488,6 +1490,8 @@ def _source_to_operand(source: Source) -> Operand:
         op["parameter_name"] = source.parameter_name
     if source.state_variable_name is not None:
         op["state_variable_name"] = source.state_variable_name
+    if getattr(source, "member_path", None):
+        op["member_path"] = list(source.member_path)
     if source.callee is not None:
         op["callee"] = source.callee
     if source.callee_signature is not None:
