@@ -305,9 +305,9 @@ def test_build_effective_permissions_projects_mixed_public_or_capability():
     fn = payload["functions"][0]
     assert fn["function"] == "send(bytes,address)"
     assert fn["authority_public"] is True
-    assert fn["status"] == "public"
-    assert fn["conditions"] == [{"kind": "business", "description": "public capability enabled"}]
-    assert fn["capability_expr"] == cap
+    assert fn.get("status") == "public"
+    assert fn.get("conditions") == [{"kind": "business", "description": "public capability enabled"}]
+    assert fn.get("capability_expr") == cap
 
 
 def test_build_effective_permissions_with_authority_snapshot():
