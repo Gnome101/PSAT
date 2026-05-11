@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import time
 from typing import Any
 
 import pytest
 
-from tests.live.conftest import LiveClient
+from tests.live.conftest import DEFAULT_COMPANY_TIMEOUT, DEFAULT_POLL_INTERVAL, LiveClient
 
 EXPECTED_LEAF_KINDS = {
     "membership",
@@ -39,6 +40,7 @@ EXPECTED_CAPABILITY_KINDS = {
     "AND",
     "OR",
 }
+TERMINAL_STATUSES = {"completed", "failed", "failed_terminal"}
 
 
 def _iter_leaves(tree: dict[str, Any]):
@@ -61,29 +63,61 @@ def _leaves_from_artifact(artifact: dict[str, Any]) -> list[dict[str, Any]]:
     return leaves
 
 
+def _descendants_of(jobs: list[dict[str, Any]], parent_job_id: str) -> list[dict[str, Any]]:
+    by_parent: dict[str, list[dict[str, Any]]] = {}
+    for job in jobs:
+        request = job.get("request") or {}
+        parent = request.get("parent_job_id")
+        if isinstance(parent, str):
+            by_parent.setdefault(parent, []).append(job)
+
+    descendants: list[dict[str, Any]] = []
+    stack = list(by_parent.get(parent_job_id, []))
+    while stack:
+        job = stack.pop(0)
+        descendants.append(job)
+        stack.extend(by_parent.get(job["job_id"], []))
+    return descendants
+
+
+def _poll_descendants_until_done(
+    live_client: LiveClient,
+    parent_job_id: str,
+    timeout: float = DEFAULT_COMPANY_TIMEOUT,
+) -> list[dict[str, Any]]:
+    deadline = time.time() + timeout
+    descendants: list[dict[str, Any]] = []
+    while time.time() < deadline:
+        descendants = _descendants_of(live_client.jobs(), parent_job_id)
+        if descendants and all(job["status"] in TERMINAL_STATUSES for job in descendants):
+            return descendants
+        time.sleep(DEFAULT_POLL_INTERVAL * 2)
+    return descendants
+
+
 @pytest.fixture(scope="module")
 def guarded_company_child(analyzed_company, live_client: LiveClient) -> dict[str, Any]:
-    children = live_client.poll_children_until_done(analyzed_company["job_id"])
-    completed = [child for child in children if child.get("status") == "completed" and child.get("name")]
+    descendants = _poll_descendants_until_done(live_client, analyzed_company["job_id"])
+    completed = [job for job in descendants if job.get("status") == "completed" and job.get("name")]
     diagnostics: list[str] = []
 
-    for child in completed:
-        artifact = live_client.artifact(child["name"], "predicate_trees")
+    for job in completed:
+        artifact = live_client.artifact(job["name"], "predicate_trees")
         if not isinstance(artifact, dict):
-            diagnostics.append(f"{child.get('address')}: missing predicate_trees")
+            diagnostics.append(f"{job.get('name')} {job.get('address')}: missing predicate_trees")
             continue
         trees = artifact.get("trees")
         if not isinstance(trees, dict) or not trees:
-            diagnostics.append(f"{child.get('address')}: no guarded trees")
+            diagnostics.append(f"{job.get('name')} {job.get('address')}: no guarded trees")
             continue
         leaves = _leaves_from_artifact(artifact)
         if any(leaf.get("authority_role") in AUTHORITY_LEAF_ROLES for leaf in leaves):
-            return {"job": child, "predicate_trees": artifact, "leaves": leaves}
-        diagnostics.append(f"{child.get('address')}: no authority leaves")
+            return {"job": job, "predicate_trees": artifact, "leaves": leaves}
+        diagnostics.append(f"{job.get('name')} {job.get('address')}: no authority leaves")
 
     pytest.fail(
-        "analyzed_company produced no completed guarded child with semantic predicate trees; "
-        f"checked={len(completed)} diagnostics={diagnostics[:10]}"
+        "analyzed_company produced no completed guarded descendant with semantic predicate trees; "
+        f"checked={len(completed)} descendants={len(descendants)} diagnostics={diagnostics[:10]}"
     )
 
 
