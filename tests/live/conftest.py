@@ -555,8 +555,10 @@ def analyze_and_wait(live_client: LiveClient):
     return _fn
 
 
-# Shared with test_cache.py so its inventory is warm; limit=1 keeps cold previews cheap.
+# Shared with test_cache.py so its inventory is warm. Queue two candidates so
+# one terminal source/discovery failure does not make every company test fail.
 DEFAULT_TEST_COMPANY = "etherfi"
+DEFAULT_TEST_COMPANY_LIMIT = 2
 
 
 @pytest.fixture(scope="session")
@@ -566,7 +568,7 @@ def analyzed_company(cached_weth, live_client: LiveClient) -> dict[str, Any]:
     Depends on ``cached_weth`` so the WETH cache-hit submission completes
     before company children start saturating per-stage workers.
     """
-    parent = live_client.submit_company_and_wait(DEFAULT_TEST_COMPANY, limit=1)
+    parent = live_client.submit_company_and_wait(DEFAULT_TEST_COMPANY, limit=DEFAULT_TEST_COMPANY_LIMIT)
     if parent["status"] != "completed":
         pytest.fail(
             f"Company fixture for '{DEFAULT_TEST_COMPANY}' did not complete "
@@ -574,6 +576,11 @@ def analyzed_company(cached_weth, live_client: LiveClient) -> dict[str, Any]:
         )
     children = live_client.poll_children_until_done(parent["job_id"])
     completed = [child for child in children if child["status"] == "completed"]
+    if not completed:
+        jobs = live_client.jobs()
+        child_ids = {child["job_id"] for child in children}
+        descendants = [job for job in jobs if (job.get("request") or {}).get("parent_job_id") in child_ids]
+        completed = [job for job in descendants if job.get("status") == "completed"]
     if not completed:
         pytest.fail(
             f"Company fixture for '{DEFAULT_TEST_COMPANY}' produced no completed child jobs "
