@@ -1,17 +1,18 @@
 import React, { useEffect, useRef } from "react";
 
 /*
- * FractalMesh — minesweeper auto-play with engineered boards that hide
- * recognizable shapes in their no-mine regions.
+ * FractalMesh — continuous ASCII minesweeper background that becomes a real
+ * playable game when clicked.
  *
- * Each board is generated so a chosen pattern (BITCOIN / DEFI / SATOSHI /
- * world map) lives in the no-mine zone, surrounded by a forced wall of
- * mines. When the auto-clicker (or the user) clicks anywhere inside the
- * pattern, the cascade reveals the entire pattern as empty cells fenced
- * by numbered border cells — minesweeper naturally drawing the shape.
+ * Idle mode (default):
+ *   PSAT auto-clicks the board; cascades open regions, adjacent mines flag
+ *   with ⚑. Old revealed cells slowly re-cover so the loop never finishes.
  *
- * Pattern cycles every PATTERN_CYCLE_MS, swapping in a fresh board.
- * User click still drops into game mode; idle timeout resumes auto-play.
+ * Play mode (after user clicks):
+ *   Auto-play stops. Left-click reveals (and cascades), right-click toggles
+ *   a flag. Click a mine and it explodes — all mines reveal, the board
+ *   resets, and auto-play resumes after a short hold. After 25s of
+ *   inactivity, auto-play resumes too.
  */
 
 const COLS = 200;
@@ -20,89 +21,17 @@ const CELL_W = 20;
 const CELL_H = 26;
 const MINE_DENSITY = 0.13;
 
-// Auto-play timing — 2× faster than the previous baseline
+// 2× the original baseline
 const CLICK_INTERVAL_MS = 750;
 const AUTO_CLICKER_COUNT = 2;
 const INITIAL_BURST_COUNT = 5;
 const REVEAL_STAGGER_MS = 14;
+
 const RECOVER_MIN_AGE_MS = 14000;
 const RECOVER_PROB_PER_TICK = 0.025;
 const RECOVER_TICK_MS = 280;
 const IDLE_TIMEOUT_MS = 25000;
 const GAME_OVER_HOLD_MS = 2600;
-
-// Each board lives for this long before the pattern rotates
-const PATTERN_CYCLE_MS = 28000;
-// Pattern is centered vertically around this grid row (upper portion)
-const PATTERN_Y_ROW = 14;
-
-// 5x7 pixel font — `#` = on
-const FONT_5x7 = {
-  A: [".###.", "#...#", "#...#", "#####", "#...#", "#...#", "#...#"],
-  B: ["####.", "#...#", "#...#", "####.", "#...#", "#...#", "####."],
-  C: [".###.", "#...#", "#....", "#....", "#....", "#...#", ".###."],
-  D: ["####.", "#...#", "#...#", "#...#", "#...#", "#...#", "####."],
-  E: ["#####", "#....", "#....", "####.", "#....", "#....", "#####"],
-  F: ["#####", "#....", "#....", "####.", "#....", "#....", "#...."],
-  H: ["#...#", "#...#", "#...#", "#####", "#...#", "#...#", "#...#"],
-  I: [".###.", "..#..", "..#..", "..#..", "..#..", "..#..", ".###."],
-  N: ["#...#", "##..#", "#.#.#", "#.#.#", "#.#.#", "#..##", "#...#"],
-  O: [".###.", "#...#", "#...#", "#...#", "#...#", "#...#", ".###."],
-  S: [".####", "#....", "#....", ".###.", "....#", "....#", "####."],
-  T: ["#####", "..#..", "..#..", "..#..", "..#..", "..#..", "..#.."],
-  " ": [".....", ".....", ".....", ".....", ".....", ".....", "....."],
-};
-
-function scaleBitmap(rows, scale) {
-  const out = [];
-  for (const row of rows) {
-    const expanded = row.split("").map((c) => c.repeat(scale)).join("");
-    for (let i = 0; i < scale; i++) out.push(expanded);
-  }
-  return out;
-}
-
-function renderText(text, scale) {
-  const baseRows = 7;
-  const rows = Array.from({ length: baseRows }, () => "");
-  for (let i = 0; i < text.length; i++) {
-    const ch = text[i].toUpperCase();
-    const glyph = FONT_5x7[ch] || FONT_5x7[" "];
-    for (let r = 0; r < baseRows; r++) {
-      rows[r] += glyph[r];
-      if (i < text.length - 1) rows[r] += ".";
-    }
-  }
-  return scaleBitmap(rows, scale);
-}
-
-// Hand-designed world map silhouette
-const WORLD_MAP = [
-  "................................................................",
-  "...........#####.......#####...##......######...........###....",
-  "..........########..############.....###########.........####..",
-  "........############################.############.........###..",
-  "........#############################.###########..............",
-  ".........#############################...#######...............",
-  "..........###########################.......##.................",
-  "...........########################...........................",
-  "............######################................###..........",
-  ".............###################.................#####.........",
-  "...............##############.....................###..........",
-  "................##########.........................##..........",
-  ".................######............................##..........",
-  "..................####............................##...........",
-  "..................###..............................##..........",
-  "...................##........................................",
-  "................................................................",
-];
-
-const PATTERNS = [
-  { name: "BITCOIN", bitmap: renderText("BITCOIN", 2) },
-  { name: "DEFI",    bitmap: renderText("DEFI", 3) },
-  { name: "SATOSHI", bitmap: renderText("SATOSHI", 2) },
-  { name: "WORLD",   bitmap: WORLD_MAP },
-];
 
 function rng(seed) {
   let s = seed | 0;
@@ -125,84 +54,10 @@ function makeEmptyCells() {
   return cells;
 }
 
-// Cells covered by the pattern bitmap (the `#` marks), centered horizontally
-// and shifted into the upper portion of the grid.
-function patternCellSet(bitmap) {
-  const h = bitmap.length;
-  const w = bitmap[0].length;
-  const ox = Math.floor((COLS - w) / 2);
-  const oy = PATTERN_Y_ROW - Math.floor(h / 2);
-  const set = new Set();
-  for (let y = 0; y < h; y++) {
-    for (let x = 0; x < w; x++) {
-      if (bitmap[y][x] === "#") {
-        const gx = ox + x;
-        const gy = oy + y;
-        if (gx >= 0 && gx < COLS && gy >= 0 && gy < ROWS) {
-          set.add(gy * COLS + gx);
-        }
-      }
-    }
-  }
-  return set;
-}
-
-// 1-cell buffer ring around any cell in the input set (still no-mine zone)
-function bufferAround(cellSet) {
-  const buf = new Set(cellSet);
-  for (const idx of cellSet) {
-    const x = idx % COLS;
-    const y = Math.floor(idx / COLS);
-    for (let dy = -1; dy <= 1; dy++) {
-      for (let dx = -1; dx <= 1; dx++) {
-        const gx = x + dx;
-        const gy = y + dy;
-        if (gx >= 0 && gx < COLS && gy >= 0 && gy < ROWS) {
-          buf.add(gy * COLS + gx);
-        }
-      }
-    }
-  }
-  return buf;
-}
-
-// Cells in the immediate ring outside the buffer — forced mines so the
-// cascade halts cleanly at the pattern's outline.
-function wallAround(bufferSet) {
-  const wall = new Set();
-  for (const idx of bufferSet) {
-    const x = idx % COLS;
-    const y = Math.floor(idx / COLS);
-    for (let dy = -1; dy <= 1; dy++) {
-      for (let dx = -1; dx <= 1; dx++) {
-        if (!dx && !dy) continue;
-        const gx = x + dx;
-        const gy = y + dy;
-        if (gx >= 0 && gx < COLS && gy >= 0 && gy < ROWS) {
-          const widx = gy * COLS + gx;
-          if (!bufferSet.has(widx)) wall.add(widx);
-        }
-      }
-    }
-  }
-  return wall;
-}
-
-function fillBoardWithPattern(cells, seed, patternBitmap) {
+function fillBoard(cells, seed) {
   const r = rng(seed);
-  const patternMask = patternCellSet(patternBitmap);
-  const bufferMask = bufferAround(patternMask);
-  const wallMask = wallAround(bufferMask);
-
   for (const c of cells) {
-    const idx = c.y * COLS + c.x;
-    if (bufferMask.has(idx)) {
-      c.mine = false; // pattern + buffer = guaranteed empty cascade region
-    } else if (wallMask.has(idx)) {
-      c.mine = true; // forced ring so the cascade halts at the outline
-    } else {
-      c.mine = r() < MINE_DENSITY;
-    }
+    c.mine = r() < MINE_DENSITY;
     c.count = 0;
   }
   const get = (x, y) =>
@@ -219,7 +74,7 @@ function fillBoardWithPattern(cells, seed, patternBitmap) {
     }
     c.count = count;
   }
-  return { get, patternMask };
+  return get;
 }
 
 function cascadeReveal(start, get) {
@@ -256,8 +111,7 @@ export default function FractalMesh() {
     if (!root) return;
 
     const cellEls = Array.from(root.querySelectorAll(".ms-c"));
-    let getCell;
-    let currentPatternMask = new Set();
+    let getCell = fillBoard(CELL_DATA, Math.floor(Math.random() * 1e9));
 
     const state = CELL_DATA.map((cell, i) => ({
       cell,
@@ -267,11 +121,9 @@ export default function FractalMesh() {
     }));
 
     const ctx = {
-      mode: "auto", // "auto" | "playing" | "gameover"
+      mode: "idle", // "idle" | "playing" | "gameover"
       lastUserActivity: 0,
       pendingTimers: [],
-      patternIdx: 0,
-      lastPatternSwitch: performance.now(),
     };
 
     function setCell(idx, status, now) {
@@ -300,12 +152,6 @@ export default function FractalMesh() {
       } else if (status === "mine-explosion") {
         el.textContent = "✸";
         el.className = "ms-c mine-revealed mine-explosion";
-      }
-    }
-
-    function recoverAll(now) {
-      for (let i = 0; i < state.length; i++) {
-        if (state[i].status !== "covered") setCell(i, "covered", now);
       }
     }
 
@@ -353,7 +199,7 @@ export default function FractalMesh() {
     }
 
     function autoTick() {
-      if (ctx.mode !== "auto") return;
+      if (ctx.mode !== "idle") return;
       const candidates = [];
       for (let i = 0; i < state.length; i++) {
         const s = state[i];
@@ -377,54 +223,27 @@ export default function FractalMesh() {
       return candidates[Math.floor(Math.random() * candidates.length)];
     }
 
-    function pickFromSet(set) {
-      const arr = [];
-      for (const idx of set) {
-        const s = state[idx];
-        if (s && s.status === "covered" && !s.cell.mine) arr.push(idx);
-      }
-      if (!arr.length) return -1;
-      return arr[Math.floor(Math.random() * arr.length)];
-    }
-
     function initialBurst() {
-      // First click is guaranteed inside the current pattern so the shape
-      // surfaces immediately rather than waiting for random hits.
-      const patternIdx = pickFromSet(currentPatternMask);
-      if (patternIdx >= 0) startCascade(patternIdx, true);
-
-      // Plus random clicks across regions for additional activity
+      const regions = [];
       const cols = Math.ceil(Math.sqrt(INITIAL_BURST_COUNT));
-      const rowsBurst = Math.ceil(INITIAL_BURST_COUNT / cols);
-      for (let ry = 0; ry < rowsBurst; ry++) {
+      const rows = Math.ceil(INITIAL_BURST_COUNT / cols);
+      for (let ry = 0; ry < rows; ry++) {
         for (let rx = 0; rx < cols; rx++) {
-          const idx = pickCoveredInRegion(
-            Math.floor((rx / cols) * COLS),
-            Math.floor(((rx + 1) / cols) * COLS),
-            Math.floor((ry / rowsBurst) * ROWS),
-            Math.floor(((ry + 1) / rowsBurst) * ROWS)
-          );
-          if (idx >= 0) startCascade(idx, true);
+          if (regions.length >= INITIAL_BURST_COUNT) break;
+          regions.push({
+            xMin: Math.floor((rx / cols) * COLS),
+            xMax: Math.floor(((rx + 1) / cols) * COLS),
+            yMin: Math.floor((ry / rows) * ROWS),
+            yMax: Math.floor(((ry + 1) / rows) * ROWS),
+          });
         }
       }
+      regions.forEach((r) => {
+        const idx = pickCoveredInRegion(r.xMin, r.xMax, r.yMin, r.yMax);
+        if (idx >= 0) startCascade(idx, true);
+      });
     }
-
-    function regenerateBoard(useNextPattern) {
-      if (useNextPattern) ctx.patternIdx = (ctx.patternIdx + 1) % PATTERNS.length;
-      const pattern = PATTERNS[ctx.patternIdx];
-      const result = fillBoardWithPattern(
-        CELL_DATA,
-        Math.floor(Math.random() * 1e9),
-        pattern.bitmap
-      );
-      getCell = result.get;
-      currentPatternMask = result.patternMask;
-      recoverAll(performance.now());
-      ctx.lastPatternSwitch = performance.now();
-      initialBurst();
-    }
-
-    regenerateBoard(false);
+    initialBurst();
 
     function gameOver(triggeredIdx) {
       ctx.mode = "gameover";
@@ -435,15 +254,19 @@ export default function FractalMesh() {
         }
       }
       const t = setTimeout(() => {
-        regenerateBoard(true);
-        ctx.mode = "auto";
+        getCell = fillBoard(CELL_DATA, Math.floor(Math.random() * 1e9));
+        const resetNow = performance.now();
+        for (let i = 0; i < state.length; i++) {
+          setCell(i, "covered", resetNow);
+        }
+        ctx.mode = "idle";
       }, GAME_OVER_HOLD_MS);
       ctx.pendingTimers.push(t);
     }
 
     function noteUserActivity() {
       ctx.lastUserActivity = performance.now();
-      if (ctx.mode === "auto") ctx.mode = "playing";
+      if (ctx.mode === "idle") ctx.mode = "playing";
     }
 
     function handleClick(e) {
@@ -493,8 +316,7 @@ export default function FractalMesh() {
     let raf;
     let lastRecoverTick = 0;
     function tick(now) {
-      // Re-cover (auto only)
-      if (ctx.mode === "auto" && now - lastRecoverTick > RECOVER_TICK_MS) {
+      if (ctx.mode === "idle" && now - lastRecoverTick > RECOVER_TICK_MS) {
         lastRecoverTick = now;
         for (let i = 0; i < state.length; i++) {
           const s = state[i];
@@ -506,15 +328,8 @@ export default function FractalMesh() {
         }
       }
 
-      // Pattern cycle
-      if (ctx.mode === "auto" && now - ctx.lastPatternSwitch > PATTERN_CYCLE_MS) {
-        regenerateBoard(true);
-      }
-
-      // Idle timeout — return to auto-play
       if (ctx.mode === "playing" && now - ctx.lastUserActivity > IDLE_TIMEOUT_MS) {
-        ctx.mode = "auto";
-        regenerateBoard(false);
+        ctx.mode = "idle";
       }
 
       raf = requestAnimationFrame(tick);
