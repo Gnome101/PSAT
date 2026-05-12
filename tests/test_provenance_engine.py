@@ -784,11 +784,7 @@ def test_shared_modifier_phi_does_not_pollute_function_parameter(tmp_path):
     # argument — never reads a state variable. If we see the modifier-
     # entry Phi's rvalues (PAUSER_ROLE / OPERATOR_ROLE state vars), the
     # bug is back.
-    polluted_state_vars = {
-        s.state_variable_name
-        for s in role_sources
-        if s.kind == "state_variable"
-    }
+    polluted_state_vars = {s.state_variable_name for s in role_sources if s.kind == "state_variable"}
     assert not polluted_state_vars, (
         f"`role`'s provenance was polluted by the modifier-shared Phi: "
         f"state_variable sources leaked in = {polluted_state_vars}. "
