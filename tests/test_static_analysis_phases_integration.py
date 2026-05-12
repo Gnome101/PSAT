@@ -67,26 +67,25 @@ class TestAnalysisPhaseSuccess:
             "subject": {"name": "TestContract"},
             "summary": {"control_model": "ownable"},
         }
+        predicate_trees = {"schema_version": "semantic", "trees": {}}
+        effects = {"schema_version": "semantic", "functions": {}}
 
         monkeypatch.setattr(
-            "workers.static_worker.collect_contract_analysis",
-            lambda project_dir: analysis_data,
-        )
-        monkeypatch.setattr(
-            "workers.static_worker.build_semantic_guards",
-            lambda analysis: {"schema_version": "0.1", "contract_name": "TestContract", "functions": []},
+            "workers.static_worker.collect_contract_analysis_with_artifacts",
+            lambda project_dir: (analysis_data, predicate_trees, effects),
         )
         calls = _capture_store_artifact(monkeypatch)
 
         result = worker._run_analysis_phase(session, job, tmp_path, "TestContract", job.address)
 
         assert result == analysis_data
-        assert len(calls) == 2
-        assert calls[0]["name"] == "contract_analysis"
+        names = [call["name"] for call in calls]
+        assert names == ["contract_analysis", "predicate_trees", "effects"]
         assert calls[0]["data"] == analysis_data
-        assert calls[1]["name"] == "semantic_guards"
+        assert calls[1]["data"] == predicate_trees
+        assert calls[2]["data"] == effects
 
-    def test_stores_semantic_guards_side_artifact_when_present(self, monkeypatch, tmp_path):
+    def test_stores_predicate_trees_and_effects_side_artifacts(self, monkeypatch, tmp_path):
         worker = StaticWorker()
         monkeypatch.setattr(worker, "update_detail", lambda *a, **kw: None)
         monkeypatch.setattr(worker, "_write_analysis_tables", lambda *a, **kw: None)
@@ -98,55 +97,46 @@ class TestAnalysisPhaseSuccess:
             "subject": {"name": "TestContract"},
             "summary": {"control_model": "ownable"},
         }
-        semantic_data = {
-            "schema_version": "0.1",
-            "contract_name": "TestContract",
-            "functions": [],
-        }
+        predicate_trees = {"schema_version": "semantic", "trees": {}}
+        effects = {"schema_version": "semantic", "functions": {}}
         analysis_path = tmp_path / "contract_analysis.json"
-        semantic_path = tmp_path / "semantic_guards.json"
         analysis_path.write_text(json.dumps(analysis_data))
-        semantic_path.write_text(json.dumps(semantic_data))
 
         monkeypatch.setattr(
-            "workers.static_worker.collect_contract_analysis",
-            lambda project_dir: analysis_data,
-        )
-        monkeypatch.setattr(
-            "workers.static_worker.build_semantic_guards",
-            lambda analysis: semantic_data,
+            "workers.static_worker.collect_contract_analysis_with_artifacts",
+            lambda project_dir: (analysis_data, predicate_trees, effects),
         )
         calls = _capture_store_artifact(monkeypatch)
 
         result = worker._run_analysis_phase(session, job, tmp_path, "TestContract", job.address)
 
         assert result == analysis_data
-        assert [call["name"] for call in calls] == ["contract_analysis", "semantic_guards"]
-        assert calls[1]["data"] == semantic_data
+        assert [call["name"] for call in calls] == ["contract_analysis", "predicate_trees", "effects"]
 
-    def test_succeeds_even_when_returned_path_missing(self, monkeypatch, tmp_path):
-        """If analyze_contract returns a path that doesn't exist, phase still returns True
-        (no artifact stored, but no error either)."""
+    def test_skips_predicate_trees_for_vyper(self, monkeypatch, tmp_path):
+        """Vyper projects return ``None`` for predicate_trees + effects;
+        only contract_analysis is stored."""
         worker = StaticWorker()
         monkeypatch.setattr(worker, "update_detail", lambda *a, **kw: None)
+        monkeypatch.setattr(worker, "_write_analysis_tables", lambda *a, **kw: None)
         session = MagicMock()
         job = _job()
 
         monkeypatch.setattr(
-            "workers.static_worker.collect_contract_analysis",
-            lambda project_dir: {"schema_version": "0.1"},
+            "workers.static_worker.collect_contract_analysis_with_artifacts",
+            lambda project_dir: ({"schema_version": "0.1"}, None, None),
         )
-        monkeypatch.setattr("workers.static_worker.build_semantic_guards", lambda analysis: {"functions": []})
         calls = _capture_store_artifact(monkeypatch)
 
         result = worker._run_analysis_phase(session, job, tmp_path, "TestContract", job.address)
 
         assert result == {"schema_version": "0.1"}
-        assert [call["name"] for call in calls] == ["contract_analysis", "semantic_guards"]
+        assert [call["name"] for call in calls] == ["contract_analysis"]
 
 
 class TestAnalysisPhaseFailure:
-    """Mock collect_contract_analysis() to raise; verify error artifact and return value."""
+    """Mock ``collect_contract_analysis_with_artifacts()`` to raise;
+    verify error artifact and return value."""
 
     def test_stores_analysis_error_on_exception(self, monkeypatch, tmp_path):
         worker = StaticWorker()
@@ -157,7 +147,7 @@ class TestAnalysisPhaseFailure:
         def _raise(project_dir):
             raise RuntimeError("LLM analysis timed out")
 
-        monkeypatch.setattr("workers.static_worker.collect_contract_analysis", _raise)
+        monkeypatch.setattr("workers.static_worker.collect_contract_analysis_with_artifacts", _raise)
         calls = _capture_store_artifact(monkeypatch)
 
         result = worker._run_analysis_phase(session, job, tmp_path, "TestContract", job.address)
@@ -176,7 +166,7 @@ class TestAnalysisPhaseFailure:
         def _raise(project_dir):
             raise ValueError("bad json from model")
 
-        monkeypatch.setattr("workers.static_worker.collect_contract_analysis", _raise)
+        monkeypatch.setattr("workers.static_worker.collect_contract_analysis_with_artifacts", _raise)
         calls = _capture_store_artifact(monkeypatch)
 
         result = worker._run_analysis_phase(session, job, tmp_path, "TestContract", job.address)

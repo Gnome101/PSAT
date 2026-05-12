@@ -1,4 +1,4 @@
-"""Heuristic guardrail for the WARNING-degraded-with-record_degraded contract.
+"""Static guardrail for the WARNING-degraded-with-record_degraded contract.
 
 The level contract in ``utils/logging.py`` says: any worker emitting
 ``logger.warning`` (or ``logger.exception``) inside a swallowed-exception
@@ -49,7 +49,7 @@ ALLOW_LIST: dict[str, dict[int, str]] = {
         # doesn't change the job's stage output. record_degraded would
         # mislead callers of /api/jobs/{id}/errors into thinking the
         # reanalysis was degraded.
-        717: "Notifier side-effect; reanalysis already completed before this fired.",
+        581: "Notifier side-effect; reanalysis already completed before this fired.",
     },
 }
 

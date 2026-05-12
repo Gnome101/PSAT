@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import re
 from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
@@ -11,30 +10,6 @@ from typing import Any
 from slither.slither import Slither
 
 from schemas.contract_analysis import Evidence
-
-from .constants import ROLE_CONSTANT_PATTERN, ROLE_NAME_PATTERNS
-
-_UPPER_SNAKE_IDENTIFIER = re.compile(r"\b[A-Z][A-Z0-9_]*\b")
-_AUTHISH_ROLE_IDENTIFIER_KEYWORDS = (
-    "owner",
-    "admin",
-    "guardian",
-    "govern",
-    "governor",
-    "governance",
-    "operator",
-    "manager",
-    "authority",
-    "timelock",
-    "upgrader",
-    "pauser",
-    "unpauser",
-    "minter",
-    "burner",
-    "executor",
-    "canceller",
-    "committee",
-)
 
 
 def _load_json(path: Path, default: Any) -> Any:
@@ -135,28 +110,6 @@ def _is_mapping_variable(variable) -> bool:
     return type(getattr(variable, "type", None)).__name__ == "MappingType"
 
 
-def _looks_like_role_identifier_name(name: str) -> bool:
-    if not name:
-        return False
-    if ROLE_CONSTANT_PATTERN.fullmatch(name) or any(pattern.match(name) for pattern in ROLE_NAME_PATTERNS):
-        return True
-    if not _UPPER_SNAKE_IDENTIFIER.fullmatch(name):
-        return False
-    lowered = name.lower()
-    return any(keyword in lowered for keyword in _AUTHISH_ROLE_IDENTIFIER_KEYWORDS)
-
-
-def _role_identifier_tokens(text: str) -> list[str]:
-    return sorted(
-        {token for token in _UPPER_SNAKE_IDENTIFIER.findall(text or "") if _looks_like_role_identifier_name(token)}
-    )
-
-
-def _is_role_identifier(variable) -> bool:
-    name = getattr(variable, "name", "")
-    return _looks_like_role_identifier_name(name)
-
-
 def _source_evidence(item, project_dir: Path, detail: str | None = None) -> Evidence:
     mapping = getattr(item, "source_mapping", None)
     file_info = getattr(mapping, "filename", None)
@@ -222,28 +175,3 @@ def _call_or_value(item, attr_name: str) -> list[Any]:
 def _node_contains_require_or_assert(node) -> bool:
     marker = getattr(node, "contains_require_or_assert", False)
     return bool(marker()) if callable(marker) else bool(marker)
-
-
-def _function_effects(function) -> list[str]:
-    effects = []
-    name = getattr(function, "name", "").lower()
-    written_state = [getattr(variable, "name", "") for variable in getattr(function, "state_variables_written", [])]
-    if "pause" in name:
-        effects.append("pause_state_change")
-    if "upgrade" in name:
-        effects.append("upgrade_control")
-    if "ownership" in name or any("owner" in variable.lower() for variable in written_state):
-        effects.append("ownership_change")
-    if "grant" in name or "revoke" in name or "role" in name:
-        effects.append("role_management")
-    if "mint" in name:
-        effects.append("mint_capability")
-    if "burn" in name:
-        effects.append("burn_capability")
-    if any(token in name for token in ("schedule", "queue", "execute", "cancel")):
-        effects.append("timelock_control")
-    if any(token in name for token in ("create", "deploy", "clone")):
-        effects.append("factory_deployment")
-    if not effects and written_state:
-        effects.extend(f"writes:{variable}" for variable in written_state if variable)
-    return _dedupe_strings(effects)

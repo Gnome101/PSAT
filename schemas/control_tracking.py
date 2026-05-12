@@ -13,8 +13,6 @@ ChangeKind = Literal[
     "controller_value_changed",
     "controller_event_observed",
     "controller_tracking_gap",
-    "policy_event_observed",
-    "permission_model_changed",
 ]
 ResolvedControllerType = Literal[
     "zero",
@@ -56,22 +54,12 @@ class TrackedController(TypedDict):
     notes: list[str]
 
 
-class TrackedPolicy(TypedDict):
-    policy_id: str
-    label: str
-    policy_function: str
-    tracked_state_targets: list[str]
-    event_watch: EventWatch
-    notes: list[str]
-
-
 class ControlTrackingPlan(TypedDict):
     schema_version: str
     contract_address: str
     contract_name: str
     tracking_strategy: TrackingStrategy
     tracked_controllers: list[TrackedController]
-    tracked_policies: list[TrackedPolicy]
 
 
 class ControlSnapshotValue(TypedDict):

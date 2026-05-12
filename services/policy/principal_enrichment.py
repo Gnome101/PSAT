@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import re
 import threading
 from collections import defaultdict
@@ -10,6 +11,22 @@ from typing import Any
 from schemas.principal_labels import PrincipalLabels, PrincipalPermission, PrincipalProfile
 from services.resolution.tracking import classify_resolved_address_with_status
 from utils.concurrency import parallel_map
+
+logger = logging.getLogger(__name__)
+
+
+def _safe_role_int(role: Any) -> int | None:
+    """Coerce a role identifier to int, returning None for non-int shapes.
+
+    Role-name strings and Condition-mapping shapes cannot be represented as
+    numeric policy roles. Callers decide whether to skip-with-warning or
+    surface ``role=None`` on a typed permission while preserving the
+    original identifier in the controller bucket.
+    """
+    try:
+        return int(role)
+    except (TypeError, ValueError):
+        return None
 
 
 def _slug(value: str) -> str:
@@ -69,10 +86,18 @@ def _collect_permissions(
                 "controller": "owner",
             }
             by_address[address].append(permission)
-            permission_labels[address].update({f"{contract_slug}_direct_owner", f"{contract_slug}_permissioned"})
+            permission_labels[address].update({f"{contract_slug}_direct_owner", f"{contract_slug}_controlled"})
 
         for role_grant in function.get("authority_roles", []):
-            role = int(role_grant["role"])
+            raw_role = role_grant.get("role")
+            role = _safe_role_int(raw_role)
+            if role is None:
+                logger.debug(
+                    "principal_enrichment: skipping int-coercion for non-int role %r on %s",
+                    raw_role,
+                    function_name,
+                )
+            controller_role_label = str(role) if role is not None else str(raw_role)
             for principal in role_grant.get("principals", []):
                 address = principal["address"].lower()
                 if not address.startswith("0x") or len(address) != 42:
@@ -82,13 +107,13 @@ def _collect_permissions(
                     "effect_labels": effect_labels,
                     "authority_public": authority_public,
                     "role": role,
-                    "controller": f"role_{role}",
+                    "controller": f"role_{controller_role_label}",
                 }
                 by_address[address].append(permission)
                 permission_labels[address].update(
                     {
-                        f"{contract_slug}_permissioned",
-                        f"{contract_slug}_role_{role}_holder",
+                        f"{contract_slug}_controlled",
+                        f"{contract_slug}_role_{controller_role_label}_holder",
                     }
                 )
                 if "arbitrary_external_call" in effect_labels_set:
@@ -123,7 +148,7 @@ def _collect_permissions(
                 by_address[address].append(permission)
                 permission_labels[address].update(
                     {
-                        f"{contract_slug}_permissioned",
+                        f"{contract_slug}_controlled",
                         f"{contract_slug}_controller_{controller_slug}",
                     }
                 )
@@ -260,7 +285,7 @@ def _display_name(
     if "safe_signer" in labels:
         return "Safe signer", "high"
     if permission_effects:
-        return f"{contract_name} permissioned principal", "medium"
+        return f"{contract_name} controlled principal", "medium"
     if resolved_type == "contract" and node_name:
         return node_name, "medium"
     if resolved_type == "contract" and graph_context:
@@ -336,8 +361,6 @@ def build_principal_labels(
             if str(details.get("controller_label", "")).strip() == "permissionController":
                 return None
             outgoing_edges = outgoing_by_id.get(node.get("id", ""), [])
-            if details.get("authority_kind") == "aragon_app_like" and not outgoing_edges:
-                return None
             if any(edge.get("to_id") != node.get("id") for edge in outgoing_edges):
                 return None
 

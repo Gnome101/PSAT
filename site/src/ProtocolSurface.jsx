@@ -76,7 +76,9 @@ const TYPE_META = {
   eoa: { label: "EOA", accent: "#a09870" },
   contract: { label: "CON", accent: "#7a8098" },
   proxy_admin: { label: "ADM", accent: "#8880a0" },
+  address: { label: "ADDR", accent: "#94a3b8" },
   unknown: { label: "UNK", accent: "#94a3b8" },
+  resolved_empty: { label: "NONE", accent: "#64748b" },
   open: { label: "OPEN", accent: "#64748b" },
   many: { label: "MULTI", accent: "#8a80a0" },
 };
@@ -371,6 +373,21 @@ function collectPrincipals(fn, companyData) {
   return { direct, indirect };
 }
 
+function isExactEmptyCapability(cap) {
+  if (!cap || typeof cap !== "object") return false;
+  if (cap.kind === "finite_set") {
+    return cap.membership_quality === "exact" && Array.isArray(cap.members) && cap.members.length === 0;
+  }
+  const children = Array.isArray(cap.children) ? cap.children : [];
+  if (cap.kind === "AND") return children.some(isExactEmptyCapability);
+  if (cap.kind === "OR") return children.length > 0 && children.every(isExactEmptyCapability);
+  return false;
+}
+
+function isResolvedEmptyFunction(fn) {
+  return fn?.status === "resolved_empty" || isExactEmptyCapability(fn?.capability_expr);
+}
+
 function guardSummary(fn, companyData) {
   const { direct, indirect } = collectPrincipals(fn, companyData);
   // `principals` stays as the direct list for backward compatibility — every
@@ -379,11 +396,12 @@ function guardSummary(fn, companyData) {
   const principals = direct;
 
   if (!direct.length) {
-    const meta = TYPE_META[fn.authority_public ? "open" : "unknown"];
+    const kind = fn.authority_public ? "open" : isResolvedEmptyFunction(fn) ? "resolved_empty" : "unknown";
+    const meta = TYPE_META[kind];
     return {
-      kind: fn.authority_public ? "open" : "unknown",
+      kind,
       label: meta.label,
-      sublabel: fn.authority_public ? "public" : "unresolved",
+      sublabel: fn.authority_public ? "public" : kind === "resolved_empty" ? "no active principal" : "unresolved",
       accent: meta.accent,
       principals,
       indirect,
@@ -402,7 +420,8 @@ function guardSummary(fn, companyData) {
   }
 
   const principal = direct[0];
-  const type = TYPE_META[principal.resolvedType] || TYPE_META.unknown;
+  const principalKind = principal.resolvedType === "unknown" ? "address" : principal.resolvedType;
+  const type = TYPE_META[principalKind] || TYPE_META.unknown;
   const safeOwners = Array.isArray(principal.details?.owners) ? principal.details.owners.length : 0;
   const threshold = Number(principal.details?.threshold);
   const delay = formatDelay(principal.details?.delay);
@@ -424,7 +443,7 @@ function guardSummary(fn, companyData) {
   }
 
   return {
-    kind: principal.resolvedType,
+    kind: principalKind,
     label: type.label,
     sublabel,
     accent: type.accent,
@@ -1357,7 +1376,11 @@ function InspectorCard({ selected, onNavigate }) {
           </div>
         ) : (
           <p className="ps-inspector-empty">
-            {selected.authorityPublic ? "This function is marked public in the authority state." : "No controlling principal was resolved for this path."}
+            {selected.authorityPublic
+              ? "This function is marked public in the authority state."
+              : selected.guard.kind === "resolved_empty"
+                ? "No active principal can call this path right now."
+                : "No controlling principal was resolved for this path."}
           </p>
         )}
       </div>

@@ -3,7 +3,7 @@
 These test a two-pass approach to effect labeling:
   Pass 1: Classify each state variable by its ROLE (how it's used),
            not its name.
-  Pass 2: Label each privileged function by what roles it writes to.
+  Pass 2: Label each semantic function by what roles it writes to.
 
 Every test uses fully randomized names to ensure zero name dependence.
 Tests are grouped by the security question they answer.
@@ -19,9 +19,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from slither.slither import Slither
 
-from services.static.contract_analysis_pipeline.graph import build_permission_graph
+from services.static.contract_analysis_pipeline.effects import build_effects
+from services.static.contract_analysis_pipeline.predicate_artifacts import (
+    build_predicate_artifacts,
+)
 from services.static.contract_analysis_pipeline.shared import _select_subject_contract
-from services.static.contract_analysis_pipeline.summaries import _detect_access_control
+from services.static.contract_analysis_pipeline.summaries import _build_semantic_control_summary
 
 
 def _rand(n: int = 8) -> str:
@@ -36,12 +39,14 @@ def _analyze(source: str, name: str = "Target"):
         subject = _select_subject_contract(slither, name)
         if subject is None:
             raise RuntimeError(f"Contract {name} not found")
-        pg = build_permission_graph(subject, Path(tmp))
-        return _detect_access_control(subject, Path(tmp), pg)
+        # _build_semantic_control_summary reads predicate_trees + effects.
+        predicate_trees = build_predicate_artifacts(subject)
+        effects = build_effects(subject)
+        return _build_semantic_control_summary(subject, Path(tmp), predicate_trees, effects)
 
 
 def _labels(ac, fn_name: str) -> set[str]:
-    for pf in ac.get("privileged_functions", []):
+    for pf in ac.get("semantic_functions", []):
         if pf["function"].split("(")[0] == fn_name:
             return set(pf.get("effect_labels", []))
     return set()
@@ -215,11 +220,9 @@ contract Target {{
 # =========================================================================
 
 
-def test_q3_internal_mint_random_names():
-    """Internal mint with random function names."""
+def test_q3_internal_mint_helper_name_does_not_drive_label():
+    """Internal helper names alone are not semantic mint evidence."""
     fn = _rand()
-    # We need the internal to actually be named _mint or mint for current detection
-    # This tests whether random internal names work
     source = f"""
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
@@ -233,7 +236,7 @@ contract Target {{
 }}
 """
     ac = _analyze(source)
-    assert "mint" in _labels(ac, fn)
+    assert "mint" not in _labels(ac, fn)
 
 
 def test_q3_cross_contract_mint():

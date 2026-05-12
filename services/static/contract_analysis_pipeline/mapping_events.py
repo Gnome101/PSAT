@@ -12,9 +12,16 @@ class WriterEventSpec(TypedDict):
     event_signature: str
     event_name: str
     key_position: int
+    key_positions_by_index: dict[int, int]
     indexed_positions: list[int]
-    direction: Literal["add", "remove"]
+    direction: Literal["add", "remove", "set"]
     writer_function: str
+    # Position of the assigned value in the event's args (D.1). For
+    # ``add``/``remove`` semantics the assigned value is implicit so
+    # this is ``None``; for ``set`` semantics it points at the topic
+    # / data slot carrying the new value, e.g. ``OwnerSet(addr, val)``
+    # would record ``key_position=0, value_position=1``.
+    value_position: int | None
 
 
 class _EventMetadata(TypedDict):
@@ -33,49 +40,95 @@ def _var_name(item: Any) -> str:
     return getattr(item, "name", None) or str(item)
 
 
-def _is_mapping_address_keyed(variable: Any) -> bool:
+def _is_mapping_type(variable: Any) -> bool:
     type_str = str(getattr(variable, "type", "") or "")
-    return type_str.startswith("mapping(address =>") or type_str.startswith("mapping(address=>")
+    return type_str.startswith("mapping(")
 
 
 def _written_mappings(function: Any) -> list[Any]:
-    return [v for v in function.all_state_variables_written() if _is_mapping_address_keyed(v)]
+    return [v for v in function.all_state_variables_written() if _is_mapping_type(v)]
 
 
-def _extract_index_writes(function: Any) -> list[tuple[str, Any, Any]]:
-    triples: list[tuple[str, Any, Any]] = []
+def _extract_index_writes(function: Any) -> list[tuple[str, list[Any], Any]]:
+    triples: list[tuple[str, list[Any], Any]] = []
     for node in getattr(function, "nodes", []) or []:
-        index_map: dict[str, tuple[Any, Any]] = {}
+        definitions: dict[str, Any] = {}
         for ir in getattr(node, "irs", []) or []:
             kind = _ir_name(ir)
-            if kind == "Index":
-                base = getattr(ir, "variable_left", None)
-                if not _is_mapping_address_keyed(base):
-                    continue
-                key = getattr(ir, "variable_right", None)
+            if kind in {"Index", "Member"}:
                 lvalue_name = _var_name(getattr(ir, "lvalue", None))
                 if lvalue_name:
-                    index_map[lvalue_name] = (base, key)
+                    definitions[lvalue_name] = ir
             elif kind == "Assignment":
                 lvalue_name = _var_name(getattr(ir, "lvalue", None))
-                if lvalue_name in index_map:
-                    base, key = index_map[lvalue_name]
-                    triples.append((_var_name(base), key, getattr(ir, "rvalue", None)))
+                defining = definitions.get(lvalue_name)
+                write = _mapping_write_from_index(defining, definitions)
+                if write is not None:
+                    mapping_name, keys = write
+                    triples.append((mapping_name, keys, getattr(ir, "rvalue", None)))
             elif kind == "Delete":
                 operand_name = _var_name(getattr(ir, "lvalue", None))
-                if operand_name in index_map:
-                    base, key = index_map[operand_name]
-                    triples.append((_var_name(base), key, None))
+                defining = definitions.get(operand_name)
+                write = _mapping_write_from_index(defining, definitions)
+                if write is not None:
+                    mapping_name, keys = write
+                    triples.append((mapping_name, keys, None))
     return triples
 
 
-def _direction_of_write(value_var: Any) -> Literal["add", "remove"] | None:
+def _mapping_write_from_index(defining: Any, definitions: dict[str, Any]) -> tuple[str, list[Any]] | None:
+    if _ir_name(defining) != "Index":
+        return None
+    base_name, keys = _index_base_mapping_name_and_keys(defining, definitions)
+    if not base_name:
+        return None
+    return base_name, keys
+
+
+def _index_base_mapping_name_and_keys(index_ir: Any, definitions: dict[str, Any]) -> tuple[str | None, list[Any]]:
+    current = index_ir
+    visited: set[str] = set()
+    keys: list[Any] = []
+    while _ir_name(current) == "Index":
+        keys.insert(0, getattr(current, "variable_right", None))
+        left = getattr(current, "variable_left", None)
+        left_name = _var_name(left)
+        if left_name in visited:
+            return left_name or None, keys
+        if left_name:
+            visited.add(left_name)
+        defining = definitions.get(left_name)
+        while _ir_name(defining) == "Member":
+            base = getattr(defining, "variable_left", None)
+            base_name = _var_name(base)
+            if base_name in visited:
+                return left_name or None, keys
+            if base_name:
+                visited.add(base_name)
+            defining = definitions.get(base_name)
+        if _ir_name(defining) != "Index":
+            return left_name or None, keys
+        current = defining
+    return None, keys
+
+
+def _direction_of_write(value_var: Any) -> Literal["add", "remove", "set"] | None:
+    """Classify a mapping write by the assigned value.
+
+    Returns ``"add"`` / ``"remove"`` for constant 1/0 (Maker
+    ``wards[u] = 1`` shape) and ``"set"`` for variable assignments
+    (``balances[u] = amount`` shape) where the value has to be
+    decoded from the emitted event / trace at indexing time. PR D's
+    backends consume the ``set`` direction; PR-A-era code paths
+    only check for ``add``/``remove`` so the new value is invisible
+    to them — exactly what we want.
+    """
     if value_var is None:
         return "remove"
     value = getattr(value_var, "value", None)
     type_str = str(getattr(value_var, "type", "") or "")
     if value is None:
-        return None
+        return "set"
     if isinstance(value, bool):
         return "add" if value else "remove"
     try:
@@ -88,7 +141,7 @@ def _direction_of_write(value_var: Any) -> Literal["add", "remove"] | None:
             return "add"
         if str(value).lower() in ("false", "0"):
             return "remove"
-    return None
+    return "set"
 
 
 def _abi_type(type_obj: Any) -> str:
@@ -181,17 +234,22 @@ def _extract_event_emissions(
     return emissions
 
 
-def _match_event_to_key(
+def _match_event_to_keys(
     emissions: list[tuple[str, list[Any], list[int]]],
-    key_var: Any,
-) -> tuple[str, int, list[int]] | None:
-    key_name = _var_name(key_var)
-    if not key_name:
+    key_vars: list[Any],
+) -> tuple[str, dict[int, int], list[int]] | None:
+    key_names = [_var_name(key_var) for key_var in key_vars]
+    if not key_names or any(not name for name in key_names):
         return None
     for signature, arguments, indexed_positions in emissions:
-        for i, arg in enumerate(arguments):
-            if _var_name(arg) == key_name:
-                return signature, i, indexed_positions
+        positions: dict[int, int] = {}
+        for key_idx, key_name in enumerate(key_names):
+            for arg_idx, arg in enumerate(arguments):
+                if _var_name(arg) == key_name:
+                    positions[key_idx] = arg_idx
+                    break
+        if len(positions) == len(key_names):
+            return signature, positions, indexed_positions
     return None
 
 
@@ -211,28 +269,65 @@ def discover_mapping_writer_events(contract: Any) -> list[WriterEventSpec]:
         emissions = _extract_event_emissions(function, metadata_index)
         if not emissions:
             continue
-        for mapping_name, key_var, value_var in index_writes:
+        for mapping_name, key_vars, value_var in index_writes:
             direction = _direction_of_write(value_var)
             if direction is None:
                 continue
-            match = _match_event_to_key(emissions, key_var)
+            match = _match_event_to_keys(emissions, key_vars)
             if match is None:
                 continue
-            event_signature, key_position, indexed_positions = match
+            event_signature, key_positions_by_index, indexed_positions = match
             event_name = event_signature.split("(", 1)[0]
             key = (mapping_name, event_signature, direction)
             if key in seen:
                 continue
             seen.add(key)
+            key_position = key_positions_by_index.get(len(key_vars) - 1)
+            if key_position is None:
+                continue
+            value_position = _match_event_value_position(emissions, value_var, event_signature, key_position)
             specs.append(
                 {
                     "mapping_name": mapping_name,
                     "event_signature": event_signature,
                     "event_name": event_name,
                     "key_position": key_position,
+                    "key_positions_by_index": key_positions_by_index,
                     "indexed_positions": list(indexed_positions),
                     "direction": direction,
                     "writer_function": getattr(function, "full_name", getattr(function, "name", "")),
+                    "value_position": value_position,
                 }
             )
     return specs
+
+
+def _match_event_value_position(
+    emissions: list[tuple[str, list[Any], list[int]]],
+    value_var: Any,
+    event_signature: str,
+    key_position: int,
+) -> int | None:
+    """Locate the value argument's position in the matched event.
+
+    Used by D.1+: when ``map[k] = v`` writes are mirrored by an event
+    like ``OwnerSet(addr indexed, uint256)``, the value lives at a
+    different arg position than the key. We match by identity against
+    the value-var that drove the write; fall back to ``None`` so
+    consumers (durable indexer, on-demand replay) skip value-aware
+    decoding rather than guessing.
+    """
+    if value_var is None:
+        return None
+    target_name = getattr(value_var, "name", None)
+    for sig, args, _indexed in emissions:
+        if sig != event_signature:
+            continue
+        for idx, arg in enumerate(args):
+            if idx == key_position:
+                continue
+            if arg is value_var:
+                return idx
+            if target_name is not None and getattr(arg, "name", None) == target_name:
+                return idx
+    return None

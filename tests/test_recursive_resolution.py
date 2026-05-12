@@ -8,6 +8,7 @@ from schemas.resolved_control_graph import ResolvedGraphEdge
 from services.resolution.recursive import (
     LoadedArtifacts,
     _add_edge,
+    _mapping_writer_specs_from_predicate_trees,
     _materialize_contract_artifacts,
     resolve_control_graph,
 )
@@ -21,7 +22,6 @@ def _bundle(address: str, contract_name: str, *, snapshot: dict, effective_permi
         "contract_name": contract_name,
         "tracking_strategy": "event_first_with_polling_fallback",
         "tracked_controllers": [],
-        "tracked_policies": [],
     }
     analysis = {
         "subject": {
@@ -37,6 +37,114 @@ def _bundle(address: str, contract_name: str, *, snapshot: dict, effective_permi
     if effective_permissions is not None:
         bundle["effective_permissions"] = effective_permissions
     return bundle
+
+
+def test_mapping_writer_specs_come_from_predicate_tree_hints():
+    artifact = {
+        "schema_version": "semantic",
+        "trees": {
+            "f()": {
+                "op": "LEAF",
+                "leaf": {
+                    "kind": "membership",
+                    "operator": "truthy",
+                    "authority_role": "caller_authority",
+                    "operands": [{"source": "msg_sender"}],
+                    "references_msg_sender": True,
+                    "parameter_indices": [],
+                    "expression": "wards[msg.sender]",
+                    "basis": [],
+                    "set_descriptor": {
+                        "kind": "mapping_membership",
+                        "storage_var": "wards",
+                        "key_sources": [{"source": "msg_sender"}],
+                        "enumeration_hint": [
+                            {
+                                "topic0": "0xaaa",
+                                "topics_to_keys": {1: 0},
+                                "data_to_keys": {},
+                                "direction": "add",
+                                "event_signature": "Rely(address)",
+                                "event_name": "Rely",
+                                "mapping_name": "wards",
+                                "key_position": 0,
+                                "indexed_positions": [0],
+                                "value_position": None,
+                                "writer_function": "rely(address)",
+                            }
+                        ],
+                    },
+                },
+            }
+        },
+    }
+
+    assert _mapping_writer_specs_from_predicate_trees(artifact) == [
+        {
+            "mapping_name": "wards",
+            "event_signature": "Rely(address)",
+            "event_name": "Rely",
+            "key_position": 0,
+            "indexed_positions": [0],
+            "direction": "add",
+            "writer_function": "rely(address)",
+            "value_position": None,
+        }
+    ]
+
+
+def test_mapping_writer_specs_include_check_trees():
+    artifact = {
+        "schema_version": "semantic",
+        "check_trees": {
+            "allowed(address,address,bytes4)": {
+                "op": "LEAF",
+                "leaf": {
+                    "kind": "membership",
+                    "operator": "truthy",
+                    "authority_role": "delegated_authority",
+                    "operands": [{"source": "msg_sender"}],
+                    "references_msg_sender": True,
+                    "parameter_indices": [],
+                    "expression": "users[user]",
+                    "basis": [],
+                    "set_descriptor": {
+                        "kind": "mapping_membership",
+                        "storage_var": "users",
+                        "key_sources": [{"source": "parameter", "parameter_index": 0}],
+                        "enumeration_hint": [
+                            {
+                                "topic0": "0xbbb",
+                                "topics_to_keys": {1: 0},
+                                "data_to_keys": {},
+                                "direction": "add",
+                                "event_signature": "UserAllowed(address)",
+                                "event_name": "UserAllowed",
+                                "mapping_name": "users",
+                                "key_position": 0,
+                                "indexed_positions": [0],
+                                "value_position": None,
+                                "writer_function": "allow(address)",
+                            }
+                        ],
+                    },
+                },
+            }
+        },
+    }
+
+    assert _mapping_writer_specs_from_predicate_trees(artifact) == [
+        {
+            "mapping_name": "users",
+            "event_signature": "UserAllowed(address)",
+            "event_name": "UserAllowed",
+            "key_position": 0,
+            "indexed_positions": [0],
+            "direction": "add",
+            "writer_function": "allow(address)",
+            "value_position": None,
+        }
+    ]
 
 
 def test_resolve_control_graph_recurses_to_contract_and_safe(monkeypatch):
@@ -344,11 +452,15 @@ def test_materialize_contract_artifacts_builds_effective_permissions(monkeypatch
         lambda *_args, **_kwargs: None,
     )
     monkeypatch.setattr(
-        "services.resolution.recursive.collect_contract_analysis",
-        lambda _project_dir: {
-            "subject": {"address": address, "name": "TestContract"},
-            "access_control": {"privileged_functions": []},
-        },
+        "services.resolution.recursive.collect_contract_analysis_with_artifacts",
+        lambda _project_dir: (
+            {
+                "subject": {"address": address, "name": "TestContract"},
+                "semantic_control": {"semantic_functions": []},
+            },
+            {"schema_version": "semantic", "trees": {}},
+            {"schema_version": "semantic", "functions": {}},
+        ),
     )
     monkeypatch.setattr(
         "services.resolution.recursive.build_control_tracking_plan",
@@ -358,7 +470,6 @@ def test_materialize_contract_artifacts_builds_effective_permissions(monkeypatch
             "contract_name": "TestContract",
             "tracking_strategy": "event_first_with_polling_fallback",
             "tracked_controllers": [],
-            "tracked_policies": [],
         },
     )
     monkeypatch.setattr(

@@ -133,6 +133,15 @@ def _patch_session_local(monkeypatch):
 
 def test_handle_signal_flips_running_false(caplog):
     """SIGTERM / SIGINT arrives → the loop should drain, then exit."""
+    # ``utils.logging.configure_logging`` runs in ``AuditRowWorker.__init__``
+    # and on its first call wipes the root logger's pre-existing handlers
+    # — including pytest's ``LogCaptureHandler``. Pre-mark the root as
+    # configured so the call short-circuits and caplog stays attached.
+    import logging as _stdlib_logging
+
+    from utils import logging as _psat_logging
+
+    setattr(_stdlib_logging.getLogger(), _psat_logging._CONFIGURED_FLAG, True)
     worker = _TestWorker()
     assert worker._running is True
     with caplog.at_level(logging.INFO, logger=worker.log.name):

@@ -1,6 +1,13 @@
 """Contract analysis package exports."""
 
-from .core import analyze_contract, collect_contract_analysis
-from .semantic_guards import build_semantic_guards
+from .core import (
+    analyze_contract,
+    collect_contract_analysis,
+    collect_contract_analysis_with_artifacts,
+)
 
-__all__ = ["analyze_contract", "build_semantic_guards", "collect_contract_analysis"]
+__all__ = [
+    "analyze_contract",
+    "collect_contract_analysis",
+    "collect_contract_analysis_with_artifacts",
+]

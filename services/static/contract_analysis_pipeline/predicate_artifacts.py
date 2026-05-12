@@ -1,0 +1,261 @@
+"""Build the semantic predicate-tree artifact for a contract.
+
+Runs the full predicate pipeline (``build_predicate_tree`` per
+function + ``apply_writer_gate_pass`` + ``apply_reentrancy_pause_pass``
+across the contract) and returns a JSON-ready dict keyed on each
+externally-callable function's full name.
+
+The artifact is emitted as the static stage's guard carrier. The
+separate ``effects`` artifact carries sink/effect data for every
+externally-observable function.
+
+Convention:
+  * present + tree → function is guarded by the tree's predicate.
+  * absent → function is unguarded (publicly callable). The
+    resolver maps unguarded to ``CapabilityExpr.public`` /
+    ``conditional_universal`` per its own rules.
+
+External/public visibility is the boundary we report on — internal/
+private functions never appear in the output. We also skip
+constructors and fallback/receive functions (their guard semantics
+are different from ordinary external entry points).
+"""
+
+from __future__ import annotations
+
+from collections.abc import Callable
+from typing import Any
+
+from eth_utils.crypto import keccak
+
+from .mapping_events import WriterEventSpec, discover_mapping_writer_events
+from .predicate_types import PredicateTree
+from .predicates import _helper_engine_cache, build_predicate_tree, build_return_predicate_tree
+from .reentrancy_pause import PauseInfo, apply_reentrancy_pause_pass
+from .writer_gate import apply_writer_gate_pass
+
+SCHEMA_VERSION = "semantic"
+
+
+def _empty_pause_info() -> PauseInfo:
+    return {
+        "pause_state_vars": [],
+        "pause_toggle_functions": [],
+        "reentrancy_state_vars": [],
+        "reentrancy_guarded_functions": [],
+    }
+
+
+_EMPTY_PAUSE_INFO: PauseInfo = {
+    "pause_state_vars": [],
+    "pause_toggle_functions": [],
+    "reentrancy_state_vars": [],
+    "reentrancy_guarded_functions": [],
+}
+
+
+def build_predicate_artifacts(contract: Any) -> dict[str, Any]:
+    """Return a JSON-serializable dict of predicate trees for every
+    external/public function on ``contract``.
+
+    Functions whose tree is ``None`` (no revert paths) are omitted
+    from the output. The resolver treats absent entries as
+    unguarded.
+    """
+    artifact, _ = build_predicate_artifacts_with_pause_info(contract)
+    return artifact
+
+
+def build_predicate_artifacts_with_pause_info(
+    contract: Any,
+) -> tuple[dict[str, Any], PauseInfo]:
+    """Build the predicate artifact and return the structured
+    ``PauseInfo`` from ``apply_reentrancy_pause_pass``. The pipeline
+    consumes the pause info to drive ``_detect_pausability``."""
+    # Scope a per-contract helper-engine cache for the cross-fn
+    # build path. Multiple functions on the same contract often share
+    # helper guards; this cache makes later cross-fn builds effectively
+    # free.
+    cache_token = _helper_engine_cache.set({})
+    try:
+        trees: dict[str, PredicateTree] = {}
+        check_trees: dict[str, PredicateTree] = {}
+        for fn in getattr(contract, "functions", []) or []:
+            if not _is_externally_callable(fn):
+                continue
+            tree = build_predicate_tree(fn)
+            if tree is not None:
+                trees[fn.full_name] = tree
+            check_tree = build_return_predicate_tree(fn)
+            if check_tree is not None:
+                check_trees[fn.full_name] = check_tree
+    finally:
+        _helper_engine_cache.reset(cache_token)
+
+    pause_info = _empty_pause_info()
+    # Cross-contract passes mutate trees in place: writer-gate's
+    # writer-side analysis can promote 1-key membership leaves to
+    # caller_authority once it sees the full set of writers, and
+    # reentrancy/pause analyzers cross-reference state-vars across
+    # the contract's functions.
+    all_trees: dict[str, PredicateTree] = dict(trees)
+    check_tree_keys: dict[str, str] = {}
+    for sig, tree in check_trees.items():
+        key = sig if sig not in all_trees else f"check:{sig}"
+        all_trees[key] = tree
+        check_tree_keys[sig] = key
+    if all_trees:
+        apply_writer_gate_pass(contract, all_trees)
+        apply_mapping_event_hint_pass(contract, all_trees)
+        pause_info = apply_reentrancy_pause_pass(contract, all_trees)
+        trees = {sig: all_trees[sig] for sig in trees}
+        check_trees = {sig: all_trees[check_tree_keys[sig]] for sig in check_trees}
+
+    artifact = {
+        "schema_version": SCHEMA_VERSION,
+        "contract_name": getattr(contract, "name", None),
+        "trees": trees,
+    }
+    if check_trees:
+        artifact["check_trees"] = check_trees
+    return artifact, pause_info
+
+
+def apply_mapping_event_hint_pass(contract: Any, trees: dict[str, PredicateTree]) -> None:
+    """Attach generic mapping-writer event hints to matching leaves.
+
+    ``discover_mapping_writer_events`` already finds semantic writer
+    evidence like ``wards[user] = 1; emit Rely(user)`` or
+    ``roles[user] = mask; emit RolesUpdated(user, mask)``. This pass
+    copies that evidence onto matching ``mapping_membership`` descriptors.
+    """
+    specs_by_mapping: dict[str, list[WriterEventSpec]] = {}
+    for spec in discover_mapping_writer_events(contract):
+        mapping_name = spec.get("mapping_name")
+        if mapping_name:
+            specs_by_mapping.setdefault(mapping_name, []).append(spec)
+
+    if not specs_by_mapping:
+        return
+
+    for tree in trees.values():
+        _walk_tree_leaves(tree, lambda leaf: _attach_hints_to_leaf(leaf, specs_by_mapping))
+
+
+def _walk_tree_leaves(node: Any, callback: Callable[[dict[str, Any]], None]) -> None:
+    if not isinstance(node, dict):
+        return
+    if node.get("op") == "LEAF":
+        leaf = node.get("leaf")
+        if isinstance(leaf, dict):
+            callback(leaf)
+        return
+    for child in node.get("children") or []:
+        _walk_tree_leaves(child, callback)
+
+
+def _attach_hints_to_leaf(leaf: dict[str, Any], specs_by_mapping: dict[str, list[WriterEventSpec]]) -> None:
+    descriptor = leaf.get("set_descriptor")
+    if not isinstance(descriptor, dict) or descriptor.get("kind") != "mapping_membership":
+        return
+    storage_var = descriptor.get("storage_var")
+    if not isinstance(storage_var, str) or not storage_var:
+        return
+    specs = specs_by_mapping.get(storage_var)
+    if not specs:
+        return
+    member_key_index = _caller_key_index(descriptor.get("key_sources") or [])
+    if member_key_index is None:
+        return
+
+    hints = list(descriptor.get("enumeration_hint") or [])
+    seen = {_hint_identity(h) for h in hints if isinstance(h, dict)}
+    for spec in specs:
+        hint = _event_hint_from_writer_spec(spec, member_key_index)
+        identity = _hint_identity(hint)
+        if identity in seen:
+            continue
+        seen.add(identity)
+        hints.append(hint)
+    if hints:
+        descriptor["enumeration_hint"] = hints
+
+
+def _caller_key_index(key_sources: list[dict[str, Any]]) -> int | None:
+    for idx, source in enumerate(key_sources):
+        if source.get("source") in ("msg_sender", "tx_origin", "signature_recovery"):
+            return idx
+    return None
+
+
+def _event_hint_from_writer_spec(spec: WriterEventSpec, member_key_index: int) -> dict[str, Any]:
+    topic0 = "0x" + keccak(text=spec["event_signature"]).hex()
+    key_position = int(spec["key_position"])
+    indexed_positions = [int(pos) for pos in spec.get("indexed_positions") or []]
+    key_positions = spec.get("key_positions_by_index") or {member_key_index: key_position}
+    topics_to_keys: dict[int, int] = {}
+    data_to_keys: dict[int, int] = {}
+    for key_index_raw, event_arg_position_raw in key_positions.items():
+        key_index = int(key_index_raw)
+        event_arg_position = int(event_arg_position_raw)
+        topic_map, data_map = _event_arg_to_key_maps(
+            event_arg_position=event_arg_position,
+            key_index=key_index,
+            indexed_positions=indexed_positions,
+        )
+        topics_to_keys.update(topic_map)
+        data_to_keys.update(data_map)
+    return {
+        "topic0": topic0,
+        "topics_to_keys": topics_to_keys,
+        "data_to_keys": data_to_keys,
+        "direction": spec["direction"],
+        "event_signature": spec["event_signature"],
+        "event_name": spec["event_name"],
+        "mapping_name": spec["mapping_name"],
+        "key_position": key_position,
+        "indexed_positions": indexed_positions,
+        "value_position": spec.get("value_position"),
+        "writer_function": spec.get("writer_function"),
+    }
+
+
+def _event_arg_to_key_maps(
+    *,
+    event_arg_position: int,
+    key_index: int,
+    indexed_positions: list[int],
+) -> tuple[dict[int, int], dict[int, int]]:
+    if event_arg_position in indexed_positions:
+        return {1 + indexed_positions.index(event_arg_position): key_index}, {}
+    data_position = sum(1 for pos in range(event_arg_position + 1) if pos not in indexed_positions) - 1
+    return {}, {data_position: key_index}
+
+
+def _hint_identity(hint: dict[str, Any]) -> tuple[Any, ...]:
+    return (
+        hint.get("topic0"),
+        hint.get("direction"),
+        hint.get("event_signature"),
+        hint.get("key_position"),
+        hint.get("value_position"),
+    )
+
+
+def _is_externally_callable(fn: Any) -> bool:
+    """External or public visibility, AND not a constructor /
+    fallback / receive special function. Modifiers are not
+    functions in this sense."""
+    visibility = getattr(fn, "visibility", None)
+    if visibility not in ("external", "public"):
+        return False
+    if getattr(fn, "is_constructor", False):
+        return False
+    # Slither tags special functions via name; receive/fallback also
+    # have non-standard signatures.
+    name = getattr(fn, "name", "") or ""
+    if name in ("constructor", "fallback", "receive"):
+        return False
+    if getattr(fn, "is_fallback", False) or getattr(fn, "is_receive", False):
+        return False
+    return True

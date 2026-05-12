@@ -576,8 +576,9 @@ def test_resolution_artifact_names_match_policy_worker_reads():
 
 
 def test_policy_stores_all_artifacts_that_api_detail_inlines():
-    """Policy worker stores effective_permissions, principal_labels, and
-    resolved_control_graph. The API detail aggregator inlines each of these.
+    """Policy worker stores effective_permissions, principal_labels,
+    principal_history, and resolved_control_graph. The API detail aggregator
+    inlines each of these.
     Verify the names match between producer and consumer."""
     import inspect
 
@@ -589,12 +590,14 @@ def test_policy_stores_all_artifacts_that_api_detail_inlines():
     # Policy stores these
     assert '"effective_permissions"' in pw_source
     assert '"principal_labels"' in pw_source
+    assert '"principal_history"' in pw_source
     assert '"resolved_control_graph"' in pw_source
 
     # API detail aggregator inlines these
     detail_source = inspect.getsource(detail_module)
     assert '"effective_permissions"' in detail_source
     assert '"principal_labels"' in detail_source
+    assert '"principal_history"' in detail_source
     assert '"resolved_control_graph"' in detail_source
     assert '"contract_analysis"' in detail_source
     assert '"control_snapshot"' in detail_source
@@ -609,7 +612,7 @@ def test_policy_stores_all_artifacts_that_api_detail_inlines():
 @patch("routers.deps.SessionLocal")
 def test_detail_inlines_all_pipeline_artifacts(mock_session_cls, mock_get_all_artifacts):
     """The API detail endpoint must inline effective_permissions,
-    principal_labels, control_snapshot, and resolved_control_graph
+    principal_labels, principal_history, control_snapshot, and resolved_control_graph
     alongside the already-tested contract_analysis and dependencies."""
     from fastapi.testclient import TestClient
 
@@ -688,6 +691,12 @@ def test_detail_inlines_all_pipeline_artifacts(mock_session_cls, mock_get_all_ar
         "control_snapshot": {"schema_version": "0.1", "controller_values": {"state_variable:owner": {"value": "0xaa"}}},
         "resolved_control_graph": {"nodes": [{"id": "a", "address": TARGET}], "edges": []},
         "dependencies": {"address": TARGET, "dependencies": {}},
+        "principal_history": {
+            "schema_version": "principal_history.v1",
+            "contract_address": TARGET,
+            "status": "ok",
+            "function_permissions": [{"function": "pause()", "principal": "0xaa"}],
+        },
     }
 
     resp = client.get("/api/analyses/full_run")
@@ -699,6 +708,7 @@ def test_detail_inlines_all_pipeline_artifacts(mock_session_cls, mock_get_all_ar
     assert "state_variable:owner" in body["control_snapshot"]["controller_values"]
     assert len(body["resolved_control_graph"]["nodes"]) == 1
     assert body["dependencies"]["address"] == TARGET
+    assert body["principal_history"]["function_permissions"][0]["principal"] == "0xaa"
 
     # effective_permissions built from EffectiveFunction + FunctionPrincipal tables
     assert body["effective_permissions"]["functions"][0]["function"] == "pause()"
@@ -832,11 +842,10 @@ def test_resolution_worker_rewrites_address_for_impl_jobs(monkeypatch):
         "contract_name": "VaultImpl",
         "tracking_strategy": "event_first_with_polling_fallback",
         "tracked_controllers": [],
-        "tracked_policies": [],
     }
     contract_analysis = {
         "subject": {"address": IMPL, "name": "VaultImpl"},
-        "access_control": {"privileged_functions": []},
+        "semantic_control": {"semantic_functions": []},
     }
 
     artifacts = {
@@ -853,7 +862,7 @@ def test_resolution_worker_rewrites_address_for_impl_jobs(monkeypatch):
     captured_plans: list[dict] = []
     captured_analyses: list[dict] = []
 
-    def fake_build_snapshot(plan, _rpc_url):
+    def fake_build_snapshot(plan, _rpc_url, **_kw):
         captured_plans.append(plan)
         return {
             "schema_version": "0.1",
@@ -954,7 +963,6 @@ def test_tracking_plan_preserves_controller_ids_and_read_specs():
                 "notes": [],
             },
         ],
-        "policy_tracking": [],
     }
 
     plan = build_control_tracking_plan(analysis)  # type: ignore[arg-type]
@@ -977,51 +985,6 @@ def test_tracking_plan_preserves_controller_ids_and_read_specs():
     assert owner["event_watch"] is not None
     assert len(owner["event_watch"]["events"]) == 1
     assert owner["event_watch"]["events"][0]["name"] == "OwnershipTransferred"
-
-
-# ===================================================================
-# 15. Tracking plan policy_tracking round-trip
-# ===================================================================
-
-
-def test_tracking_plan_preserves_policy_tracking_fields():
-    """Policy tracking targets from contract_analysis must carry through
-    to the tracking plan. The resolution and policy workers depend on
-    the policy_id, tracked_state_targets, and event_watch fields."""
-    from services.resolution.tracking_plan import build_control_tracking_plan
-
-    analysis = {
-        "subject": {"address": "0x1111111111111111111111111111111111111111", "name": "Auth"},
-        "controller_tracking": [],
-        "policy_tracking": [
-            {
-                "policy_id": "canCall_policy",
-                "label": "canCall policy",
-                "policy_function": "canCall(address,address,bytes4)",
-                "tracked_state_targets": ["getUserRoles", "getRolesWithCapability"],
-                "associated_events": [
-                    {
-                        "name": "UserRoleUpdated",
-                        "signature": "UserRoleUpdated(address,uint8,bool)",
-                        "topic0": "0xabcdef",
-                        "inputs": [],
-                    }
-                ],
-                "writer_functions": [{"function": "setUserRole(address,uint8,bool)"}],
-                "notes": ["Track role mutations"],
-            }
-        ],
-    }
-
-    plan = build_control_tracking_plan(analysis)  # type: ignore[arg-type]
-
-    assert len(plan["tracked_policies"]) == 1
-    policy = plan["tracked_policies"][0]
-    assert policy["policy_id"] == "canCall_policy"
-    assert policy["policy_function"] == "canCall(address,address,bytes4)"
-    assert policy["tracked_state_targets"] == ["getUserRoles", "getRolesWithCapability"]
-    assert policy["event_watch"]["events"][0]["name"] == "UserRoleUpdated"
-    assert policy["event_watch"]["writer_functions"] == ["setUserRole(address,uint8,bool)"]
 
 
 # ===================================================================
@@ -1493,9 +1456,7 @@ def test_resolution_worker_fails_on_missing_artifacts(monkeypatch):
     monkeypatch.setattr(
         "workers.resolution_worker.get_artifact",
         lambda _s, _j, name: (
-            {"schema_version": "0.1", "tracked_controllers": [], "tracked_policies": []}
-            if name == "control_tracking_plan"
-            else None
+            {"schema_version": "0.1", "tracked_controllers": []} if name == "control_tracking_plan" else None
         ),
     )
     with pytest.raises(RuntimeError, match="contract_analysis"):

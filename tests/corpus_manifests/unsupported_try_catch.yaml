@@ -1,0 +1,33 @@
+contract_name: C
+description: |
+  try/catch with a revert in the catch block. The function reverts
+  iff the external call reverts — an opaque condition we can't
+  characterize without recursing into the called contract. The
+  pipeline emits an unsupported leaf flagged ``opaque_try_catch``.
+
+  Pinned to catch a regression where the detector silently drops
+  the catch-revert and the function looks unguarded — strictly
+  worse than reporting "we know there's a gate but cannot
+  characterize it."
+
+source: |
+  pragma solidity ^0.8.19;
+  interface Helper { function helper() external; }
+  contract C {
+      Helper public h;
+      uint256 public x;
+      constructor(address h_) { h = Helper(h_); }
+      function caller() external {
+          try h.helper() {} catch {
+              revert("oops");
+          }
+          x = 1;
+      }
+  }
+
+expected_functions:
+  "caller()":
+    kind: unsupported
+    unsupported_reason: opaque_try_catch
+    authority_role: business
+    confidence: low

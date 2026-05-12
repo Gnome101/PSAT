@@ -183,10 +183,14 @@ def test_copy_static_cache(db_session):
     """copy_static_cache duplicates all static data into a new job."""
     from sqlalchemy import select
 
-    from db.models import Contract, ContractSummary, PrivilegedFunction, RoleDefinition
-    from db.queue import copy_static_cache, create_job, get_artifact, get_source_files
+    from db.models import Contract, ContractSummary, RoleDefinition
+    from db.queue import copy_static_cache, create_job, get_artifact, get_source_files, store_artifact
 
     source_job = _create_completed_job_with_static_data(db_session)
+    predicate_trees = {"schema_version": "semantic", "trees": {"pause()": {"node_type": "caller"}}}
+    effects = {"schema_version": "semantic", "effects": {"pause()": [{"kind": "external_call"}]}}
+    store_artifact(db_session, source_job.id, "predicate_trees", data=predicate_trees)
+    store_artifact(db_session, source_job.id, "effects", data=effects)
     target_job = create_job(db_session, {"address": ADDR_A})
 
     new_contract_id = copy_static_cache(db_session, source_job.id, target_job.id)
@@ -210,14 +214,6 @@ def test_copy_static_cache(db_session):
     assert summary is not None
     assert summary.control_model == "ownable"
 
-    pfs = (
-        db_session.execute(select(PrivilegedFunction).where(PrivilegedFunction.contract_id == new_contract_id))
-        .scalars()
-        .all()
-    )
-    assert len(pfs) == 1
-    assert pfs[0].function_name == "pause"
-
     rds = (
         db_session.execute(select(RoleDefinition).where(RoleDefinition.contract_id == new_contract_id)).scalars().all()
     )
@@ -225,6 +221,8 @@ def test_copy_static_cache(db_session):
     assert rds[0].role_name == "ADMIN_ROLE"
 
     assert get_artifact(db_session, target_job.id, "contract_analysis") is not None
+    assert get_artifact(db_session, target_job.id, "predicate_trees") == predicate_trees
+    assert get_artifact(db_session, target_job.id, "effects") == effects
     # slither_results / analysis_report were removed from the static-artifact
     # cache copy set when the Slither CLI subprocess was excised — they no
     # longer participate in caching since they're no longer produced.
@@ -241,7 +239,7 @@ def test_data_isolation_after_cache_copy(db_session):
     """Deleting the source job does not affect the copied data."""
     from sqlalchemy import select
 
-    from db.models import Contract, ContractSummary, Job, PrivilegedFunction
+    from db.models import Contract, ContractSummary, Job
     from db.queue import copy_static_cache, create_job, get_artifact, get_source_files
 
     source_job = _create_completed_job_with_static_data(db_session)
@@ -265,13 +263,6 @@ def test_data_isolation_after_cache_copy(db_session):
     ).scalar_one_or_none()
     assert summary is not None
 
-    pfs = (
-        db_session.execute(select(PrivilegedFunction).where(PrivilegedFunction.contract_id == new_contract_id))
-        .scalars()
-        .all()
-    )
-    assert len(pfs) == 1
-
     assert get_artifact(db_session, target_job.id, "contract_analysis") is not None
 
 
@@ -284,7 +275,7 @@ def test_copy_returns_early_if_target_already_populated(db_session):
     """Second call to copy_static_cache returns existing ID without duplicating."""
     from sqlalchemy import func, select
 
-    from db.models import Contract, ContractSummary, PrivilegedFunction
+    from db.models import Contract, ContractSummary
     from db.queue import copy_static_cache, create_job
 
     source_job = _create_completed_job_with_static_data(db_session)
@@ -306,11 +297,6 @@ def test_copy_returns_early_if_target_already_populated(db_session):
     ).scalar()
     assert summary_count == 1, f"Expected 1 summary after double copy, got {summary_count}"
 
-    pf_count = db_session.execute(
-        select(func.count()).select_from(PrivilegedFunction).where(PrivilegedFunction.contract_id == id1)
-    ).scalar()
-    assert pf_count == 1, f"Expected 1 priv func after double copy, got {pf_count}"
-
 
 # ---------------------------------------------------------------------------
 # No duplicate rows
@@ -322,7 +308,7 @@ def test_no_duplicate_rows_after_two_runs(db_session, monkeypatch):
     static rows per job -- no duplicates within either job."""
     from sqlalchemy import func, select
 
-    from db.models import Contract, ContractSummary, PrivilegedFunction, RoleDefinition, SourceFile
+    from db.models import Contract, ContractSummary, RoleDefinition, SourceFile
     from db.queue import create_job, get_artifact
     from workers.discovery import DiscoveryWorker
 
@@ -344,11 +330,6 @@ def test_no_duplicate_rows_after_two_runs(db_session, monkeypatch):
         select(func.count()).select_from(ContractSummary).where(ContractSummary.contract_id == new_contract.id)
     ).scalar()
     assert summary_count == 1, f"Expected 1 summary, got {summary_count}"
-
-    pf_count = db_session.execute(
-        select(func.count()).select_from(PrivilegedFunction).where(PrivilegedFunction.contract_id == new_contract.id)
-    ).scalar()
-    assert pf_count == 1, f"Expected 1 privileged function, got {pf_count}"
 
     rd_count = db_session.execute(
         select(func.count()).select_from(RoleDefinition).where(RoleDefinition.contract_id == new_contract.id)

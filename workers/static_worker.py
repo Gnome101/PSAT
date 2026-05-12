@@ -16,7 +16,7 @@ from typing import cast
 
 from sqlalchemy import select
 
-from db.models import Contract, ContractSummary, Job, JobStage, PrivilegedFunction, RoleDefinition
+from db.models import Contract, ContractSummary, Job, JobDependency, JobStage, RoleDefinition
 from db.queue import _MUTABLE_CONTRACT_FIELDS, create_job, get_artifact, get_source_files, store_artifact
 from schemas.contract_analysis import ContractAnalysis
 from services.discovery import (
@@ -30,8 +30,7 @@ from services.discovery import (
 from services.discovery.dynamic_dependencies import NoNewTransactionsError
 from services.monitoring.proxy_watcher import resolve_current_implementation
 from services.resolution.tracking_plan import build_control_tracking_plan
-from services.static import collect_contract_analysis
-from services.static.contract_analysis_pipeline import build_semantic_guards
+from services.static.contract_analysis_pipeline import collect_contract_analysis_with_artifacts
 from utils.logging import record_degraded
 from utils.rpc import normalize_hex  # used for address comparison
 from workers.base import BaseWorker, JobHandledDirectly
@@ -66,6 +65,70 @@ def _log_phase_error(job_id: str, address: str, contract_name: str, phase: str, 
             error=error,
         )
     )
+
+
+def _redirect_proxy_policy_dependencies(
+    session,
+    *,
+    chain: str | None,
+    proxy_addr: str,
+    impl_addr: str,
+) -> int:
+    """Move pending policy dependency edges from a proxy to its impl job.
+
+    Resolution can discover an authority proxy before static has created the
+    proxy's implementation child. At that point the only durable provider
+    address is the proxy. Once static resolves the implementation, the edge
+    must wait on the impl job because policy artifacts are produced there.
+    """
+    from datetime import datetime, timezone
+
+    proxy_addr = proxy_addr.lower()
+    impl_addr = impl_addr.lower()
+    if proxy_addr == impl_addr:
+        return 0
+
+    stmt = select(JobDependency).where(
+        JobDependency.provider_address == proxy_addr,
+        JobDependency.required_stage == JobStage.policy,
+        JobDependency.status == "pending",
+    )
+    if chain is None:
+        stmt = stmt.where(JobDependency.provider_chain.is_(None))
+    else:
+        stmt = stmt.where(JobDependency.provider_chain == chain)
+    rows = session.execute(stmt).scalars().all()
+
+    changed = 0
+    now = datetime.now(timezone.utc)
+    for row in rows:
+        duplicate = session.execute(
+            select(JobDependency)
+            .where(
+                JobDependency.depender_job_id == row.depender_job_id,
+                JobDependency.provider_chain == row.provider_chain,
+                JobDependency.provider_address == impl_addr,
+                JobDependency.required_stage == row.required_stage,
+                JobDependency.id != row.id,
+            )
+            .limit(1)
+        ).scalar_one_or_none()
+        if duplicate is not None:
+            row.status = "satisfied"
+            row.satisfied_at = now
+        else:
+            row.provider_address = impl_addr
+        changed += 1
+
+    if changed:
+        session.commit()
+        logger.info(
+            "Redirected %d pending policy dependency edge(s) from proxy %s to implementation %s",
+            changed,
+            proxy_addr,
+            impl_addr,
+        )
+    return changed
 
 
 # ---------------------------------------------------------------------------
@@ -446,8 +509,8 @@ def _finalize_upgrade_history(
 # ---------------------------------------------------------------------------
 # Source / project helpers
 # ---------------------------------------------------------------------------
-# Minimum solc version to avoid known compiler bugs (e.g. Natspec.cpp assertion in 0.8.21)
-_MIN_SOLC = "0.8.24"  # 0.8.21-0.8.23 have Natspec.cpp internal compiler errors on some OZ contracts
+# Minimum solc version to avoid known compiler bugs (e.g. Natspec.cpp assertion in 0.8.21).
+_MIN_SOLC = "0.8.24"
 
 
 def _detect_solc_version(sources: dict[str, str]) -> str:
@@ -793,7 +856,7 @@ class StaticWorker(BaseWorker):
             )
         else:
             # Always attempt semantic proxy classification when RPC is available.
-            # Hidden proxies often won't match name-based heuristics so we run
+            # Hidden proxies often won't match cheap static classifiers, so we run
             # this unconditionally.  The result is reused by classify_contracts()
             # in the dependency phase to avoid duplicate RPC calls.
             target_classification = self._resolve_proxy(session, job, address, contract_name)
@@ -1005,6 +1068,12 @@ class StaticWorker(BaseWorker):
             else:
                 existing = session.execute(select(Job).where(Job.address == impl_addr).limit(1)).scalar_one_or_none()
             if existing:
+                _redirect_proxy_policy_dependencies(
+                    session,
+                    chain=chain,
+                    proxy_addr=address,
+                    impl_addr=impl_addr,
+                )
                 logger.info(
                     "Job %s: %s %s already has job %s in this cascade, skipping",
                     job.id,
@@ -1031,6 +1100,12 @@ class StaticWorker(BaseWorker):
             if force:
                 child_request["force"] = True
             child_job = create_job(session, child_request)
+            _redirect_proxy_policy_dependencies(
+                session,
+                chain=chain,
+                proxy_addr=address,
+                impl_addr=impl_addr,
+            )
             logger.info(
                 "Job %s: created %s job %s for %s (%s)",
                 job.id,
@@ -1470,7 +1545,9 @@ class StaticWorker(BaseWorker):
         """Run structured contract analysis. Returns the analysis dict or None on failure."""
         self.update_detail(session, job, "Building structured contract analysis")
         try:
-            analysis_data = collect_contract_analysis(project_dir)
+            analysis_data, semantic_predicate_trees, semantic_effects = collect_contract_analysis_with_artifacts(
+                project_dir
+            )
         except Exception as exc:
             record_degraded(
                 phase="contract_analysis",
@@ -1481,15 +1558,41 @@ class StaticWorker(BaseWorker):
             store_artifact(session, job.id, "analysis_error", data={"error": str(exc)})
             return None
 
-        # Persist side artifacts into the temp workspace so later static
-        # subphases (tracking plan) can read them from disk.
+        # ``predicate_trees`` and ``effects`` are the semantic artifacts
+        # consumed by policy resolution.
         (project_dir / "contract_analysis.json").write_text(json.dumps(analysis_data, indent=2) + "\n")
-        semantic_guards = build_semantic_guards(analysis_data)
-        (project_dir / "semantic_guards.json").write_text(json.dumps(semantic_guards, indent=2) + "\n")
+        if semantic_predicate_trees is not None:
+            (project_dir / "predicate_trees.json").write_text(json.dumps(semantic_predicate_trees, indent=2) + "\n")
+        if semantic_effects is not None:
+            (project_dir / "effects.json").write_text(json.dumps(semantic_effects, indent=2) + "\n")
 
-        # Keep as artifacts — downstream stages read these as JSON.
         store_artifact(session, job.id, "contract_analysis", data=analysis_data)
-        store_artifact(session, job.id, "semantic_guards", data=semantic_guards)
+        if semantic_predicate_trees is not None:
+            try:
+                store_artifact(session, job.id, "predicate_trees", data=semantic_predicate_trees)
+            except Exception as exc:
+                record_degraded(
+                    phase="predicate_trees_artifact_store",
+                    exc=exc,
+                    context={"address": address, "contract_name": contract_name, "job_id": str(job.id)},
+                )
+                logger.exception(
+                    "Static stage: predicate_trees artifact store failed for job %s",
+                    job.id,
+                )
+        if semantic_effects is not None:
+            try:
+                store_artifact(session, job.id, "effects", data=semantic_effects)
+            except Exception as exc:
+                record_degraded(
+                    phase="effects_artifact_store",
+                    exc=exc,
+                    context={"address": address, "contract_name": contract_name, "job_id": str(job.id)},
+                )
+                logger.exception(
+                    "Static stage: effects artifact store failed for job %s",
+                    job.id,
+                )
         self._write_analysis_tables(session, job, analysis_data)
         logger.info(
             "Static stage contract analysis complete for job %s address=%s contract=%s",
@@ -1539,25 +1642,11 @@ class StaticWorker(BaseWorker):
             )
         )
 
-        # Write privileged_functions
-        session.query(PrivilegedFunction).filter(PrivilegedFunction.contract_id == contract_row.id).delete()
-        ac = analysis.get("access_control", {})
-        for pf in ac.get("privileged_functions", []):
-            session.add(
-                PrivilegedFunction(
-                    contract_id=contract_row.id,
-                    function_name=pf.get("function", ""),
-                    selector=pf.get("selector"),
-                    abi_signature=pf.get("abi_signature"),
-                    effect_labels=pf.get("effect_labels", []),
-                    action_summary=pf.get("action_summary"),
-                    authority_public=False,
-                )
-            )
+        semantic_section = analysis.get("semantic_control", {})
 
         # Write role_definitions
         session.query(RoleDefinition).filter(RoleDefinition.contract_id == contract_row.id).delete()
-        for rd in ac.get("role_definitions", []):
+        for rd in semantic_section.get("role_definitions", []):
             session.add(
                 RoleDefinition(
                     contract_id=contract_row.id,

@@ -22,7 +22,7 @@ import logging
 import os
 import threading
 from collections.abc import Callable, Iterable, Sequence
-from concurrent.futures import Future, ThreadPoolExecutor, as_completed
+from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, as_completed, wait
 from typing import Any, TypeVar
 
 from utils.rpc import MAX_BATCH_SIZE, rpc_batch_request_with_status
@@ -42,6 +42,26 @@ def _max_fanout() -> int:
     return max(1, value)
 
 
+def _heartbeat_interval_s() -> float:
+    """Resolve the max wait between job heartbeats while a fan-out is blocked."""
+    try:
+        value = float(os.getenv("PSAT_PARALLEL_HEARTBEAT_INTERVAL_S", "30"))
+    except ValueError:
+        return 30.0
+    return max(0.1, value)
+
+
+def _call_heartbeat(heartbeat: Callable[[], None] | None) -> None:
+    if heartbeat is None:
+        return
+    try:
+        heartbeat()
+    except Exception as exc:
+        if _is_lease_lost(exc):
+            raise
+        logger.exception("parallel_map: heartbeat raised — continuing")
+
+
 def parallel_map(
     fn: Callable[[T], R],
     items: Iterable[T],
@@ -52,17 +72,16 @@ def parallel_map(
     """Apply *fn* to each item concurrently and return results in input order.
 
     Each entry in the returned list is ``(item, result)`` on success or
-    ``(item, exc)`` on failure — exceptions never propagate out of this helper,
-    so callers can treat parallel failures the same way they'd treat per-item
-    failures in a serial loop.
+    ``(item, exc)`` on per-item failure, so callers can treat parallel
+    failures the same way they'd treat per-item failures in a serial loop.
 
     *max_workers* falls back to ``PSAT_RPC_FANOUT`` (default 16). When set to 1
     the function executes sequentially in-thread, which is the parity mode
     tests use to assert behavioural equivalence with the serial path.
 
-    *heartbeat*, if provided, is called once per completion. It runs on the
-    submitting thread (after ``as_completed`` yields) so DB sessions captured
-    in the closure stay on the worker's thread.
+    *heartbeat*, if provided, is called on the submitting thread after task
+    completions and while waiting on long-running fan-out work. DB sessions
+    captured in the closure therefore stay on the worker's thread.
     """
     items_list = list(items)
     if not items_list:
@@ -73,33 +92,22 @@ def parallel_map(
 
     results: list[tuple[T, R | BaseException]] = [(item, None) for item in items_list]  # type: ignore[misc]
 
-    if workers == 1:
+    if workers == 1 and heartbeat is None:
         for idx, item in enumerate(items_list):
             try:
                 results[idx] = (item, fn(item))
             except BaseException as exc:  # noqa: BLE001 — preserve every exception type for callers
                 results[idx] = (item, exc)
-            if heartbeat is not None:
-                try:
-                    heartbeat()
-                except Exception as exc:
-                    if _is_lease_lost(exc):
-                        # The lease has rolled to a sibling worker; finishing this
-                        # batch would just be wasted work on a job we no longer own.
-                        # Propagate so ``_execute_job`` can bail.
-                        raise
-                    logger.exception("parallel_map: heartbeat raised — continuing")
+            _call_heartbeat(heartbeat)
         return results
 
     executor = RpcExecutor.get()
     futures: dict[Future[R], int] = {}
-    # Cap concurrency at *workers* by submitting in waves of that size; the
-    # shared ``RpcExecutor`` is intentionally larger than any one site needs
-    # so callers can declare their own ceiling without starving siblings.
-    semaphore = threading.Semaphore(workers)
+    # Cap concurrency by keeping at most ``workers`` submitted futures at a
+    # time. Do not block during submission: long-running first-wave tasks
+    # must still get heartbeat callbacks while the remaining items wait.
 
     def _submit(idx: int, item: T) -> Future[R]:
-        semaphore.acquire()
         # Per-submission ``copy_context`` is mandatory: a single Context
         # object cannot be entered by ``Context.run`` concurrently from
         # two threads. Each worker thread needs its own snapshot of the
@@ -108,32 +116,46 @@ def parallel_map(
         ctx = contextvars.copy_context()
 
         def _wrapped() -> R:
+            return ctx.run(fn, item)
+
+        future = executor.submit(_wrapped)
+        futures[future] = idx
+        return future
+
+    initial = min(workers, len(items_list))
+    for idx in range(initial):
+        _submit(idx, items_list[idx])
+    next_submit_idx = initial
+
+    pending = set(futures)
+    heartbeat_interval = _heartbeat_interval_s() if heartbeat is not None else None
+
+    while pending:
+        done, pending = wait(pending, timeout=heartbeat_interval, return_when=FIRST_COMPLETED)
+        if not done:
             try:
-                return ctx.run(fn, item)
-            finally:
-                semaphore.release()
+                _call_heartbeat(heartbeat)
+            except Exception:
+                for fut in pending:
+                    fut.cancel()
+                raise
+            continue
 
-        return executor.submit(_wrapped)
-
-    for idx, item in enumerate(items_list):
-        futures[_submit(idx, item)] = idx
-
-    for fut in as_completed(futures):
-        idx = futures[fut]
-        try:
-            results[idx] = (items_list[idx], fut.result())
-        except BaseException as exc:  # noqa: BLE001
-            results[idx] = (items_list[idx], exc)
-        if heartbeat is not None:
+        for fut in done:
+            idx = futures[fut]
             try:
-                heartbeat()
-            except Exception as exc:
-                if _is_lease_lost(exc):
-                    # The lease has rolled to a sibling worker. Don't drain the
-                    # remaining futures — the work is for a job we no longer own.
-                    # Propagate so ``_execute_job`` can bail.
-                    raise
-                logger.exception("parallel_map: heartbeat raised — continuing")
+                results[idx] = (items_list[idx], fut.result())
+            except BaseException as exc:  # noqa: BLE001
+                results[idx] = (items_list[idx], exc)
+            try:
+                _call_heartbeat(heartbeat)
+            except Exception:
+                for pending_fut in pending:
+                    pending_fut.cancel()
+                raise
+            if next_submit_idx < len(items_list):
+                pending.add(_submit(next_submit_idx, items_list[next_submit_idx]))
+                next_submit_idx += 1
 
     return results
 

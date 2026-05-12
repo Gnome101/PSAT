@@ -32,25 +32,22 @@ least one runtime function parameter, *however* labeled.
 
 Why fuzz with gibberish identifiers
 -----------------------------------
-The pipeline contains substring-name heuristics that can short-circuit
-detection (e.g. ``_internal_auth_calls`` matches "checkrole" /
-"authorize" / "auth"). If the test bodies used OZ-flavored names, a
-passing result might come from a name match rather than IR-shape
-detection. The fuzzer generates pure-gibberish identifiers and rejects
-any candidate containing substrings from ``BANNED_SUBSTRINGS``.
+The pipeline must not depend on substring-name matching. If the test
+bodies used standard-flavored names, a passing result might come from
+identifier text rather than IR-shape detection. The fuzzer generates
+pure-gibberish identifiers and rejects any candidate containing
+substrings from ``BANNED_SUBSTRINGS``.
 Anything the analyzer detects despite that has to be coming from
 structural / IR analysis.
 
-Standard-ABI exception
-----------------------
-Some shapes are *defined* by a standard ABI method name — ERC-721's
-``ownerOf(uint256)``, MakerDAO's ``canCall(address,address,bytes4)``.
-There is no way to test "does the analyzer recognize the canCall
-pattern" without using the actual canCall name (a renamed equivalent
-IS a different pattern). For those shapes we generate two variants:
-  • ``stdname=True``  — uses the standard ABI name (integration check).
-  • ``stdname=False`` — fuzzed method name, same IR shape (structural
-    check; should pass equivalently if detection is name-neutral).
+Standard-ABI coverage
+---------------------
+Some shapes are common enough to deserve a canonical-name fixture, such
+as ERC-721's ``ownerOf(uint256)`` or MakerDAO's
+``canCall(address,address,bytes4)``. Those fixtures are paired with a
+renamed method that has the same IR shape. Both variants should resolve
+equivalently; the renamed variant keeps the test from passing through
+ABI-name matching alone.
 
 Test layout
 -----------
@@ -63,7 +60,7 @@ pre-condition for the typed-predicate test below to be measuring the
 right thing.
 
 ``test_parametric_guard_emits_predicate_signal`` (xfail strict): for
-every generated source, asserts the privileged_function entry carries
+every generated source, asserts the semantic function entry carries
 a structured predicate (any plausible field name) that references
 msg.sender AND has at least one parameter-binding field. Marked
 ``xfail(strict=True)`` so when the implementation lands, every variant
@@ -86,13 +83,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from services.static import collect_contract_analysis  # noqa: E402
 
-# Substrings that any known pipeline heuristic matches on. Any candidate
-# identifier containing one of these is rejected — that way a "detected"
-# result from the analyzer can't be coming from a substring match.
-# Sources audited: services/static/contract_analysis_pipeline/{summaries.py,
-# constants.py, shared.py, graph.py}. Codex flagged this list as
-# incomplete; expanded to cover governance/timelock/lifecycle and
-# external-policy keywords.
+# Reserved substrings from legacy classifier terms. Any generated
+# identifier containing one is rejected, so a detected result cannot be
+# explained by a substring match. Keep broad coverage for governance,
+# timelock/lifecycle, and external-policy words.
 BANNED_SUBSTRINGS = (
     # Authority / role family
     "auth",
@@ -194,16 +188,16 @@ def _write_project(tmp_path: Path, contract_name: str, source: str) -> Path:
     return project_dir
 
 
-def _privileged_entry(analysis: Any, signature: str) -> dict | None:
-    ac = analysis.get("access_control") or {}
-    for fn in ac.get("privileged_functions") or []:
+def _semantic_entry(analysis: Any, signature: str) -> dict | None:
+    ac = analysis.get("semantic_control") or {}
+    for fn in ac.get("semantic_functions") or []:
         if fn["function"] == signature:
             return dict(fn)
     return None
 
 
 def _has_parametric_guard_signal(entry: dict | None) -> bool:
-    """Label-free check: does the privileged_function entry carry a
+    """Label-free check: does the semantic function entry carry a
     structured predicate that depends on at least one runtime function
     parameter and references msg.sender?
 
@@ -357,11 +351,10 @@ contract C {{
 
 
 def _shape_dynamic_role_admin(rng: random.Random) -> tuple[str, str, str, str]:
-    """``hasRole(getRoleAdmin(roleArg), msg.sender)`` — the OZ shape, with
-    a getter-helper (``_getRoleAdmin``-equivalent) sandwiched in. Earlier
-    fuzz template inlined ``admin_map[r]`` directly — codex flagged that
-    a fix targeting the OZ pattern could pass the inlined version while
-    still missing the real two-hop indirection."""
+    """``hasRole(getRoleAdmin(roleArg), msg.sender)`` shape, with a
+    getter-helper sandwiched in. Earlier fuzz template inlined
+    ``admin_map[r]`` directly, which could miss the real two-hop
+    indirection."""
     fn = _gen_identifier(rng)
     membership_check = _gen_identifier(rng, prefix="_")
     admin_lookup = _gen_identifier(rng, prefix="_")
@@ -379,8 +372,8 @@ contract C {{
         if (!{map_name}[r][a]) revert MissingMembership();
     }}
     function {admin_lookup}(bytes32 r) internal view returns (bytes32) {{
-        // Two-hop: real OZ has _getRoleAdmin returning _roles[role].adminRole.
-        // Our renamed equivalent reads the admin mapping the same way.
+        // Two-hop: helper returns an admin-role value from another mapping.
+        // The renamed equivalent reads the admin mapping the same way.
         return {admin_map}[r];
     }}
     function {fn}(bytes32 r, address account) public {{
@@ -443,10 +436,9 @@ contract C {{
 def _shape_external_policy_dynamic(rng: random.Random, *, stdname: bool) -> tuple[str, str, str, str]:
     """``policy.<bool fn>(msg.sender, target, selector)``.
 
-    When ``stdname=True``, uses the canonical ``canCall`` method name
-    (an integration check — pipeline currently substring-matches "cancall").
-    When False, uses a fuzzed boolean-returning method to prove
-    structural detection is name-independent."""
+    ``stdname=True`` keeps coverage for a widely used ABI spelling.
+    ``stdname=False`` uses a renamed boolean-returning method with the same
+    call shape, which should resolve through structural detection."""
     fn = _gen_identifier(rng)
     auth_field = _gen_identifier(rng, prefix="_")
     iface = _gen_identifier(rng, prefix="I").capitalize()
@@ -676,11 +668,8 @@ def _check_substring_hygiene(source: str, *, allow_standard_abi: bool) -> str | 
         "a",
         "who",
     }
-    # Codex finding: `_field.canCall(...)` was being skipped silently because
-    # the previous splitter kept tokens like `_field.canCall` whole and then
-    # bailed on the leading underscore. Use a Solidity-identifier regex so
-    # `.method` is split out as its own token and the standard-ABI exception
-    # only kicks in for the exact whitelisted method tokens.
+    # Split member calls into identifier tokens so the standard-ABI exception
+    # applies only to exact whitelisted method names.
     leaks = []
     stripped = _strip_solidity_comments(source)
     for token in re.findall(r"[A-Za-z_][A-Za-z0-9_]*", stripped):
@@ -699,13 +688,13 @@ def _extract_function_signatures(source: str) -> set[str]:
     """Pull ``name(type1,type2)`` shapes out of a Solidity source string.
 
     Codex finding: ``test_fuzz_fixtures_are_valid`` previously asserted
-    `_privileged_entry(analysis, sig_u) is None` — but if the generator
+    `_semantic_entry(analysis, sig_u) is None` — but if the generator
     returned the wrong signature, that assertion would pass vacuously
     (the signature is missing not because the function isn't admitted,
     but because it doesn't exist under that name). This helper extracts
     actual signatures from the source so the test can prove ``sig_u``
     really is a function the analyzer would have seen, before claiming
-    its absence from privileged_functions is meaningful.
+    its absence from semantic_functions is meaningful.
     """
     sigs: set[str] = set()
     # Greedy on params is fine — we don't have nested parens in our templates.
@@ -765,7 +754,7 @@ def test_fuzz_fixtures_are_valid(shape_name: str, variant: int, tmp_path: Path):
     # 2. Anti-vacuity: prove sig_u actually corresponds to a function the
     # source declares. Otherwise the negative-control assertion below
     # could pass for the wrong reason (function doesn't exist under that
-    # name → also not in privileged_functions → green for free).
+    # name → also not in semantic_functions → green for free).
     declared = _extract_function_signatures(unguarded_src)
     assert sig_u in declared, (
         f"[{shape_name} v{variant}] generator returned sig_u={sig_u!r} but unguarded "
@@ -777,13 +766,34 @@ def test_fuzz_fixtures_are_valid(shape_name: str, variant: int, tmp_path: Path):
     project_g = _write_project(tmp_path / "g", "C", guarded_src)
     collect_contract_analysis(project_g)  # exception → fixture broken
 
-    # 3. Negative control: unguarded twin must NOT admit.
+    # 3. Negative control: unguarded twin must NOT carry a caller-authority
+    # leaf in its predicate tree.
+    #
+    # The summary inclusion rule is "caller/delegated authority leaf OR
+    # sensitive sink". Functions with state writes (every fuzz-generated
+    # unguarded twin has them) are included even without a gate, so the
+    # negative control is "no caller_authority / delegated_authority leaf
+    # in the predicate tree", not "absent from semantic_functions".
     project_u = _write_project(tmp_path / "u", "C", unguarded_src)
-    analysis_u = collect_contract_analysis(project_u)
-    assert _privileged_entry(analysis_u, sig_u) is None, (
-        f"[{shape_name} v{variant}] unguarded twin {sig_u} ADMITTED — "
-        f"either the fixture has an incidental check or the admission "
-        f"gate is overinclusive.\n{unguarded_src}"
+    from services.static.contract_analysis_pipeline import collect_contract_analysis_with_artifacts
+
+    _analysis_u, predicate_trees_u, _effects_u = collect_contract_analysis_with_artifacts(project_u)
+    semantic_trees = ((predicate_trees_u or {}).get("trees")) or {}
+    tree_u = semantic_trees.get(sig_u)
+
+    def _has_caller_authority_leaf(node) -> bool:
+        if not isinstance(node, dict):
+            return False
+        if node.get("op") == "LEAF":
+            leaf = node.get("leaf") or {}
+            return leaf.get("authority_role") in ("caller_authority", "delegated_authority")
+        return any(_has_caller_authority_leaf(c) for c in node.get("children") or [])
+
+    assert not _has_caller_authority_leaf(tree_u), (
+        f"[{shape_name} v{variant}] unguarded twin {sig_u} surfaced a "
+        f"caller_authority/delegated_authority leaf — fixture has an "
+        f"incidental check or the structural classification is "
+        f"overinclusive.\n{unguarded_src}"
     )
 
 
@@ -801,18 +811,16 @@ def test_fuzz_fixtures_are_valid(shape_name: str, variant: int, tmp_path: Path):
 @pytest.mark.xfail(
     reason=(
         "Pipeline does not yet emit a structured parametric-guard signal "
-        "on privileged_function entries. caller_reach_analysis fires, the "
+        "on semantic function entries. caller_reach_analysis fires, the "
         "function admits, but the predicate that gates it (and which "
         "function parameter(s) the predicate depends on) is not captured. "
         "Without that, resolution can't compute principals and the UI "
         "renders 'Unresolved'. "
-        "FIX: extract a generic predicate object — IR expression + which "
-        "function parameter indices feed each operand + flag for "
-        "msg.sender reference — once, in caller_sinks.py / "
-        "semantic_guards.py, and surface it on the privileged_function "
-        "entry. Resolver pattern-matches the IR locally; pipeline does "
-        "not enumerate shape labels. Test flips to passing when the "
-        "structure is present; remove xfail decorator when it does."
+        "FIX: surface the semantic predicate object with parameter "
+        "dependencies and msg.sender reachability, so resolution can "
+        "compute principals without enumerating shape labels. Test flips "
+        "to passing when the structure is present; remove xfail decorator "
+        "when it does."
     ),
     strict=True,
 )
@@ -827,7 +835,7 @@ def test_parametric_guard_emits_predicate_signal(shape_name: str, variant: int, 
     guarded_src, sig_g = gen[0], gen[2]
     project = _write_project(tmp_path, "C", guarded_src)
     analysis = collect_contract_analysis(project)
-    entry = _privileged_entry(analysis, sig_g)
+    entry = _semantic_entry(analysis, sig_g)
 
     diagnostic = (
         f"\nshape={shape_name} variant={variant} (label is for diagnostic only; "
@@ -841,7 +849,7 @@ def test_parametric_guard_emits_predicate_signal(shape_name: str, variant: int, 
         f"---\n{guarded_src}"
     )
     assert _has_parametric_guard_signal(entry), (
-        f"expected privileged_function entry for {sig_g!r} to carry a "
+        f"expected semantic function entry for {sig_g!r} to carry a "
         f"structured predicate referencing msg.sender AND binding to a "
         f"runtime parameter (any field name; routing fields enumerated in "
         f"_has_parametric_guard_signal). None found.{diagnostic}"
