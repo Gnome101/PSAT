@@ -110,9 +110,10 @@ test.describe("home redesign", () => {
     // Wait for React to mount — look for brand in top-nav
     await expect(page.locator(".top-nav-brand")).toBeVisible();
 
-    // Hero eyebrow is the distinctive landing marker
-    await expect(page.locator(".product-hero-eyebrow")).toBeVisible();
-    await expect(page.locator(".product-hero-title")).toContainText(/Every privileged path/i);
+    // Splash hero — minesweeper background, cycling-word title
+    await expect(page.locator(".ph-meta-dot")).toBeVisible();
+    await expect(page.locator(".ph-title")).toContainText(/Detect every/i);
+    await expect(page.locator(".ph-title")).toContainText(/before they do/i);
 
     // Protocol list
     await expect(page.locator(".home-protocol-row")).toHaveCount(2);
