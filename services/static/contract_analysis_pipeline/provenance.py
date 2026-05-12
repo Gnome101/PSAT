@@ -330,17 +330,29 @@ class ProvenanceEngine:
     # ------------------------------------------------------------------
 
     def _iter_nodes(self) -> Iterable[Any]:
-        # Walk the function's own body first.
-        for node in self.function.nodes:
-            yield node
-        # Then walk each modifier's body. Slither doesn't inline
-        # modifiers, so any TMP / Phi defined inside a modifier body
-        # would otherwise be invisible to the engine. We process
-        # modifier nodes in the same SSA name space — Slither uses
-        # distinct names per modifier scope, so no clash.
-        for modifier in getattr(self.function, "modifiers", []) or []:
-            for node in getattr(modifier, "nodes", []) or []:
-                yield node
+        # Function body only — modifier nodes are deliberately excluded.
+        #
+        # Slither shares the modifier's SSA-IR across every caller, so the
+        # entry Phi for a modifier parameter unions ALL call-site
+        # arguments (one per function that uses the modifier). When the
+        # modifier parameter shares a name with the function's parameter
+        # (e.g. ``modifier onlyRole(bytes32 role)`` and
+        # ``function revokeRole(bytes32 role, address account)``), that
+        # Phi pollutes the function's ``role`` provenance with every
+        # other caller's argument — state vars, TMPs of unrelated helpers,
+        # etc. The pollution grows the binding sets unboundedly, so the
+        # per-IR ``_sub_engine_memo`` keyed on ``(callee, bindings)``
+        # never hits across worklist iterations and the engine respawns
+        # the same sub-engines until the 200-iter cap. On CumulativeMerkleDrop
+        # this turned a 0.02 s build into an 18 s one (revokeRole).
+        #
+        # Cross-fn gates that live inside the modifier (the canonical case:
+        # ``onlyRole`` -> ``_checkRole`` -> ``if (!hasRole(...)) revert``)
+        # are still discovered by RevertDetector's recursive scan, and the
+        # predicate builder walks them through ``_build_chain_bindings``
+        # which spawns a fresh ProvenanceEngine for each link with the
+        # call-site bindings — that path is unaffected.
+        yield from self.function.nodes
 
     def _step_node(self, node: Any) -> bool:
         """Apply transfer functions to all IRs in this CFG node.

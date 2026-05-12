@@ -720,6 +720,84 @@ def test_leaf_value_source_cache_collapses_repeat_resolutions(tmp_path):
             )
 
 
+def test_shared_modifier_phi_does_not_pollute_function_parameter(tmp_path):
+    """Slither shares a modifier's SSA-IR across every caller, so the
+    modifier-entry Phi for a modifier parameter unions ALL call-site
+    arguments — one rvalue per function that uses the modifier. When
+    the modifier parameter shares a NAME with one of the function's
+    parameters (the canonical OZ ``modifier onlyRole(bytes32 role)``
+    + ``function revokeRole(bytes32 role, ...)`` shape), iterating
+    that Phi in the function's engine would pollute the function's
+    parameter provenance with every OTHER caller's argument.
+
+    Pre-fix: on CumulativeMerkleDrop this turned a 5-IR function into
+    a 200-iter-cap saturated build (~18 s/fn, 17 min for the contract).
+    The bindings of downstream ``_handle_internal_call`` invocations
+    kept growing — state variables from other call sites accreting —
+    so ``_sub_engine_memo`` keyed on ``(callee, bindings)`` missed
+    every iteration and the same sub-engines respawned 200×.
+
+    The fix: ``_iter_nodes`` no longer yields modifier bodies. The
+    cross-fn revert path (modifier → helper → ``if (!check) revert``)
+    is independently handled by ``RevertDetector`` + ``_build_chain_bindings``,
+    so we lose nothing.
+    """
+    sl = _compile(
+        tmp_path,
+        """
+        pragma solidity ^0.8.19;
+        contract C {
+            mapping(bytes32 => mapping(address => bool)) internal _roles;
+            bytes32 public constant DEFAULT_ADMIN_ROLE = 0x00;
+            bytes32 public constant OPERATOR_ROLE = keccak256("OPERATOR");
+            bytes32 public constant PAUSER_ROLE = keccak256("PAUSER");
+
+            modifier onlyRole(bytes32 role) {
+                require(_roles[role][msg.sender], "missing role");
+                _;
+            }
+
+            // Multiple users of the modifier — each contributes an rvalue
+            // to the modifier-entry Phi's lvalue named ``role``. Without
+            // the fix, processing this Phi inside ``revokeRole``'s engine
+            // unions PAUSER_ROLE / OPERATOR_ROLE / DEFAULT_ADMIN_ROLE into
+            // ``role``'s provenance, then propagates into downstream
+            // ``_grantRole(role, ...)`` bindings.
+            function pause() external onlyRole(PAUSER_ROLE) {}
+            function setOperator() external onlyRole(OPERATOR_ROLE) {}
+            function grantRole(bytes32 role, address account) external onlyRole(DEFAULT_ADMIN_ROLE) {
+                _roles[role][account] = true;
+            }
+            function revokeRole(bytes32 role, address account) external onlyRole(DEFAULT_ADMIN_ROLE) {
+                _roles[role][account] = false;
+            }
+        }
+        """,
+    )
+    fn = _function(sl, "revokeRole")
+    eng = ProvenanceEngine(fn)
+    eng.run()
+
+    role_sources = eng.provenance.get("role")
+    assert role_sources, "expected `role` parameter to be seeded"
+    # The function's ``role`` parameter is bound to its caller's
+    # argument — never reads a state variable. If we see the modifier-
+    # entry Phi's rvalues (PAUSER_ROLE / OPERATOR_ROLE state vars), the
+    # bug is back.
+    polluted_state_vars = {
+        s.state_variable_name
+        for s in role_sources
+        if s.kind == "state_variable"
+    }
+    assert not polluted_state_vars, (
+        f"`role`'s provenance was polluted by the modifier-shared Phi: "
+        f"state_variable sources leaked in = {polluted_state_vars}. "
+        "This is the CumulativeMerkleDrop 782 s build bug — the function's "
+        "parameter must NOT pick up rvalues from a modifier-entry Phi shared "
+        "across all callers of the modifier."
+    )
+
+
 def test_unpack_propagates_tuple_provenance(tmp_path):
     """After ``(bool ok, ) = target.call(data);``, the unpacked ``ok``
     SSA value inherits the tuple's full provenance set."""
