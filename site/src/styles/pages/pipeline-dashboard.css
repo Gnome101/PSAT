@@ -1,0 +1,282 @@
+/* ── Pipeline dashboard: protocol cards + completion tape ────────────────── */
+
+.protocol-card-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.protocol-card {
+  border: 1px solid rgba(148, 163, 184, 0.14);
+  border-radius: 14px;
+  background: linear-gradient(180deg, rgba(20, 26, 36, 0.88), rgba(15, 20, 28, 0.82));
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.protocol-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.protocol-card-title {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.protocol-card-name {
+  font-family: "Space Grotesk", system-ui, sans-serif;
+  font-size: 18px;
+  font-weight: 700;
+  color: #e2e8f0;
+  letter-spacing: -0.02em;
+  text-transform: capitalize;
+}
+
+.protocol-card-sub {
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #94a3b8;
+  font-weight: 600;
+}
+
+.protocol-card-chips {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.protocol-card-chips .chip {
+  font-size: 11px;
+  padding: 4px 10px;
+}
+
+.protocol-lane {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.protocol-lane-label {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: #64748b;
+  min-width: 56px;
+  font-family: "JetBrains Mono", monospace;
+}
+
+.protocol-lane-audit .protocol-lane-label {
+  color: #22d3ee;
+}
+
+.protocol-stage-pills {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  flex: 1;
+}
+
+.protocol-stage-empty {
+  font-size: 12px;
+  color: #475569;
+}
+
+.protocol-stage-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  background: rgba(13, 17, 25, 0.4);
+}
+
+.protocol-stage-pill-name {
+  text-transform: uppercase;
+  font-size: 10px;
+  letter-spacing: 0.1em;
+}
+
+.protocol-stage-pill-counts {
+  display: inline-flex;
+  gap: 4px;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 10.5px;
+  font-weight: 700;
+}
+
+.protocol-children {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 4px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(148, 163, 184, 0.08);
+}
+
+.protocol-child {
+  display: grid;
+  grid-template-columns: 8px minmax(120px, 1.2fr) auto minmax(0, 2fr) auto;
+  gap: 10px;
+  align-items: center;
+  padding: 6px 6px;
+  border-radius: 6px;
+  font-size: 12px;
+  color: #cbd5e1;
+}
+
+.protocol-child.failed {
+  cursor: pointer;
+}
+.protocol-child.failed:hover {
+  background: rgba(239, 68, 68, 0.06);
+}
+
+.protocol-child-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #f59e0b;
+}
+.protocol-child-dot.processing {
+  background: #f59e0b;
+  animation: pulse-bar 1.4s ease-in-out infinite;
+}
+.protocol-child-dot.failed {
+  background: #ef4444;
+}
+
+.protocol-child-name {
+  font-weight: 600;
+  color: #e2e8f0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.protocol-child-stage {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.protocol-child-detail {
+  font-size: 11px;
+  color: #94a3b8;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.protocol-child-time {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 10.5px;
+  color: #64748b;
+  white-space: nowrap;
+}
+
+.protocol-child-more {
+  padding-left: 22px;
+  font-size: 11px;
+  color: #64748b;
+  font-style: italic;
+}
+
+.protocol-child-error {
+  margin: 0;
+  padding: 10px 14px;
+  background: rgba(239, 68, 68, 0.08);
+  color: #fca5a5;
+  font-size: 11px;
+  font-family: "JetBrains Mono", monospace;
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 260px;
+  overflow: auto;
+  border-radius: 6px;
+  border: 1px solid rgba(239, 68, 68, 0.18);
+}
+
+/* ── Completion tape (recently completed jobs) ───────────────────────────── */
+
+.completion-tape {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 8px;
+}
+
+.completion-row {
+  display: grid;
+  grid-template-columns: 10px minmax(120px, 1.2fr) auto minmax(0, 2fr) auto;
+  gap: 10px;
+  align-items: center;
+  padding: 7px 8px;
+  border-radius: 6px;
+  font-size: 12px;
+  color: #cbd5e1;
+}
+.completion-row:hover {
+  background: rgba(148, 163, 184, 0.04);
+}
+.completion-row.failed:hover {
+  background: rgba(239, 68, 68, 0.06);
+}
+
+.completion-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #4ade80;
+}
+.completion-dot.failed {
+  background: #ef4444;
+}
+
+.completion-name {
+  font-weight: 600;
+  color: #e2e8f0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.completion-stage {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.completion-detail {
+  font-size: 11px;
+  color: #94a3b8;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.completion-time {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 10.5px;
+  color: #64748b;
+  white-space: nowrap;
+}
+
+

@@ -1,0 +1,391 @@
+/* ── Inline Control Surface embed on /company/:name ──────────────────────── */
+
+.company-surface-band {
+  max-width: 1440px;
+  margin: 0 auto;
+  width: 100%;
+  padding: 16px 72px 8px;
+}
+
+.company-surface-band-header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 12px;
+}
+
+.company-surface-band-title {
+  margin: 4px 0 0;
+  font-size: 18px;
+  font-weight: 700;
+  color: #e2e8f0;
+  letter-spacing: -0.02em;
+}
+
+.company-surface-band-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.company-surface-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  border-radius: 10px;
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  background: rgba(15, 23, 42, 0.55);
+  color: #cbd5e1;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  cursor: pointer;
+  transition: background 140ms ease, border-color 140ms ease, color 140ms ease,
+    transform 140ms ease;
+}
+
+.company-surface-action:hover {
+  background: rgba(45, 212, 191, 0.08);
+  border-color: rgba(45, 212, 191, 0.4);
+  color: #e2e8f0;
+  transform: translateY(-1px);
+}
+
+.company-surface-action svg {
+  flex-shrink: 0;
+  color: #2dd4bf;
+}
+
+.company-surface-action-count {
+  display: inline-block;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: rgba(45, 212, 191, 0.12);
+  color: #2dd4bf;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.company-surface-action.primary {
+  background: rgba(45, 212, 191, 0.14);
+  border-color: rgba(45, 212, 191, 0.45);
+  color: #2dd4bf;
+}
+
+.company-surface-action.primary svg {
+  color: #a7f3d0;
+}
+
+.company-surface-action.primary:hover {
+  background: rgba(45, 212, 191, 0.28);
+  color: #f0fdfa;
+}
+
+/* The real ProtocolSurface expects full-viewport height. Inside this
+   bounded container we override the 100vh assumptions so it fits the
+   allotted box. No props changes to ProtocolSurface needed. */
+.company-surface-embed {
+  position: relative;
+  height: 780px;
+  border-radius: 14px;
+  border: 1px solid rgba(148, 163, 184, 0.12);
+  background: #12151a;
+  overflow: hidden;
+}
+
+.company-surface-embed .ps-surface {
+  min-height: 100%;
+  height: 100%;
+  padding: 0;
+  border-radius: 0;
+}
+
+.company-surface-embed .ps-layout {
+  height: 100%;
+}
+
+.company-surface-embed .ps-sidebar {
+  max-height: 100%;
+}
+
+/* Overlays inside ProtocolSurface are positioned with `top: 16px`,
+   which now places them inside the embed container — good. */
+
+@media (max-width: 960px) {
+  .company-surface-band { padding: 12px 16px 4px; }
+  .company-surface-embed { height: 520px; }
+}
+
+/* ── Company pages — phone (≤720px) ──────────────────────────────────────── */
+@media (max-width: 720px) {
+  .company-hero-band { padding: 24px 16px 20px; }
+  .company-hero-title { font-size: 30px; }
+  .company-hero-eyebrow { font-size: 10px; }
+  .company-hero-subtitle { font-size: 12px; }
+
+  .company-score-band { padding: 20px 16px; gap: 22px; }
+  .company-score-left { gap: 20px; }
+  .company-score-left .company-hero-score-value { font-size: 64px; }
+  .company-score-left .company-hero-score-unit { font-size: 16px; }
+  .company-hero-grade-bar { width: 100%; }
+
+  .company-score-left .company-hero-stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 14px;
+  }
+  .company-score-left .company-hero-stat-value { font-size: 22px; }
+
+  .company-score-right { width: 100%; }
+  .company-score-right svg { max-width: 100%; height: auto; }
+
+  .company-surface-band { padding: 10px 14px 4px; }
+  .company-surface-band-header {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+  }
+  .company-surface-band-title { font-size: 14px; line-height: 1.3; }
+  .company-surface-band-actions { flex-wrap: wrap; gap: 6px; }
+  .company-surface-action {
+    padding: 7px 10px;
+    font-size: 11px;
+    border-radius: 8px;
+  }
+  .company-surface-action svg { width: 14px; height: 14px; }
+  .company-surface-action-count { font-size: 10px; padding: 1px 5px; }
+
+  .company-surface-embed { height: 460px; }
+  .company-page-rest { padding: 10px 12px 28px; gap: 12px; }
+
+  .proto-tabs {
+    overflow-x: auto;
+    flex-wrap: nowrap;
+    padding-bottom: 4px;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+  .proto-tabs::-webkit-scrollbar { display: none; }
+  .proto-tab {
+    flex-shrink: 0;
+    padding: 6px 10px;
+    font-size: 10px;
+  }
+}
+
+/* ── Company pages — small phone (≤480px) ────────────────────────────────── */
+@media (max-width: 480px) {
+  .company-hero-band { padding: 20px 14px 16px; }
+  .company-hero-title { font-size: 26px; }
+
+  .company-score-band { padding: 16px 14px; gap: 18px; }
+  .company-score-left .company-hero-score-value { font-size: 54px; }
+
+  .company-surface-band-actions .company-surface-action {
+    flex: 1 1 calc(50% - 6px);
+    justify-content: center;
+  }
+
+  .company-surface-embed { height: 380px; }
+  .company-page-rest { padding: 8px 10px 20px; }
+}
+
+/* Mobile-only label inside the sidebar handle — hidden by default */
+.ps-sidebar-mobile-label { display: none; }
+
+/* ── ProtocolSurface page (/company/:name/surface) — phone ───────────────── */
+@media (max-width: 720px) {
+  .ps-sidebar-mobile-label { display: block; }
+
+  .page:has(.ps-surface) .proto-tabs {
+    padding-left: 12px;
+    padding-right: 12px;
+  }
+  .ps-surface { padding: 12px; }
+  .ps-layout { height: calc(100vh - 120px); }
+
+  /* The right-side flyout is too complex on phones — hide it. The main
+   * sidebar (bottom sheet on mobile) carries everything that matters. */
+  .ps-sidebar-flyout,
+  .ps-sidebar-flyout-rail,
+  .ps-sidebar-flyout-toggle {
+    display: none !important;
+  }
+
+  /* Sidebar becomes a bottom sheet that slides up from the bottom. The
+   * sidebar's inline `width` style still applies, so we override it. */
+  .ps-sidebar {
+    position: fixed !important;
+    bottom: 0 !important;
+    left: 0 !important;
+    right: 0 !important;
+    top: auto !important;
+    width: 100vw !important;
+    min-width: 100vw !important;
+    max-width: 100vw !important;
+    height: 70vh !important;
+    max-height: 70vh !important;
+    border-left: none !important;
+    border-top: 1px solid rgba(226, 232, 240, 0.18);
+    border-radius: 16px 16px 0 0;
+    box-shadow: 0 -10px 30px rgba(0, 0, 0, 0.55);
+    flex-direction: column;
+    transition: height 220ms ease, transform 220ms ease;
+    z-index: 60;
+  }
+
+  /* Collapsed: just the drag handle peeking from the bottom. Tap to expand. */
+  .ps-sidebar.ps-sidebar-collapsed {
+    height: 48px !important;
+    max-height: 48px !important;
+  }
+
+  /* The handle column becomes a top row. Make it a wide drag/tap target. */
+  .ps-sidebar .ps-sidebar-handle {
+    flex-direction: row !important;
+    justify-content: center;
+    align-items: center;
+    width: 100%;
+    height: 36px;
+    min-height: 36px;
+    cursor: pointer;
+    background: rgba(15, 19, 27, 0.85);
+    border-bottom: 1px solid rgba(148, 163, 184, 0.14);
+    position: relative;
+  }
+  /* Add a "grabber bar" above the handle */
+  .ps-sidebar .ps-sidebar-handle::before {
+    content: "";
+    position: absolute;
+    top: 6px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 44px;
+    height: 4px;
+    border-radius: 2px;
+    background: rgba(226, 232, 240, 0.45);
+  }
+  .ps-sidebar .ps-sidebar-handle .ps-sidebar-toggle-collapse {
+    /* hide the > button on mobile — tap the handle instead */
+    display: none;
+  }
+  .ps-sidebar.ps-sidebar-collapsed .ps-sidebar-handle::before {
+    background: rgba(226, 232, 240, 0.65);
+  }
+  /* Visible label on the handle so tap-to-open/close is obvious */
+  .ps-sidebar .ps-sidebar-mobile-label {
+    position: absolute;
+    bottom: 6px;
+    left: 50%;
+    transform: translateX(-50%);
+    font-family: "JetBrains Mono", monospace;
+    font-size: 10.5px;
+    font-weight: 700;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: rgba(226, 232, 240, 0.85);
+    pointer-events: none;
+    white-space: nowrap;
+  }
+  .ps-sidebar.ps-sidebar-collapsed .ps-sidebar-handle {
+    height: 48px;
+    min-height: 48px;
+    background: rgba(45, 212, 191, 0.10);
+    border-bottom: 1px solid rgba(45, 212, 191, 0.30);
+  }
+  .ps-sidebar.ps-sidebar-collapsed .ps-sidebar-mobile-label {
+    color: rgba(167, 243, 208, 0.95);
+    bottom: 12px;
+  }
+
+  /* Vertical rail with the expand button on desktop becomes a tap target
+   * on mobile that fills the collapsed bar. */
+  .ps-sidebar .ps-sidebar-rail {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 48px;
+    border-left: none;
+    cursor: pointer;
+  }
+  .ps-sidebar .ps-sidebar-rail-button {
+    width: 100%;
+    height: 100%;
+    border: none;
+    background: transparent;
+    color: transparent;
+  }
+  .ps-sidebar:not(.ps-sidebar-collapsed) .ps-sidebar-rail {
+    display: none;
+  }
+
+  /* Hide content when collapsed (avoid layout-shift jank during transition) */
+  .ps-sidebar.ps-sidebar-collapsed .ps-sidebar-content {
+    display: none;
+  }
+
+  .ps-sidebar .ps-sidebar-content {
+    flex: 1 1 auto;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    min-height: 0;
+  }
+
+  /* The bottom-left filter pill bar overlaps the sheet — pin it to top-right
+   * area and let it scroll horizontally if it overflows. */
+  .ps-surface-toolbar-overlay {
+    bottom: auto !important;
+    top: 12px !important;
+    left: auto !important;
+    right: 12px !important;
+    max-width: calc(100vw - 24px);
+    padding: 6px 8px;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  /* Search modes (top-left) need to fit too */
+  .ps-search-modes-overlay {
+    top: 12px !important;
+    left: 12px !important;
+    right: auto !important;
+    max-width: calc(100vw - 24px);
+    padding: 5px 7px;
+  }
+  .ps-search-modes-overlay .ps-search-modes {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  /* Search overlay pinned just above the bottom sheet */
+  .ps-surface-search-overlay {
+    top: auto !important;
+    bottom: calc(48px + 12px) !important;
+    left: 12px !important;
+    right: 12px !important;
+    max-width: calc(100vw - 24px);
+  }
+
+  /* Embedded variant: make the bottom-sheet behavior work inside the
+   * `.company-surface-embed` container too (rather than fixed to viewport). */
+  .company-surface-embed .ps-sidebar {
+    position: absolute !important;
+  }
+  .company-surface-embed .ps-surface-toolbar-overlay,
+  .company-surface-embed .ps-search-modes-overlay,
+  .company-surface-embed .ps-surface-search-overlay {
+    /* Already constrained inside the embed since it has overflow:hidden */
+  }
+}
+
+/* Smaller phones — tighten the toolbar bar so it doesn't dominate */
+@media (max-width: 480px) {
+  .ps-surface-toolbar-overlay { padding: 4px 6px; }
+  .ps-search-modes-overlay { padding: 4px 6px; }
+  .ps-search-modes-overlay .ps-search-mode { padding: 2px 5px; font-size: 9.5px; }
+}

@@ -1,0 +1,41 @@
+/* ── Protocol logo (with initials fallback) ───────────────────────────────── */
+
+.protocol-logo {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 10px;
+  background: rgba(45, 212, 191, 0.08);
+  border: 1px solid rgba(148, 163, 184, 0.12);
+  color: #e2e8f0;
+  font-family: "Space Grotesk", system-ui, sans-serif;
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: 0;
+  flex-shrink: 0;
+  overflow: hidden;
+}
+
+.protocol-logo img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+}
+
+.protocol-logo.large {
+  width: 72px;
+  height: 72px;
+  border-radius: 16px;
+  font-size: 26px;
+}
+
+.protocol-logo.xlarge {
+  width: 120px;
+  height: 120px;
+  border-radius: 22px;
+  font-size: 42px;
+}
+

@@ -22,6 +22,7 @@ crytic-export/
 out/
 *.pen
 *.png
+!site/e2e/**/*.png
 .db_snapshots/
 .claude/
 info-dont-add-to-git.txt

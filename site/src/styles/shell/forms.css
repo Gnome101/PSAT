@@ -1,0 +1,52 @@
+input,
+select {
+  width: 100%;
+  border-radius: 12px;
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  background: rgba(10, 14, 20, 0.85);
+  color: var(--ink);
+  padding: 12px 14px;
+  transition: border-color 140ms ease, box-shadow 140ms ease, transform 140ms ease;
+}
+
+input::placeholder,
+select::placeholder {
+  color: rgba(148, 163, 184, 0.55);
+}
+
+input:focus,
+select:focus {
+  outline: none;
+  border-color: rgba(45, 212, 191, 0.55);
+  box-shadow: 0 0 0 4px rgba(45, 212, 191, 0.12);
+}
+
+button {
+  border: 0;
+  border-radius: 12px;
+  padding: 10px 16px;
+  background: linear-gradient(180deg, #34e4cc, #14b8a6);
+  color: #06110f;
+  cursor: pointer;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  transition: transform 140ms ease, box-shadow 140ms ease, opacity 140ms ease;
+  box-shadow: 0 10px 24px rgba(20, 184, 166, 0.22);
+}
+
+button:hover {
+  transform: translateY(-1px);
+}
+
+button:disabled {
+  opacity: 0.6;
+  cursor: default;
+  transform: none;
+}
+
+button.ghost {
+  background: transparent;
+  color: var(--ink);
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  box-shadow: none;
+}

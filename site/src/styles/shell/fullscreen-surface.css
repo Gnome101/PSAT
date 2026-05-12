@@ -1,0 +1,12 @@
+/* Fullscreen surface wrapper */
+.fullscreen-surface {
+  position: fixed;
+  top: 52px;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 10;
+  background: #12151a;
+  overflow: hidden;
+  color: #f8fafc;
+}

@@ -1,0 +1,380 @@
+/* ── Home hero ────────────────────────────────────────────────────────────── */
+
+.home-hero {
+  position: relative;
+  max-width: 1440px;
+  margin: 0 auto;
+  padding: 40px 24px 48px;
+  display: grid;
+  grid-template-columns: minmax(0, 0.65fr) minmax(0, 1.35fr);
+  gap: 40px;
+  align-items: center;
+  min-height: calc(100vh - 52px);
+}
+
+.home-hero-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.home-hero-eyebrow {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--teal);
+  margin: 0;
+}
+
+.home-hero-title {
+  font-family: "Space Grotesk", system-ui, sans-serif;
+  font-size: clamp(44px, 6vw, 72px);
+  line-height: 0.98;
+  letter-spacing: -0.04em;
+  margin: 0;
+  color: #f1f5f9;
+  font-weight: 700;
+}
+
+.home-hero-title .accent {
+  background: linear-gradient(90deg, #2dd4bf 0%, #22d3ee 50%, #818cf8 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.home-hero-lede {
+  color: #cbd5e1;
+  font-size: 17px;
+  line-height: 1.6;
+  max-width: 52ch;
+  margin: 0;
+}
+
+.home-hero-actions {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-top: 4px;
+}
+
+.home-hero-cta {
+  padding: 12px 20px;
+  border-radius: 12px;
+  font-size: 14px;
+}
+
+.home-hero-scroll {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: none;
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  color: #cbd5e1;
+  padding: 11px 18px;
+  border-radius: 12px;
+  font-size: 13px;
+  font-weight: 600;
+  box-shadow: none;
+  cursor: pointer;
+}
+
+.home-hero-scroll:hover {
+  background: rgba(148, 163, 184, 0.08);
+  color: #e2e8f0;
+  transform: none;
+}
+
+.home-hero-visual {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 27 / 13;
+  max-height: calc(100vh - 110px);
+  min-height: 360px;
+  display: flex;
+  align-items: stretch;
+  justify-content: stretch;
+}
+
+.home-hero-visual svg {
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+.home-hero-stats {
+  display: flex;
+  gap: 24px;
+  flex-wrap: wrap;
+  margin-top: 12px;
+}
+
+.home-hero-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.home-hero-stat-value {
+  font-family: "Space Grotesk", system-ui, sans-serif;
+  font-size: 24px;
+  font-weight: 700;
+  color: #e2e8f0;
+  line-height: 1;
+}
+
+.home-hero-stat-label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: #94a3b8;
+}
+
+@media (max-width: 900px) {
+  .home-hero {
+    grid-template-columns: 1fr;
+    gap: 24px;
+    padding: 32px 20px 48px;
+    min-height: auto;
+  }
+  .home-hero-visual {
+    aspect-ratio: 27 / 13;
+    max-height: 60vh;
+    min-height: 240px;
+    order: -1;
+  }
+}
+
+/* ── Protocol list (home, scroll target) — splash aesthetic ──────────────── */
+
+.home-protocol-section {
+  --bone: #f4ede1;
+  --bone-mute: rgba(244, 237, 225, 0.82);
+  --bone-faint: rgba(244, 237, 225, 0.52);
+  --void-deep: #03050a;
+  --void-warm: #1a2030;
+  --coral: #ff6b6b;
+  --coral-glow: rgba(255, 107, 107, 0.55);
+  --line-soft: rgba(244, 237, 225, 0.12);
+  --line-strong: rgba(244, 237, 225, 0.24);
+
+  position: relative;
+  isolation: isolate;
+  max-width: 1680px;
+  margin: 0 auto;
+  padding: 96px 48px 140px;
+  scroll-margin-top: 52px;
+  color: var(--bone);
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+}
+
+/* Full-bleed warm-void backdrop with a subtle top gradient that connects
+ * to the hero, plus a faint radial wash so the section isn't pure flat void.
+ * `isolation: isolate` on the section creates a stacking context so the
+ * negative z-index here stays behind content but ABOVE the body bg. */
+.home-protocol-section::before {
+  content: "";
+  position: absolute;
+  inset: 0 calc(50% - 50vw);
+  background: linear-gradient(
+    180deg,
+    var(--void-deep) 0,
+    #0b0f18 70px,
+    var(--void-warm) 180px,
+    #232a3c 360px
+  );
+  z-index: -1;
+}
+
+.home-protocol-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 24px;
+  margin-bottom: 36px;
+  padding-bottom: 18px;
+  border-bottom: 1px solid var(--line-strong);
+  flex-wrap: wrap;
+}
+
+.home-protocol-section .eyebrow {
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: 10.5px;
+  font-weight: 500;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--bone-faint);
+}
+
+.home-protocol-header h2 {
+  font-family: "Fraunces", Georgia, serif;
+  font-variation-settings: "opsz" 144, "SOFT" 30, "WONK" 0;
+  font-size: clamp(40px, 5vw, 72px);
+  font-weight: 320;
+  line-height: 1;
+  letter-spacing: -0.028em;
+  color: var(--bone);
+  margin: 10px 0 0;
+}
+
+.home-protocol-search {
+  min-width: 260px;
+  max-width: 360px;
+}
+
+.home-protocol-search input {
+  width: 100%;
+  padding: 11px 14px;
+  background: rgba(10, 13, 18, 0.55);
+  border: 1px solid var(--line-strong);
+  border-radius: 0;
+  color: var(--bone);
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: 13px;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.home-protocol-search input::placeholder {
+  color: var(--bone-faint);
+}
+.home-protocol-search input:focus {
+  outline: none;
+  border-color: var(--coral);
+  box-shadow: 0 0 0 1px var(--coral), 0 0 22px rgba(255, 107, 107, 0.22);
+}
+
+.home-protocol-list {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 0;
+}
+
+.home-protocol-row {
+  display: grid;
+  grid-template-columns: 56px 1fr auto auto;
+  gap: 24px;
+  align-items: center;
+  padding: 28px 28px;
+  background: rgba(244, 237, 225, 0.015);
+  border: none;
+  border-bottom: 1px solid var(--line-soft);
+  border-radius: 0;
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  box-shadow: none;
+  transition: background 140ms ease, border-color 140ms ease, padding 140ms ease;
+}
+
+.home-protocol-row:nth-child(even) {
+  background: rgba(244, 237, 225, 0.035);
+}
+
+.home-protocol-row:first-child {
+  border-top: 1px solid var(--line-soft);
+}
+
+.home-protocol-row:hover {
+  background: rgba(255, 107, 107, 0.06);
+  border-bottom-color: rgba(255, 107, 107, 0.55);
+  padding-left: 36px;
+}
+
+.home-protocol-row-name {
+  font-family: "Fraunces", Georgia, serif;
+  font-variation-settings: "opsz" 36, "SOFT" 60, "WONK" 0;
+  font-size: 28px;
+  font-weight: 400;
+  font-style: italic;
+  color: var(--bone);
+  letter-spacing: -0.012em;
+  text-transform: capitalize;
+}
+
+.home-protocol-row-count {
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--bone-faint);
+}
+
+.home-protocol-row-arrow {
+  color: var(--bone-faint);
+  font-size: 22px;
+  line-height: 1;
+  transition: transform 140ms ease, color 140ms ease;
+}
+
+.home-protocol-row:hover .home-protocol-row-arrow {
+  color: var(--coral);
+  transform: translateX(4px);
+}
+
+/* Standalone analyses table — match the same look */
+.home-protocol-section .panel {
+  background: transparent;
+  border: 1px solid var(--line-strong);
+  border-radius: 0;
+  padding: 22px;
+}
+.home-protocol-section .panel h3 {
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--bone-faint);
+  margin: 0 0 16px;
+}
+.home-protocol-section .runs-table-header {
+  display: flex;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--line-strong);
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: 10.5px;
+  font-weight: 500;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--bone-faint);
+}
+.home-protocol-section .runs-table-row {
+  display: flex;
+  padding: 14px;
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid var(--line-soft);
+  border-radius: 0;
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+  color: var(--bone);
+  transition: background 140ms ease;
+}
+.home-protocol-section .runs-table-row:hover {
+  background: rgba(255, 107, 107, 0.04);
+}
+.home-protocol-section .runs-cell-name {
+  font-family: "Fraunces", Georgia, serif;
+  font-style: italic;
+  font-size: 15px;
+  color: var(--bone);
+}
+.home-protocol-section .runs-cell-addr {
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: 12px;
+  color: var(--bone-faint);
+}
+
+.home-protocol-section .empty {
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: 13px;
+  color: var(--bone-faint);
+  padding: 40px 0;
+  text-align: center;
+}
+

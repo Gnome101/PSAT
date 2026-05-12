@@ -1,0 +1,30 @@
+import { FunctionPort } from "./FunctionPort.jsx";
+
+export function LaneColumn({ title, laneKey, items, onSelect, onNavigate, highlightedFunctionKey }) {
+  return (
+    <section className={`ps-lane ps-lane-${laneKey}`}>
+      <div className="ps-lane-header">
+        <span className="ps-lane-title">
+          <span>{title}</span>
+        </span>
+        <span>{items.length}</span>
+      </div>
+      <div className="ps-lane-body">
+        {items.length ? (
+          items.map((fnView) => (
+            <FunctionPort
+              key={fnView.key}
+              fnView={fnView}
+              orientation={laneKey}
+              onSelect={onSelect}
+              onNavigate={onNavigate}
+              highlighted={fnView.key === highlightedFunctionKey}
+            />
+          ))
+        ) : (
+          <div className="ps-lane-empty">No mapped functions</div>
+        )}
+      </div>
+    </section>
+  );
+}
