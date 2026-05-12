@@ -46,6 +46,8 @@ from __future__ import annotations
 import json
 import logging
 import os
+import time
+from datetime import datetime, timezone
 from typing import Any, Callable, Mapping
 
 from sqlalchemy import func, select, text
@@ -64,6 +66,35 @@ from db.storage import (
 logger = logging.getLogger(__name__)
 
 DEFAULT_CHAIN = "ethereum"
+
+
+def _builder_staleness_s() -> float:
+    """How long a ``status='building'`` row stays trusted as in-flight.
+
+    A worker that started a build longer ago than this is presumed dead
+    (process crash, SIGKILL on OOM, machine restart). The next caller
+    takes over the build. Default 15 minutes covers the worst observed
+    forge+Slither+predicate-pipeline run (~6.5 min on EtherFi contracts
+    in PR-79) with comfortable headroom; tunable via env for incident
+    response.
+    """
+    try:
+        return max(60.0, float(os.getenv("PSAT_MATERIALIZE_BUILDER_STALENESS_S", "900")))
+    except ValueError:
+        return 900.0
+
+
+def _wait_poll_interval_s() -> float:
+    """How long the loser sleeps between polls while waiting on a winner.
+
+    Short enough that a fast cache hit (~10s build) doesn't cost extra
+    latency; long enough that 100 waiting callers don't hammer the DB
+    advisory-lock space.
+    """
+    try:
+        return max(0.05, float(os.getenv("PSAT_MATERIALIZE_WAIT_POLL_INTERVAL_S", "1.0")))
+    except ValueError:
+        return 1.0
 
 
 def is_enabled() -> bool:
@@ -219,6 +250,15 @@ def hydrate_tracking_plan(row: ContractMaterialization) -> dict | None:
     return _hydrate(row, blob_key_attr="tracking_plan_blob_key", inline_attr="tracking_plan")
 
 
+def hydrate_predicate_trees(row: ContractMaterialization) -> dict | None:
+    """Load the row's predicate-tree artifact (semantic source of truth
+    for revert/auth guards). Returns None if the cache row predates the
+    predicate-pipeline migration (pre-c1d2e3f4a5b6) so callers can fall
+    back to rebuilding the artifact from the analysis dict if they need
+    mapping-writer enumeration."""
+    return _hydrate(row, blob_key_attr="predicate_trees_blob_key", inline_attr="predicate_trees")
+
+
 def _advisory_lock(session: Session, chain_norm: str, keccak_norm: str) -> None:
     """Take ``pg_advisory_xact_lock`` for the dedup key.
 
@@ -254,28 +294,36 @@ def materialize_or_wait(
     Three phases, each in its own short-lived transaction so no PG
     connection sits idle during ``builder()``:
 
-      1. **Ready check** — open a session, take the advisory lock for
-         ``(chain, bytecode_keccak)``, re-read the row. If ``status='ready'``,
-         return it. Otherwise commit (releasing the lock) and proceed.
+      1. **Ready check + claim** — open a session, take the advisory lock,
+         re-read the row. Branch on status:
+           * ``ready`` → return it.
+           * ``building`` + ``builder_started_at`` recent → release lock,
+             sleep, retry phase 1. This is the wait path: the loser blocks
+             on the winner instead of running a duplicate builder.
+           * ``building`` + stale (older than ``_builder_staleness_s``) →
+             upsert ``status='building'`` with our timestamp and proceed
+             to phase 2. Stale rows mean the prior worker crashed or was
+             SIGKILLed; we take over.
+           * no row, ``failed``, or legacy ``pending`` → upsert
+             ``status='building'``, set ``builder_started_at = NOW()``,
+             release lock, proceed to phase 2.
       2. **Build** — call ``builder()`` with no DB session held. The
-         builder returns a dict with at minimum ``contract_name``,
-         ``analysis``, ``tracking_plan``. Blob uploads (if storage is
-         configured) happen in this phase too — same idle-connection
-         concern, same fix.
+         bundle has ``contract_name``, ``analysis``, ``tracking_plan``,
+         and optionally ``predicate_trees``. Blob uploads (if storage
+         is configured) happen here too.
       3. **Write** — open a fresh session, take the advisory lock, recheck
-         (a concurrent caller may have written ``status='ready'`` while
-         our builder was running — we serve their bundle and drop ours),
-         else upsert this build's bundle to ``status='ready'``, commit.
+         (a concurrent fresh-takeover may have written ``status='ready'``
+         while our builder was running — serve theirs, drop ours), else
+         upsert to ``status='ready'``, commit.
 
-    Why split the lock: the original design held the lock across the
-    builder, which kept the PG connection idle for the 1-3 minutes a
-    real forge+Slither run takes. Neon's pooler-side SSL idle timeout
-    closes that connection mid-build, the final UPSERT raises
-    ``OperationalError``, and the cache row is never written — the
-    recursive resolver then falls back to rebuilding the same bytecode.
-    Dropping the lock between phases makes both transactions sub-second
-    so the timeout never fires; the recheck in phase 3 handles the rare
-    case where two callers raced through phase 1 and both built.
+    Why this shape: the original design released the lock between phase 1
+    and phase 2 to avoid keeping a PG connection idle for the multi-minute
+    builder (which trips Neon's pooler-side SSL idle timeout). But it
+    persisted *nothing* about in-flight builds, so two callers racing
+    through phase 1 within the build window both ran the builder — wasted
+    60-150 s of CPU per collision. The ``status='building'`` claim row +
+    ``builder_started_at`` lets the second caller wait on the first, while
+    the staleness check keeps a crashed worker from wedging the cache.
 
     On builder failure, a fresh session writes a ``status='failed'`` row
     with the exception text so an operator can triage, then re-raises.
@@ -285,24 +333,68 @@ def materialize_or_wait(
     blob key the bucket doesn't have.
     """
     chain_norm, addr_norm, keccak_norm = _normalize(chain, address, bytecode_keccak)
+    staleness_s = _builder_staleness_s()
+    poll_interval_s = _wait_poll_interval_s()
 
-    # ── Phase 1: ready check under a short-lived lock ──────────────
-    with SessionLocal() as session:
-        _advisory_lock(session, chain_norm, keccak_norm)
-        row = session.execute(
-            select(ContractMaterialization).where(
-                ContractMaterialization.chain == chain_norm,
-                ContractMaterialization.bytecode_keccak == keccak_norm,
+    # ── Phase 1: ready check / claim under a short-lived lock ──────
+    # Loop: a ``status='building'`` row from another caller sends us to
+    # sleep+retry until that caller transitions us to ``ready`` (cache
+    # hit return) or the row goes stale (we take over).
+    wait_deadline = time.monotonic() + staleness_s
+    while True:
+        with SessionLocal() as session:
+            _advisory_lock(session, chain_norm, keccak_norm)
+            row = session.execute(
+                select(ContractMaterialization).where(
+                    ContractMaterialization.chain == chain_norm,
+                    ContractMaterialization.bytecode_keccak == keccak_norm,
+                )
+            ).scalar_one_or_none()
+            if row is not None and row.status == "ready":
+                session.commit()
+                return row
+
+            if row is not None and row.status == "building":
+                started = row.builder_started_at
+                age_s = (
+                    (datetime.now(timezone.utc) - started).total_seconds() if started is not None else staleness_s + 1
+                )
+                if age_s < staleness_s and time.monotonic() < wait_deadline:
+                    # Active builder elsewhere — release the lock and poll.
+                    session.commit()
+                    time.sleep(poll_interval_s)
+                    continue
+                # Fall through: take over (insert/update our claim).
+                logger.info(
+                    "contract_materializations: taking over stale building row for %s:%s (age=%.1fs)",
+                    chain_norm,
+                    keccak_norm,
+                    age_s,
+                )
+
+            # Claim: upsert ``status='building'`` and record our start time.
+            now_dt = datetime.now(timezone.utc)
+            claim_stmt = pg_insert(ContractMaterialization).values(
+                chain=chain_norm,
+                bytecode_keccak=keccak_norm,
+                address=addr_norm,
+                status="building",
+                builder_started_at=now_dt,
+                error=None,
             )
-        ).scalar_one_or_none()
-        if row is not None and row.status == "ready":
+            claim_stmt = claim_stmt.on_conflict_do_update(
+                constraint="contract_materializations_pkey",
+                set_={
+                    "status": "building",
+                    "builder_started_at": now_dt,
+                    "address": claim_stmt.excluded.address,
+                    "error": None,
+                    "updated_at": func.now(),
+                },
+            )
+            session.execute(claim_stmt)
             session.commit()
-            return row
-        # Release the lock before the long-running builder. Concurrent
-        # callers may now proceed past their own phase-1 check; the
-        # phase-3 recheck is what collapses the resulting race to one
-        # stored bundle.
-        session.commit()
+            break
 
     # ── Phase 2: builder + blob uploads, no DB connection held ─────
     try:
@@ -316,10 +408,16 @@ def materialize_or_wait(
                 address=addr_norm,
                 status="failed",
                 error=err,
+                builder_started_at=None,
             )
             stmt = stmt.on_conflict_do_update(
                 constraint="contract_materializations_pkey",
-                set_={"status": "failed", "error": err, "updated_at": func.now()},
+                set_={
+                    "status": "failed",
+                    "error": err,
+                    "builder_started_at": None,
+                    "updated_at": func.now(),
+                },
             )
             session.execute(stmt)
             session.commit()
@@ -327,10 +425,13 @@ def materialize_or_wait(
 
     analysis_payload = bundle.get("analysis")
     tracking_plan_payload = bundle.get("tracking_plan")
+    predicate_trees_payload = bundle.get("predicate_trees")
     analysis_blob_key: str | None = None
     tracking_plan_blob_key: str | None = None
+    predicate_trees_blob_key: str | None = None
     analysis_inline: dict | None = analysis_payload if isinstance(analysis_payload, dict) else None
     tracking_plan_inline: dict | None = tracking_plan_payload if isinstance(tracking_plan_payload, dict) else None
+    predicate_trees_inline: dict | None = predicate_trees_payload if isinstance(predicate_trees_payload, dict) else None
 
     client = get_storage_client()
     if client is not None:
@@ -346,13 +447,17 @@ def materialize_or_wait(
             tracking_plan_blob_key = _blob_key(chain_norm, keccak_norm, "tracking_plan")
             _put_blob(client, tracking_plan_blob_key, tracking_plan_inline)
             tracking_plan_inline = None
+        if predicate_trees_inline is not None:
+            predicate_trees_blob_key = _blob_key(chain_norm, keccak_norm, "predicate_trees")
+            _put_blob(client, predicate_trees_blob_key, predicate_trees_inline)
+            predicate_trees_inline = None
 
     # ── Phase 3: write under a short-lived lock ────────────────────
     with SessionLocal() as session:
         _advisory_lock(session, chain_norm, keccak_norm)
 
-        # Recheck: a concurrent caller may have raced past phase 1 with
-        # us and committed first. Their bundle is keccak-equivalent
+        # Recheck: a stale-takeover caller may have raced past phase 1
+        # with us and committed first. Their bundle is keccak-equivalent
         # (same bytecode → same static analysis), so we serve it and
         # discard ours.
         existing = session.execute(
@@ -372,9 +477,12 @@ def materialize_or_wait(
             contract_name=bundle.get("contract_name"),
             analysis=analysis_inline,
             tracking_plan=tracking_plan_inline,
+            predicate_trees=predicate_trees_inline,
             analysis_blob_key=analysis_blob_key,
             tracking_plan_blob_key=tracking_plan_blob_key,
+            predicate_trees_blob_key=predicate_trees_blob_key,
             status="ready",
+            builder_started_at=None,
         )
         stmt = stmt.on_conflict_do_update(
             constraint="contract_materializations_pkey",
@@ -383,16 +491,24 @@ def materialize_or_wait(
                 "contract_name": stmt.excluded.contract_name,
                 "analysis": stmt.excluded.analysis,
                 "tracking_plan": stmt.excluded.tracking_plan,
+                "predicate_trees": stmt.excluded.predicate_trees,
                 "analysis_blob_key": stmt.excluded.analysis_blob_key,
                 "tracking_plan_blob_key": stmt.excluded.tracking_plan_blob_key,
+                "predicate_trees_blob_key": stmt.excluded.predicate_trees_blob_key,
                 "address": stmt.excluded.address,
                 "error": None,
+                "builder_started_at": None,
                 "materialized_at": func.now(),
                 "updated_at": func.now(),
             },
         )
         session.execute(stmt)
         session.commit()
+        # Phase 1's claim already loaded the row into the identity map
+        # with ``status='building'``; ``expire_all`` forces the next read
+        # to refetch the row's columns from Postgres so callers see the
+        # post-upsert state (``status='ready'``, predicate_trees, …).
+        session.expire_all()
 
         ready = session.execute(
             select(ContractMaterialization).where(

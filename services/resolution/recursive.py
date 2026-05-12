@@ -115,8 +115,15 @@ def _build_static_artifacts(
     effective_address: str,
     workspace_prefix: str,
 ) -> tuple[str, dict[str, Any], dict[str, Any], dict[str, Any] | None]:
-    """Run the expensive forge+Slither pipeline for *effective_address* and return
-    ``(contract_name, analysis, tracking_plan)``.
+    """Run the expensive forge+Slither+predicate pipeline for *effective_address*.
+
+    Returns ``(contract_name, analysis, tracking_plan, predicate_trees)``.
+    ``effects`` is also produced by the predicate pipeline but is not
+    plumbed back here: the recursive resolver doesn't consume it, and
+    the policy stage reads the per-job ``effects`` artifact written by
+    the static worker (propagated across same-bytecode jobs by
+    ``copy_static_cache``), so the materialization cache has no
+    consumer for it.
 
     Pulled out of ``_materialize_contract_artifacts`` so the cross-process
     cache can call this exact closure when it needs to populate the
@@ -143,13 +150,15 @@ def _materialize_with_cross_process_cache(
 ) -> tuple[str, dict[str, Any], dict[str, Any], dict[str, Any] | None]:
     """Consult the persistent contract_materializations table; build on miss.
 
+    Returns ``(contract_name, analysis, tracking_plan, predicate_trees)``.
+    ``predicate_trees`` round-trips through the cache so mapping-writer
+    enumeration stays functional on cache hits (pre-c1d2e3f4a5b6 the
+    builder dropped it and downstream silently disabled enumeration).
+
     Falls back to a direct ``_build_static_artifacts`` call when:
       * ``bytecode_keccak`` is None (we have nothing to key on);
       * the DB layer raises (e.g., the table doesn't exist in a
         fixture-isolated test, or the DB is unreachable).
-
-    The graceful-fallback path keeps the builder as the source of truth
-    when the cache layer is unavailable.
     """
     if not bytecode_keccak:
         return _build_static_artifacts(effective_address, workspace_prefix)
@@ -170,8 +179,13 @@ def _materialize_with_cross_process_cache(
     chain = os.getenv("PSAT_DEFAULT_CHAIN", "ethereum")
 
     def _builder() -> Mapping[str, Any]:
-        name, analysis, plan, _predicate_trees = _build_static_artifacts(effective_address, workspace_prefix)
-        return {"contract_name": name, "analysis": analysis, "tracking_plan": plan}
+        name, analysis, plan, predicate_trees = _build_static_artifacts(effective_address, workspace_prefix)
+        return {
+            "contract_name": name,
+            "analysis": analysis,
+            "tracking_plan": plan,
+            "predicate_trees": predicate_trees,
+        }
 
     try:
         row = cm.materialize_or_wait(
@@ -201,8 +215,13 @@ def _materialize_with_cross_process_cache(
     # downstream mutations leaking back into the ORM identity map.
     analysis = copy.deepcopy(cm.hydrate_analysis(row) or {})
     plan = copy.deepcopy(cm.hydrate_tracking_plan(row) or {})
+    # ``predicate_trees`` is absent on rows written before the
+    # c1d2e3f4a5b6 migration; hydrate returns None in that case and
+    # ``_mapping_writer_specs_from_predicate_trees`` short-circuits.
+    predicate_trees_cached = cm.hydrate_predicate_trees(row)
+    predicate_trees = copy.deepcopy(predicate_trees_cached) if predicate_trees_cached else None
     contract_name = row.contract_name or "Contract"
-    return contract_name, analysis, plan, None
+    return contract_name, analysis, plan, predicate_trees
 
 
 def _is_builder_exception(exc: BaseException) -> bool:
