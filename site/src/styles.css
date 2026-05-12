@@ -9745,6 +9745,7 @@ button.ps-audit-modal-aside-sha:hover {
 }
 .ms-c.covered { color: rgba(244, 237, 225, 0.30); }
 .ms-c.empty   { color: rgba(244, 237, 225, 0.12); }
+.ms-c.carved  { color: transparent; transition: color 0.4s ease; }
 .ms-c.num     { font-weight: 600; }
 .ms-c.num.n1  { color: #5db3ff; text-shadow: 0 0 5px rgba(93, 179, 255, 0.4); }
 .ms-c.num.n2  { color: #7eed7e; text-shadow: 0 0 5px rgba(126, 237, 126, 0.4); }

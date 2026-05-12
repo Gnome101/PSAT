@@ -1,19 +1,20 @@
 import React, { useEffect, useRef } from "react";
 
 /*
- * FractalMesh — continuous ASCII minesweeper background that becomes a real
- * playable game when clicked.
+ * FractalMesh — continuous ASCII minesweeper background that doubles as a
+ * playable game on click.
  *
- * Idle mode (default):
- *   PSAT auto-clicks every ~1.8s. Cascading reveals open regions, adjacent
- *   mines auto-flag with ⚑. Old revealed cells slowly re-cover so the loop
- *   never finishes — a self-sustaining sweep across the whole hero.
+ * Pattern mode (default):
+ *   The auto-clicker is replaced with a pattern cycle. Carved-out shapes
+ *   (BITCOIN / DEFI / SATOSHI / a low-res world map) are drawn into the
+ *   field of `0`s by setting selected cells to a transparent "carved"
+ *   state. Each pattern: draws → holds → fades back → next pattern.
  *
  * Play mode (after user clicks):
- *   Auto-play stops. Left-click reveals (and cascades), right-click toggles
- *   a flag. Click a mine and it explodes — all mines reveal, the board
- *   resets, and PSAT resumes auto-play after a short hold. After 25s of
- *   inactivity, the game returns to idle auto-play.
+ *   Pattern cycle stops. Left-click reveals (and cascades), right-click
+ *   toggles a flag. Click a mine and it explodes — all mines reveal, the
+ *   board resets, and pattern mode resumes after a short hold. After 25s
+ *   of inactivity in play mode, pattern mode resumes too.
  */
 
 const COLS = 200;
@@ -22,15 +23,83 @@ const CELL_W = 20;
 const CELL_H = 26;
 const MINE_DENSITY = 0.13;
 
-const CLICK_INTERVAL_MS = 1500;
-const AUTO_CLICKER_COUNT = 2; // multiple concurrent click streams
-const INITIAL_BURST_COUNT = 5; // simultaneous clicks across regions on mount
 const REVEAL_STAGGER_MS = 28;
-const RECOVER_MIN_AGE_MS = 14000;
-const RECOVER_PROB_PER_TICK = 0.025;
-const RECOVER_TICK_MS = 280;
 const IDLE_TIMEOUT_MS = 25000;
 const GAME_OVER_HOLD_MS = 2600;
+
+// Pattern cycle pacing
+const PATTERN_DRAW_STAGGER_MS = 6;   // ms between pattern cell reveals
+const PATTERN_HOLD_MS = 4500;         // how long the fully-drawn pattern stays
+const PATTERN_FADE_STAGGER_MS = 3;    // re-cover speed
+
+// 5x7 pixel font — uppercase + a few specials. `#` = on, `.` = off.
+const FONT_5x7 = {
+  A: [".###.", "#...#", "#...#", "#####", "#...#", "#...#", "#...#"],
+  B: ["####.", "#...#", "#...#", "####.", "#...#", "#...#", "####."],
+  C: [".###.", "#...#", "#....", "#....", "#....", "#...#", ".###."],
+  D: ["####.", "#...#", "#...#", "#...#", "#...#", "#...#", "####."],
+  E: ["#####", "#....", "#....", "####.", "#....", "#....", "#####"],
+  F: ["#####", "#....", "#....", "####.", "#....", "#....", "#...."],
+  H: ["#...#", "#...#", "#...#", "#####", "#...#", "#...#", "#...#"],
+  I: [".###.", "..#..", "..#..", "..#..", "..#..", "..#..", ".###."],
+  N: ["#...#", "##..#", "#.#.#", "#.#.#", "#.#.#", "#..##", "#...#"],
+  O: [".###.", "#...#", "#...#", "#...#", "#...#", "#...#", ".###."],
+  S: [".####", "#....", "#....", ".###.", "....#", "....#", "####."],
+  T: ["#####", "..#..", "..#..", "..#..", "..#..", "..#..", "..#.."],
+  " ": [".....", ".....", ".....", ".....", ".....", ".....", "....."],
+};
+
+function scaleBitmap(rows, scale) {
+  const out = [];
+  for (const row of rows) {
+    const expanded = row.split("").map((c) => c.repeat(scale)).join("");
+    for (let i = 0; i < scale; i++) out.push(expanded);
+  }
+  return out;
+}
+
+function renderText(text, scale) {
+  const baseRows = 7;
+  const rows = Array.from({ length: baseRows }, () => "");
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i].toUpperCase();
+    const glyph = FONT_5x7[ch] || FONT_5x7[" "];
+    for (let r = 0; r < baseRows; r++) {
+      rows[r] += glyph[r];
+      if (i < text.length - 1) rows[r] += ".";
+    }
+  }
+  return scaleBitmap(rows, scale);
+}
+
+// Hand-designed world map silhouette — Americas, Europe+Africa, Asia+Australia.
+const WORLD_MAP = [
+  "................................................................",
+  "...........#####.......#####...##......######...........###....",
+  "..........########..############.....###########.........####..",
+  "........############################.############.........###..",
+  "........#############################.###########..............",
+  ".........#############################...#######...............",
+  "..........###########################.......##.................",
+  "...........########################...........................",
+  "............######################................###..........",
+  ".............###################.................#####.........",
+  "...............##############.....................###..........",
+  "................##########.........................##..........",
+  ".................######............................##..........",
+  "..................####............................##...........",
+  "..................###..............................##..........",
+  "...................##........................................",
+  "................................................................",
+];
+
+// Pattern cycle definitions
+const PATTERNS = [
+  { name: "BITCOIN", bitmap: renderText("BITCOIN", 2) },
+  { name: "DEFI",    bitmap: renderText("DEFI", 3) },
+  { name: "SATOSHI", bitmap: renderText("SATOSHI", 2) },
+  { name: "WORLD",   bitmap: WORLD_MAP },
+];
 
 function rng(seed) {
   let s = seed | 0;
@@ -100,6 +169,37 @@ function cascadeReveal(start, get) {
   return order;
 }
 
+// Compute the grid-cell indices that make up a given pattern, centered.
+function patternCellIndices(bitmap) {
+  const h = bitmap.length;
+  const w = bitmap[0].length;
+  const ox = Math.floor((COLS - w) / 2);
+  const oy = Math.floor((ROWS - h) / 2);
+  const cells = [];
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      if (bitmap[y][x] === "#") {
+        const gx = ox + x;
+        const gy = oy + y;
+        if (gx >= 0 && gx < COLS && gy >= 0 && gy < ROWS) {
+          cells.push(gy * COLS + gx);
+        }
+      }
+    }
+  }
+  return cells;
+}
+
+// Shuffle in place (Fisher-Yates) so the reveal order looks organic
+// rather than line-by-line.
+function shuffle(arr, r) {
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(r() * (i + 1));
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+  return arr;
+}
+
 const CELL_DATA = makeEmptyCells();
 
 export default function FractalMesh() {
@@ -120,9 +220,18 @@ export default function FractalMesh() {
     }));
 
     const ctx = {
-      mode: "idle", // "idle" | "playing" | "gameover"
+      mode: "pattern", // "pattern" | "playing" | "gameover"
       lastUserActivity: 0,
       pendingTimers: [],
+    };
+
+    const patternCtx = {
+      idx: 0,
+      phase: "drawing", // "drawing" | "holding" | "fading"
+      cells: [],
+      cellPos: 0,
+      phaseStart: performance.now(),
+      shuffleRng: rng(987654321),
     };
 
     function setCell(idx, status, now) {
@@ -133,6 +242,9 @@ export default function FractalMesh() {
       if (status === "covered") {
         el.textContent = "0";
         el.className = "ms-c covered";
+      } else if (status === "carved") {
+        el.textContent = " ";
+        el.className = "ms-c carved";
       } else if (status === "revealed") {
         if (s.cell.mine) return;
         if (s.cell.count === 0) {
@@ -153,6 +265,56 @@ export default function FractalMesh() {
         el.className = "ms-c mine-revealed mine-explosion";
       }
     }
+
+    function recoverAll(now) {
+      for (let i = 0; i < state.length; i++) {
+        if (state[i].status !== "covered") setCell(i, "covered", now);
+      }
+    }
+
+    function startPattern(idx) {
+      const p = PATTERNS[idx];
+      patternCtx.cells = shuffle(patternCellIndices(p.bitmap), patternCtx.shuffleRng);
+      patternCtx.cellPos = 0;
+      patternCtx.phase = "drawing";
+      patternCtx.phaseStart = performance.now();
+    }
+
+    function patternTick(now) {
+      if (patternCtx.phase === "drawing") {
+        const elapsed = now - patternCtx.phaseStart;
+        const target = Math.floor(elapsed / PATTERN_DRAW_STAGGER_MS);
+        while (patternCtx.cellPos < patternCtx.cells.length && patternCtx.cellPos < target) {
+          const idx = patternCtx.cells[patternCtx.cellPos];
+          if (state[idx].status === "covered") setCell(idx, "carved", now);
+          patternCtx.cellPos++;
+        }
+        if (patternCtx.cellPos >= patternCtx.cells.length) {
+          patternCtx.phase = "holding";
+          patternCtx.phaseStart = now;
+        }
+      } else if (patternCtx.phase === "holding") {
+        if (now - patternCtx.phaseStart > PATTERN_HOLD_MS) {
+          patternCtx.phase = "fading";
+          patternCtx.phaseStart = now;
+          patternCtx.cellPos = 0;
+        }
+      } else if (patternCtx.phase === "fading") {
+        const elapsed = now - patternCtx.phaseStart;
+        const target = Math.floor(elapsed / PATTERN_FADE_STAGGER_MS);
+        while (patternCtx.cellPos < patternCtx.cells.length && patternCtx.cellPos < target) {
+          const idx = patternCtx.cells[patternCtx.cellPos];
+          if (state[idx].status === "carved") setCell(idx, "covered", now);
+          patternCtx.cellPos++;
+        }
+        if (patternCtx.cellPos >= patternCtx.cells.length) {
+          patternCtx.idx = (patternCtx.idx + 1) % PATTERNS.length;
+          startPattern(patternCtx.idx);
+        }
+      }
+    }
+
+    startPattern(0);
 
     function startCascade(idx, autoFlag) {
       const cell = state[idx].cell;
@@ -197,80 +359,34 @@ export default function FractalMesh() {
       }
     }
 
-    function autoTick() {
-      if (ctx.mode !== "idle") return;
-      const candidates = [];
-      for (let i = 0; i < state.length; i++) {
-        const s = state[i];
-        if (s.status === "covered" && !s.cell.mine) candidates.push(i);
-      }
-      if (!candidates.length) return;
-      const idx = candidates[Math.floor(Math.random() * candidates.length)];
-      startCascade(idx, true);
-    }
-
-    // Pick a random covered non-mine cell within a bounded grid region.
-    function pickCoveredInRegion(xMin, xMax, yMin, yMax) {
-      const candidates = [];
-      for (let y = yMin; y < yMax; y++) {
-        for (let x = xMin; x < xMax; x++) {
-          const i = y * COLS + x;
-          const s = state[i];
-          if (s && s.status === "covered" && !s.cell.mine) candidates.push(i);
-        }
-      }
-      if (!candidates.length) return -1;
-      return candidates[Math.floor(Math.random() * candidates.length)];
-    }
-
-    // Initial salvo — fire several clicks simultaneously across the grid so
-    // the page fills in quickly on first load instead of slowly trickling.
-    function initialBurst() {
-      const regions = [];
-      const cols = Math.ceil(Math.sqrt(INITIAL_BURST_COUNT));
-      const rows = Math.ceil(INITIAL_BURST_COUNT / cols);
-      for (let ry = 0; ry < rows; ry++) {
-        for (let rx = 0; rx < cols; rx++) {
-          if (regions.length >= INITIAL_BURST_COUNT) break;
-          regions.push({
-            xMin: Math.floor((rx / cols) * COLS),
-            xMax: Math.floor(((rx + 1) / cols) * COLS),
-            yMin: Math.floor((ry / rows) * ROWS),
-            yMax: Math.floor(((ry + 1) / rows) * ROWS),
-          });
-        }
-      }
-      regions.forEach((r) => {
-        const idx = pickCoveredInRegion(r.xMin, r.xMax, r.yMin, r.yMax);
-        if (idx >= 0) startCascade(idx, true);
-      });
-    }
-    initialBurst();
-
     function gameOver(triggeredIdx) {
       ctx.mode = "gameover";
       const now = performance.now();
-      // Reveal all mines.
       for (let i = 0; i < state.length; i++) {
         if (state[i].cell.mine) {
           setCell(i, i === triggeredIdx ? "mine-explosion" : "mine-revealed", now);
         }
       }
-      // After hold, regenerate the board and resume idle auto-play.
       const t = setTimeout(() => {
         getCell = fillBoard(CELL_DATA, Math.floor(Math.random() * 1e9));
         const resetNow = performance.now();
         for (let i = 0; i < state.length; i++) {
           setCell(i, "covered", resetNow);
         }
-        ctx.mode = "idle";
+        ctx.mode = "pattern";
+        startPattern(patternCtx.idx);
       }, GAME_OVER_HOLD_MS);
       ctx.pendingTimers.push(t);
     }
 
     function noteUserActivity() {
       ctx.lastUserActivity = performance.now();
-      if (ctx.mode === "idle") ctx.mode = "playing";
+      if (ctx.mode === "pattern") {
+        // Switching out of pattern mode — clear any carved cells so the
+        // game starts on a clean covered board.
+        recoverAll(performance.now());
+        ctx.mode = "playing";
+      }
     }
 
     function handleClick(e) {
@@ -280,7 +396,7 @@ export default function FractalMesh() {
       const idx = parseInt(cellEl.dataset.idx, 10);
       noteUserActivity();
       const s = state[idx];
-      if (s.status === "flagged") return; // protect flags from accidental click
+      if (s.status === "flagged") return;
       if (s.status !== "covered") return;
       if (s.cell.mine) {
         gameOver(idx);
@@ -305,40 +421,16 @@ export default function FractalMesh() {
     root.addEventListener("click", handleClick);
     root.addEventListener("contextmenu", handleContextMenu);
 
-    // Multiple concurrent auto-clickers — staggered start so they fire on
-    // different beats, multiplying the activity rate.
-    const autoTimers = [];
-    for (let i = 0; i < AUTO_CLICKER_COUNT; i++) {
-      const offset = (i * CLICK_INTERVAL_MS) / AUTO_CLICKER_COUNT;
-      const t = setTimeout(() => {
-        autoTick();
-        const interval = setInterval(autoTick, CLICK_INTERVAL_MS);
-        autoTimers.push(interval);
-      }, offset);
-      autoTimers.push(t);
-    }
-
     let raf;
-    let lastRecoverTick = 0;
     function tick(now) {
-      // Re-cover (idle only)
-      if (ctx.mode === "idle" && now - lastRecoverTick > RECOVER_TICK_MS) {
-        lastRecoverTick = now;
-        for (let i = 0; i < state.length; i++) {
-          const s = state[i];
-          if (s.status === "covered" || s.status === "mine-revealed" || s.status === "mine-explosion") continue;
-          const age = now - s.revealedAt;
-          if (age > RECOVER_MIN_AGE_MS && Math.random() < RECOVER_PROB_PER_TICK) {
-            setCell(i, "covered", now);
-          }
-        }
+      if (ctx.mode === "pattern") {
+        patternTick(now);
+      } else if (ctx.mode === "playing" && now - ctx.lastUserActivity > IDLE_TIMEOUT_MS) {
+        // Idle timeout — clear board and resume pattern cycle
+        recoverAll(now);
+        ctx.mode = "pattern";
+        startPattern(patternCtx.idx);
       }
-
-      // Idle timeout — return to idle after inactivity
-      if (ctx.mode === "playing" && now - ctx.lastUserActivity > IDLE_TIMEOUT_MS) {
-        ctx.mode = "idle";
-      }
-
       raf = requestAnimationFrame(tick);
     }
     raf = requestAnimationFrame(tick);
@@ -346,10 +438,6 @@ export default function FractalMesh() {
     return () => {
       root.removeEventListener("click", handleClick);
       root.removeEventListener("contextmenu", handleContextMenu);
-      autoTimers.forEach((t) => {
-        clearInterval(t);
-        clearTimeout(t);
-      });
       cancelAnimationFrame(raf);
       ctx.pendingTimers.forEach(clearTimeout);
     };
