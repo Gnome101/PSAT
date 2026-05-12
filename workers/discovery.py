@@ -130,6 +130,12 @@ class DiscoveryWorker(BaseWorker):
             audit_result_raw: dict | None = unified["audits"]
             discovery_meta = unified["meta"]
         except Exception as exc:
+            record_degraded(
+                phase="unified_discovery",
+                exc=exc,
+                context={"company": company, "chain": chain},
+                include_traceback=True,
+            )
             logger.warning("Job %s: unified discovery failed, falling back to legacy search: %s", job.id, exc)
             inventory = search_protocol_inventory(company, chain=chain)
             audit_result_raw = None
