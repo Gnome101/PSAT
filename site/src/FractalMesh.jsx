@@ -24,8 +24,10 @@ const MINE_DENSITY = 0.13;
 // 2× the original baseline
 const CLICK_INTERVAL_MS = 750;
 const AUTO_CLICKER_COUNT = 2;
-const INITIAL_BURST_COUNT = 5;
 const REVEAL_STAGGER_MS = 14;
+// Auto-clicker sweeps as a wave from left to right.
+const WAVE_BAND = 4;       // pick cells within ±N cols of the wave's leading edge
+const WAVE_STEP = 6;       // how many cols the wave advances per click
 
 const RECOVER_MIN_AGE_MS = 14000;
 const RECOVER_PROB_PER_TICK = 0.025;
@@ -124,6 +126,7 @@ export default function FractalMesh() {
       mode: "idle", // "idle" | "playing" | "gameover"
       lastUserActivity: 0,
       pendingTimers: [],
+      waveX: 0,
     };
 
     function setCell(idx, status, now) {
@@ -198,52 +201,26 @@ export default function FractalMesh() {
       }
     }
 
+    // Auto-clicker sweeps left → right as a wave. Each tick picks a covered
+    // non-mine cell in the column band around the wave's leading edge.
     function autoTick() {
       if (ctx.mode !== "idle") return;
+      const xCenter = ctx.waveX % COLS;
+      const xMin = Math.max(0, xCenter - WAVE_BAND);
+      const xMax = Math.min(COLS - 1, xCenter + WAVE_BAND);
       const candidates = [];
-      for (let i = 0; i < state.length; i++) {
-        const s = state[i];
-        if (s.status === "covered" && !s.cell.mine) candidates.push(i);
-      }
-      if (!candidates.length) return;
-      const idx = candidates[Math.floor(Math.random() * candidates.length)];
-      startCascade(idx, true);
-    }
-
-    function pickCoveredInRegion(xMin, xMax, yMin, yMax) {
-      const candidates = [];
-      for (let y = yMin; y < yMax; y++) {
-        for (let x = xMin; x < xMax; x++) {
+      for (let y = 0; y < ROWS; y++) {
+        for (let x = xMin; x <= xMax; x++) {
           const i = y * COLS + x;
           const s = state[i];
           if (s && s.status === "covered" && !s.cell.mine) candidates.push(i);
         }
       }
-      if (!candidates.length) return -1;
-      return candidates[Math.floor(Math.random() * candidates.length)];
+      ctx.waveX = (ctx.waveX + WAVE_STEP) % COLS;
+      if (!candidates.length) return;
+      const idx = candidates[Math.floor(Math.random() * candidates.length)];
+      startCascade(idx, true);
     }
-
-    function initialBurst() {
-      const regions = [];
-      const cols = Math.ceil(Math.sqrt(INITIAL_BURST_COUNT));
-      const rows = Math.ceil(INITIAL_BURST_COUNT / cols);
-      for (let ry = 0; ry < rows; ry++) {
-        for (let rx = 0; rx < cols; rx++) {
-          if (regions.length >= INITIAL_BURST_COUNT) break;
-          regions.push({
-            xMin: Math.floor((rx / cols) * COLS),
-            xMax: Math.floor(((rx + 1) / cols) * COLS),
-            yMin: Math.floor((ry / rows) * ROWS),
-            yMax: Math.floor(((ry + 1) / rows) * ROWS),
-          });
-        }
-      }
-      regions.forEach((r) => {
-        const idx = pickCoveredInRegion(r.xMin, r.xMax, r.yMin, r.yMax);
-        if (idx >= 0) startCascade(idx, true);
-      });
-    }
-    initialBurst();
 
     function gameOver(triggeredIdx) {
       ctx.mode = "gameover";
