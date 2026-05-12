@@ -35,6 +35,7 @@ jobs:
         uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
 
       - name: Deploy to production
+        id: deploy
         # Runtime secrets are managed manually via `fly secrets set -a psat ...`; this workflow doesn't touch them.
         # GIT_SHA is baked into the image so /api/version can return it for post-deploy smoke checks.
         run: |
@@ -89,10 +90,10 @@ jobs:
 
       - name: Rollback prod on smoke failure
         # Re-deploy the previous successful release's image. Only fires when one of the steps
-        # above (health, SHA, smoke) failed — the deploy itself is already done, so this is a
-        # roll-forward to the prior image, not a mid-flight abort.
+        # after deploy (health, SHA, smoke) failed. If flyctl deploy itself fails,
+        # release_command aborts before rolling traffic and there is nothing to roll back.
         # `flyctl releases` has no first-class `rollback` subcommand; --image is the canonical path.
-        if: failure()
+        if: failure() && steps.deploy.outcome == 'success'
         run: |
           echo "::warning::Smoke failed — rolling back psat to previous release"
           PREV_IMAGE=$(flyctl releases -a psat --json \
