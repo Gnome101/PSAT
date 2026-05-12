@@ -12,11 +12,15 @@ kill_timeout = 30
 [env]
   PORT = "8000"
   PYTHONUNBUFFERED = "1"
-  # Bumped from start_workers.sh defaults (2/1). Sized for the workers VM
+  # Bumped from start_workers.sh defaults (2/1/1). Sized for the workers VM
   # (shared-cpu-8x:16GB) — 8 cores fit ~12 always-on Python procs plus
-  # forge subprocess bursts without queueing.
+  # forge subprocess bursts without queueing. Policy bumped to 3 procs ×
+  # K=2 (=6 concurrent jobs) now that the static-stage predicate fix has
+  # lifted CPU saturation and policy is the next downstream bottleneck.
   PSAT_STATIC_WORKERS = "3"
   PSAT_RESOLUTION_WORKERS = "2"
+  PSAT_POLICY_WORKERS = "3"
+  PSAT_POLICY_JOB_CONCURRENCY = "2"
 
 # One-shot schema migration in a temporary machine. Runs once per
 # deploy, before any long-lived machine boots — so the four process
