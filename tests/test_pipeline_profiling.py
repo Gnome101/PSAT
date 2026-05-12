@@ -59,7 +59,13 @@ class _StubFn:
 class _StubContract:
     def __init__(self, name: str, fns: list[_StubFn]) -> None:
         self.name = name
+        # ``functions_entry_points`` is the iteration target after the
+        # AccessControl-override dedup fix (see
+        # ``tests/test_predicate_artifacts_entry_point_dedup.py``).
+        # The stub exposes both attrs so an accidental revert to
+        # ``contract.functions`` still finds the test fixtures.
         self.functions = fns
+        self.functions_entry_points = fns
 
 
 def test_predicate_summary_emits_structured_log_with_top_slow_functions(caplog, monkeypatch):

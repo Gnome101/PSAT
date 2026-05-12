@@ -127,7 +127,18 @@ def build_predicate_artifacts_with_pause_info(
     try:
         trees: dict[str, PredicateTree] = {}
         check_trees: dict[str, PredicateTree] = {}
-        for fn in getattr(contract, "functions", []) or []:
+        # ``functions_entry_points`` is the deduped surface: for an
+        # overridden virtual function (every OZ AccessControl method on a
+        # contract that inherits it), Slither's ``functions`` returns
+        # *both* the shadowed base ``Function`` object and the override
+        # — same ``full_name``, different ``id`` — and the predicate
+        # builder used to run to completion on both, with only the
+        # last-write-wins write to ``trees[full_name]`` surviving.
+        # On CumulativeMerkleDrop that wasted ~146 s per contract
+        # (grantRole base = 69 s + revokeRole base = 77 s, both
+        # discarded). Entry points are the API surface we report on
+        # anyway, so this is the right iteration target.
+        for fn in getattr(contract, "functions_entry_points", []) or []:
             if not _is_externally_callable(fn):
                 continue
             fn_started = time.monotonic()
