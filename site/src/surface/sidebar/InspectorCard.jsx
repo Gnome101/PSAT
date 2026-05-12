@@ -86,7 +86,11 @@ export function InspectorCard({ selected, onNavigate }) {
           </div>
         ) : (
           <p className="ps-inspector-empty">
-            {selected.authorityPublic ? "This function is marked public in the authority state." : "No controlling principal was resolved for this path."}
+            {selected.authorityPublic
+              ? "This function is marked public in the authority state."
+              : selected.guard.kind === "resolved_empty"
+                ? "No active principal can call this path right now."
+                : "No controlling principal was resolved for this path."}
           </p>
         )}
       </div>

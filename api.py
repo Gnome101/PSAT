@@ -26,6 +26,7 @@ from routers import (
     jobs,
     meta,
     monitored,
+    predicate_capabilities,
     protocols,
     spa,
     watched_proxies,
@@ -111,6 +112,7 @@ app.include_router(protocols.router)
 app.include_router(monitored.router)
 app.include_router(address_labels.router)
 app.include_router(agent.router)
+app.include_router(predicate_capabilities.router)
 # SPA catch-all MUST be last - its /{full_path:path} would otherwise
 # swallow any /api/* route registered after it.
 app.include_router(spa.router)

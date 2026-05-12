@@ -23,9 +23,10 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
+from sqlalchemy import Table
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -53,18 +54,15 @@ def _isolated_contract_materializations(monkeypatch):
 
     test_url = os.environ.get("TEST_DATABASE_URL")
     if not test_url:
-        # No test DB configured — let the cross-process layer fall through
-        # to the dev DB. The keccak-collision risk is real but only matters
-        # when the contributor runs this file by itself; CI always sets
-        # TEST_DATABASE_URL.
-        yield
-        return
+        pytest.skip("TEST_DATABASE_URL not set")
 
     test_engine = create_engine(test_url)
     test_factory = sessionmaker(bind=test_engine, class_=Session, expire_on_commit=False)
     monkeypatch.setattr("db.contract_materializations.SessionLocal", test_factory)
 
     from db.models import ContractMaterialization
+
+    cast(Table, ContractMaterialization.__table__).create(test_engine, checkfirst=True)
 
     with test_factory() as cleanup_session:
         cleanup_session.query(ContractMaterialization).delete()
@@ -93,13 +91,14 @@ def _patch_pipeline(monkeypatch, *, scaffold_calls, collect_calls, snapshot_call
         project_dir.mkdir(parents=True, exist_ok=True)
         return project_dir
 
-    def _collect(_project_dir):
+    def _collect_with_artifacts(_project_dir):
         collect_calls.append(_project_dir)
-        return {
+        analysis = {
             "subject": {"address": "0xabc", "name": "TestContract"},
             "functions": [],
             "state_vars": [],
         }
+        return analysis, None, None
 
     def _build_plan(_analysis):
         return {"contract_address": "0xabc", "controllers": []}
@@ -114,7 +113,7 @@ def _patch_pipeline(monkeypatch, *, scaffold_calls, collect_calls, snapshot_call
     monkeypatch.setattr("services.discovery.classifier.classify_single", _classify)
     monkeypatch.setattr(recursive, "fetch", _fetch)
     monkeypatch.setattr(recursive, "scaffold", _scaffold)
-    monkeypatch.setattr(recursive, "collect_contract_analysis", _collect)
+    monkeypatch.setattr(recursive, "collect_contract_analysis_with_artifacts", _collect_with_artifacts)
     monkeypatch.setattr(recursive, "build_control_tracking_plan", _build_plan)
     monkeypatch.setattr(recursive, "build_control_snapshot", _build_snapshot)
     monkeypatch.setattr(recursive, "_build_effective_permissions", _build_perms)

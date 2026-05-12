@@ -95,7 +95,6 @@ def test_build_control_tracking_plan_uses_event_watch_when_available(tmp_path):
         ],
         "writer_functions": ["setAuthority(AuthorityLike)"],
     }
-    assert plan["tracked_policies"] == []
 
 
 def test_build_control_tracking_plan_falls_back_to_state_only(tmp_path):
@@ -113,31 +112,6 @@ def test_build_control_tracking_plan_falls_back_to_state_only(tmp_path):
     assert owner["event_watch"] is None
     assert owner["polling_fallback"]["cadence"] == "state_only"
     assert owner["polling_fallback"]["polling_sources"] == ["owner"]
-    assert plan["tracked_policies"] == []
-
-
-def test_build_control_tracking_plan_includes_can_call_policy_events(tmp_path):
-    project_dir = _write_project(
-        tmp_path,
-        "RolesAuthorityPolicy",
-        _fixture_source("tracking/roles_authority_policy.sol"),
-    )
-    analysis = collect_contract_analysis(project_dir)
-
-    plan = build_control_tracking_plan(analysis)
-
-    policy = next(item for item in plan["tracked_policies"] if item["label"] == "canCall policy")
-    assert policy["policy_function"] == "canCall(address,address,bytes4)"
-    assert policy["tracked_state_targets"] == [
-        "getRolesWithCapability",
-        "getUserRoles",
-        "isCapabilityPublic",
-    ]
-    assert {event["signature"] for event in policy["event_watch"]["events"]} == {
-        "PublicCapabilityUpdated(address,bytes4,bool)",
-        "RoleCapabilityUpdated(uint8,address,bytes4,bool)",
-        "UserRoleUpdated(address,uint8,bool)",
-    }
 
 
 def test_build_control_tracking_plan_from_dict_matches_fixture():
@@ -156,6 +130,13 @@ def test_build_control_tracking_plan_from_dict_matches_fixture():
                 "label": "owner",
                 "source": "owner",
                 "kind": "state_variable",
+                "read_spec": {
+                    "strategy": "getter_call",
+                    "target": "owner",
+                    "kind": "state_variable",
+                    "state_variable_name": "owner",
+                    "type": "address",
+                },
                 "tracking_mode": "event_plus_state",
                 "writer_functions": [
                     {
@@ -192,7 +173,6 @@ def test_build_control_tracking_plan_from_dict_matches_fixture():
                 "notes": ["Monitor associated events for low-latency detection and confirm state via RPC."],
             }
         ],
-        "policy_tracking": [],
     }
 
     plan = build_control_tracking_plan(cast(ContractAnalysis, analysis))
@@ -201,4 +181,160 @@ def test_build_control_tracking_plan_from_dict_matches_fixture():
     event_watch = plan["tracked_controllers"][0]["event_watch"]
     assert event_watch is not None
     assert event_watch["events"][0]["name"] == "OwnershipTransferred"
-    assert plan["tracked_policies"] == []
+
+
+def test_build_control_tracking_plan_filters_non_controller_runtime_reads():
+    """Only address-like state and role identifiers should reach runtime resolution."""
+    base_target = {
+        "tracking_mode": "state_only",
+        "writer_functions": [],
+        "associated_events": [],
+        "polling_sources": [],
+        "notes": [],
+    }
+    analysis = {
+        "schema_version": "0.1",
+        "subject": {
+            "address": "0x1111111111111111111111111111111111111111",
+            "name": "Example",
+            "compiler_version": "v0.8.19",
+            "source_verified": True,
+        },
+        "controller_tracking": [
+            {
+                **base_target,
+                "controller_id": "state_variable:owner",
+                "label": "owner",
+                "source": "owner",
+                "kind": "state_variable",
+                "read_spec": {
+                    "strategy": "getter_call",
+                    "target": "owner",
+                    "kind": "state_variable",
+                    "state_variable_name": "owner",
+                    "type": "address",
+                },
+            },
+            {
+                **base_target,
+                "controller_id": "state_variable:paused",
+                "label": "paused",
+                "source": "paused",
+                "kind": "state_variable",
+                "read_spec": {
+                    "strategy": "getter_call",
+                    "target": "paused",
+                    "kind": "state_variable",
+                    "state_variable_name": "paused",
+                    "type": "bool",
+                },
+            },
+            {
+                **base_target,
+                "controller_id": "state_variable:redemptionManager",
+                "label": "redemptionManager",
+                "source": "redemptionManager",
+                "kind": "state_variable",
+                "read_spec": {
+                    "strategy": "getter_call",
+                    "target": "redemptionManager",
+                    "kind": "state_variable",
+                    "state_variable_name": "redemptionManager",
+                    "type": "IRedemptionManager",
+                },
+            },
+            {
+                **base_target,
+                "controller_id": "state_variable:minters",
+                "label": "minters",
+                "source": "minters",
+                "kind": "state_variable",
+                "read_spec": {
+                    "strategy": "getter_call",
+                    "target": "minters",
+                    "kind": "state_variable",
+                    "state_variable_name": "minters",
+                    "type": "mapping(address => bool)",
+                },
+            },
+            {
+                **base_target,
+                "controller_id": "state_variable:accountantState",
+                "label": "accountantState",
+                "source": "accountantState",
+                "kind": "state_variable",
+                "read_spec": {
+                    "strategy": "getter_call",
+                    "target": "accountantState",
+                    "kind": "state_variable",
+                    "state_variable_name": "accountantState",
+                    "type": "Example.AccountantState",
+                    "type_kind": "struct",
+                    "components": [
+                        {
+                            "name": "payoutAddress",
+                            "type": "address",
+                            "abi_type": "address",
+                            "type_kind": "address",
+                        }
+                    ],
+                },
+            },
+            {
+                **base_target,
+                "controller_id": "state_variable:accountantState.payoutAddress",
+                "label": "accountantState.payoutAddress",
+                "source": "accountantState.payoutAddress",
+                "kind": "state_variable",
+                "read_spec": {
+                    "strategy": "getter_call",
+                    "target": "accountantState",
+                    "kind": "state_variable",
+                    "state_variable_name": "accountantState",
+                    "type": "address",
+                    "type_kind": "address",
+                    "parent_type": "Example.AccountantState",
+                    "member_path": ["payoutAddress"],
+                    "components": [
+                        {
+                            "name": "payoutAddress",
+                            "type": "address",
+                            "abi_type": "address",
+                            "type_kind": "address",
+                        }
+                    ],
+                },
+            },
+            {
+                **base_target,
+                "controller_id": "external_contract:name",
+                "label": "name",
+                "source": "name",
+                "kind": "external_contract",
+                "read_spec": {
+                    "strategy": "getter_call",
+                    "target": "name",
+                    "kind": "state_variable",
+                    "state_variable_name": "name",
+                    "type": "string",
+                },
+            },
+            {
+                **base_target,
+                "controller_id": "role_identifier:PAUSER_ROLE",
+                "label": "PAUSER_ROLE",
+                "source": "PAUSER_ROLE",
+                "kind": "role_identifier",
+                "read_spec": {"strategy": "getter_call", "target": "PAUSER_ROLE"},
+            },
+        ],
+    }
+
+    plan = build_control_tracking_plan(cast(ContractAnalysis, analysis))
+
+    assert [target["controller_id"] for target in plan["tracked_controllers"]] == [
+        "role_identifier:PAUSER_ROLE",
+        "state_variable:accountantState.payoutAddress",
+        "state_variable:owner",
+        "state_variable:redemptionManager",
+    ]

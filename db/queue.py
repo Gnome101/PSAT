@@ -20,6 +20,7 @@ from .models import (
     Contract,
     ContractSummary,
     Job,
+    JobDependency,
     JobStage,
     JobStatus,
     Protocol,
@@ -450,13 +451,31 @@ def claim_job(
     retry in the future is skipped until the DB clock catches up. We compare
     against ``NOW()`` (Postgres-side) rather than Python's clock so workers
     spread across processes/timezones agree on eligibility.
+
+    Honours ``job_dependencies``: a job with at least one row whose status
+    is ``'pending'`` is skipped. Dependent rows are flipped to
+    ``'satisfied'`` by ``BaseWorker._satisfy_dependencies`` when the
+    provider job completes the required stage, and to ``'degraded'`` if
+    the provider terminally fails (so dependents fall back to
+    ``external_check_only`` rather than block forever). The partial
+    index ``ix_job_dep_pending`` keeps the ``NOT EXISTS`` clause sub-ms
+    even at fleet scale.
     """
+    pending_dep_exists = (
+        select(JobDependency.id)
+        .where(
+            JobDependency.depender_job_id == Job.id,
+            JobDependency.status == "pending",
+        )
+        .exists()
+    )
     stmt = (
         select(Job)
         .where(
             Job.stage == target_stage,
             Job.status == JobStatus.queued,
             (Job.next_attempt_at.is_(None) | (Job.next_attempt_at <= func.now())),
+            ~pending_dep_exists,
         )
         .order_by(Job.created_at)
         .limit(1)
@@ -1063,10 +1082,14 @@ def get_source_files(session: Session, job_id: Any) -> dict[str, str]:
 # slither_results / analysis_report were removed when vulnerability-detector
 # triage was split out of PSAT's pipeline; downstream stages don't depend on
 # them, and the only writer (StaticWorker._run_slither_phase) is gone.
+# predicate_trees / effects are emitted by semantic static analysis and are
+# required by resolution and policy, so cache hits must carry them forward.
 _STATIC_ARTIFACT_NAMES = frozenset(
     {
         "contract_analysis",
         "control_tracking_plan",
+        "predicate_trees",
+        "effects",
         "static_dependencies",
         "enrichment_cache",
     }
@@ -1280,10 +1303,11 @@ def copy_static_cache(session: Session, source_job_id: Any, target_job_id: Any) 
     Copies:
     - ``contracts`` row (immutable fields only; proxy fields left as defaults)
     - ``source_files`` rows
-    - ``contract_summaries``, ``privileged_functions``, ``role_definitions``
+    - ``contract_summaries`` and ``role_definitions``
       rows (linked to the new contract row)
     - Static artifacts (``contract_analysis``, ``control_tracking_plan``,
-      ``static_dependencies``, ``enrichment_cache``)
+      ``predicate_trees``, ``effects``, ``static_dependencies``,
+      ``enrichment_cache``)
 
     The source contract is looked up by (address, chain) rather than by
     ``job_id`` so that subsequent cache copies still work after a prior copy

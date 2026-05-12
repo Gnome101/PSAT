@@ -8,11 +8,11 @@ const CONTRACT_TYPE_COLORS = {
   safe: "#7c3aed",
   timelock: "#d97706",
   pausable: "#ea580c",
-  access_control: "#0d9488",
+  role_control: "#0d9488",
   regular: "#64748b",
 };
 
-const CONTRACT_TYPE_ORDER = ["proxy", "safe", "timelock", "pausable", "access_control", "regular"];
+const CONTRACT_TYPE_ORDER = ["proxy", "safe", "timelock", "pausable", "role_control", "regular"];
 
 const ALL_EVENT_TYPES = [
   "upgraded", "admin_changed", "beacon_upgraded", "ownership_transferred",

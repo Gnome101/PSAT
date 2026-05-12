@@ -23,6 +23,9 @@ _STORAGE_ENV_KEYS = (
 
 from db.models import (  # noqa: E402
     AuditContractCoverage,
+    Contract,
+    IndexedEventCursor,
+    IndexedEventLog,
     MonitoredContract,
     MonitoredEvent,
     Protocol,
@@ -294,6 +297,9 @@ def db_session():
             ProxyUpgradeEvent,
             ProxySubscription,
             WatchedProxy,
+            IndexedEventLog,
+            IndexedEventCursor,
+            Contract,
             Protocol,
         ]:
             session.query(model).delete()

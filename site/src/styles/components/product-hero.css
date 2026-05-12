@@ -123,11 +123,62 @@
   box-shadow: var(--shadow);
 }
 
+.product-hero-preview .fractal-stage {
+  width: 100%;
+  max-width: 520px;
+  margin: 0 auto;
+  box-shadow: var(--shadow);
+}
+
+.fractal-stage {
+  position: relative;
+  aspect-ratio: 1 / 1;
+  overflow: hidden;
+  border-radius: 14px;
+  background:
+    radial-gradient(120% 120% at 50% 50%, rgba(45, 212, 191, 0.06), transparent 60%),
+    #0a0e15;
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  isolation: isolate;
+}
+
+.fractal-camera {
+  position: absolute;
+  inset: 0;
+  transform-origin: 50% 50%;
+  animation: fractal-zoom 9s linear infinite;
+  will-change: transform;
+}
+
+.fractal-svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.fractal-vignette {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 1;
+  background: radial-gradient(120% 120% at 50% 50%, transparent 55%, rgba(10, 14, 21, 0.85) 100%);
+}
+
+@keyframes fractal-zoom {
+  from { transform: scale(1) translate(0, 0); }
+  to   { transform: scale(var(--fractal-scale, 2.4)) translate(var(--fractal-tx, 0), var(--fractal-ty, 0)); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fractal-camera { animation: none; transform: scale(1.15); }
+}
+
 @media (max-width: 1024px) {
   .product-hero-inner { grid-template-columns: 1fr; gap: 40px; }
   .product-hero-preview .hero-surface,
   .product-hero-preview .hero-flow,
   .product-hero-preview .hero-mesh { max-height: 400px; }
+  .product-hero-preview .fractal-stage { max-width: 420px; }
 }
 
 @media (max-width: 640px) {

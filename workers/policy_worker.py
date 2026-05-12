@@ -12,20 +12,21 @@ from sqlalchemy.orm import Session
 from db.models import (
     Contract,
     EffectiveFunction,
-    FunctionPrincipal,
     Job,
     JobStage,
     JobStatus,
     PrincipalLabel,
     SessionLocal,
 )
-from db.nested_artifacts import ARTIFACT_KINDS, KEY_PREFIX, artifact_key, parse_key
+from db.nested_artifacts import ARTIFACT_KINDS, KEY_PREFIX, parse_key
 from db.nested_artifacts import store_bundle as store_nested_artifacts
 from db.queue import get_artifact, store_artifact
-from schemas.control_tracking import ControlSnapshot, ControlTrackingPlan
+from schemas.control_tracking import ControlSnapshot
 from schemas.effective_permissions import PrincipalResolution
 from services.policy import build_effective_permissions, build_principal_labels
-from services.policy.hypersync_backfill import run_hypersync_policy_backfill
+from services.policy.effective_permissions_writer import write_effective_function_rows
+from services.policy.principal_history import build_principal_history
+from services.resolution.capability_resolver import _load_state_var_values
 from services.resolution.recursive import LoadedArtifacts, resolve_control_graph
 from utils.concurrency import parallel_map
 from utils.logging import record_degraded
@@ -34,265 +35,8 @@ from workers.base import BaseWorker
 logger = logging.getLogger("workers.policy_worker")
 
 DEFAULT_RPC_URL = os.getenv("ETH_RPC", "https://ethereum-rpc.publicnode.com")
-DEFAULT_HYPERSYNC_URL = "https://eth.hypersync.xyz"
 RECURSION_MAX_DEPTH = int(os.getenv("PSAT_RECURSION_MAX_DEPTH", "6"))
-
-
-def _resolve_target_state_var_address(
-    target_state_var: str,
-    control_snapshot: dict | ControlSnapshot | None,
-) -> str | None:
-    """Look up `target_state_var` in `controller_values` (matched by the
-    `:name` suffix, so either `state_variable:X` or `external_contract:X`
-    hits) and return the lowercased address, or None."""
-    if not target_state_var or not isinstance(control_snapshot, dict):
-        return None
-    suffix = f":{target_state_var}"
-    for key, value in (control_snapshot.get("controller_values") or {}).items():
-        if not key.endswith(suffix):
-            continue
-        address = str(value.get("value") or "").lower() if isinstance(value, dict) else ""
-        if address.startswith("0x") and len(address) == 42:
-            return address
-    return None
-
-
-def _method_to_role_for_address(address: str, control_graph_nodes: list[dict] | None) -> dict[str, list[str]]:
-    """Return the `method -> [role_constant, ...]` map the resolver attached
-    to the graph node for `address`, or {}."""
-    for node in control_graph_nodes or []:
-        if str(node.get("address", "")).lower() != address.lower():
-            continue
-        details = node.get("details") or {}
-        m2r = details.get("method_to_role")
-        if isinstance(m2r, dict):
-            return {k: list(v) for k, v in m2r.items() if isinstance(v, list)}
-    return {}
-
-
-def _node_id_for_address(address: str) -> str:
-    return f"address:{address.lower()}"
-
-
-def _principals_for_role_from_graph(
-    role: str,
-    control_graph_nodes: list[dict] | None,
-    *,
-    authority_address: str | None = None,
-    control_graph_edges: list[dict] | None = None,
-) -> list[dict]:
-    scoped_node_ids: set[str] | None = None
-    if authority_address and control_graph_edges is not None:
-        authority = authority_address.lower()
-        authority_node_ids = {
-            str(node.get("id") or _node_id_for_address(str(node.get("address", ""))))
-            for node in control_graph_nodes or []
-            if str(node.get("address", "")).lower() == authority
-        }
-        authority_node_ids.add(_node_id_for_address(authority))
-        scoped_node_ids = {
-            str(edge.get("to_id") or "")
-            for edge in control_graph_edges
-            if str(edge.get("from_id") or "") in authority_node_ids
-            and str(edge.get("relation") or "") in {"role_principal", "mapping_member"}
-        }
-
-    principals: list[dict] = []
-    for node in control_graph_nodes or []:
-        details = node.get("details") or {}
-        if str(details.get("controller_label", "")) != role:
-            continue
-        address = str(node.get("address", "")).lower()
-        if not (address.startswith("0x") and len(address) == 42):
-            continue
-        node_id = str(node.get("id") or _node_id_for_address(address))
-        if scoped_node_ids is not None and node_id not in scoped_node_ids:
-            continue
-        principals.append(
-            {
-                "address": address,
-                "resolved_type": node.get("resolved_type"),
-                "details": details,
-            }
-        )
-    return principals
-
-
-def _principals_by_controller_label(label: str, control_graph_nodes: list[dict] | None) -> list[dict]:
-    """Return every graph node tagged with `controller_label == label`
-    — the enumerated mapping-allowlist members for `label=<mapping_name>`."""
-    out: list[dict] = []
-    for node in control_graph_nodes or []:
-        details = node.get("details") or {}
-        if str(details.get("controller_label", "")) != label:
-            continue
-        address = str(node.get("address", "")).lower()
-        if not (address.startswith("0x") and len(address) == 42):
-            continue
-        out.append({"address": address, "resolved_type": node.get("resolved_type"), "details": details})
-    return out
-
-
-def _apply_sink_bridge(
-    session: Session,
-    *,
-    effective_function: Any,
-    function_record: dict[str, Any],
-    control_snapshot: dict | ControlSnapshot | None,
-    control_graph_nodes: list[dict] | None,
-) -> int:
-    """Dispatch each `CallerSink` kind to its principal resolver:
-    `caller_equals` via `controller_values`, `caller_in_mapping` via
-    enumerated graph nodes, `caller_signature`/`caller_merkle` as
-    off_chain_witness descriptors. `caller_external_call` stays on the
-    legacy external-call-guard bridge."""
-    sinks = function_record.get("sinks") or []
-    if not sinks:
-        return 0
-    added = 0
-    seen: set[tuple[str, str, str]] = set()
-
-    def _add(address: str, origin: str, principal_type: str, details: dict[str, Any]) -> None:
-        nonlocal added
-        key = (address.lower(), origin, principal_type)
-        if key in seen:
-            return
-        seen.add(key)
-        session.add(
-            FunctionPrincipal(
-                function_id=effective_function.id,
-                address=address.lower(),
-                resolved_type=details.get("resolved_type"),
-                origin=origin,
-                principal_type=principal_type,
-                details=details,
-            )
-        )
-        added += 1
-
-    for sink in sinks:
-        kind = str(sink.get("kind") or "")
-        if kind in {"caller_equals", "caller_in_mapping", "caller_signature", "caller_merkle"} and not sink.get(
-            "revert_on_mismatch"
-        ):
-            continue
-        if kind == "caller_equals":
-            target_var = str(sink.get("target_state_var") or "")
-            if not target_var:
-                continue
-            addr = _resolve_target_state_var_address(target_var, control_snapshot)
-            if not addr:
-                continue
-            _add(
-                addr,
-                f"caller_equals:{target_var}",
-                "caller_equals",
-                {"target_state_var": target_var, "sink_kind": kind},
-            )
-        elif kind == "caller_in_mapping":
-            mapping_name = str(sink.get("mapping_name") or "")
-            if not mapping_name:
-                continue
-            for principal in _principals_by_controller_label(mapping_name, control_graph_nodes):
-                _add(
-                    principal["address"],
-                    f"mapping:{mapping_name}",
-                    "caller_in_mapping",
-                    {
-                        "mapping_name": mapping_name,
-                        "mapping_predicate": sink.get("mapping_predicate"),
-                        "sink_kind": kind,
-                        "resolved_type": principal.get("resolved_type"),
-                        **(principal.get("details") or {}),
-                    },
-                )
-        elif kind in ("caller_signature", "caller_merkle"):
-            source_var = str(
-                sink.get("signature_source_var") or sink.get("merkle_root_var") or sink.get("target_state_var") or ""
-            )
-            if not source_var:
-                continue
-            # FunctionPrincipal.address is NOT NULL — use zero address as a
-            # sentinel; details.source_slot is the real authority pointer.
-            zero = "0x" + "0" * 40
-            witness_kind = "signature" if kind == "caller_signature" else "merkle"
-            _add(
-                zero,
-                f"off_chain_witness:{source_var}",
-                "off_chain_witness",
-                {
-                    "kind": witness_kind,
-                    "source_slot": source_var,
-                    "sink_kind": kind,
-                    "resolved_type": "off_chain_witness",
-                },
-            )
-    return added
-
-
-def _apply_external_call_guard_bridge(
-    session: Session,
-    *,
-    effective_function: Any,
-    function_record: dict[str, Any],
-    control_snapshot: dict | ControlSnapshot | None,
-    control_graph_nodes: list[dict] | None,
-    control_graph_edges: list[dict] | None = None,
-) -> int:
-    """For each `X.method(msg.sender)` guard, resolve X's authority
-    address, map the method (or explicit `role_args`) to a role, and
-    attach every principal holding that role as a FunctionPrincipal row."""
-    guards = function_record.get("external_call_guards") or []
-    if not guards:
-        return 0
-    added = 0
-    seen: set[tuple[str, str, str, str]] = set()
-    for guard in guards:
-        target_var = str(guard.get("target_state_var") or "")
-        method = str(guard.get("method") or "")
-        if not target_var or not method:
-            continue
-        authority_addr = _resolve_target_state_var_address(target_var, control_snapshot)
-        if not authority_addr:
-            continue
-        # Explicit role_args (`hasRole(ROLE, msg.sender)`) win over the
-        # authority's method-name lookup.
-        role_args = [str(r) for r in (guard.get("role_args") or []) if r]
-        if role_args:
-            roles = role_args
-        else:
-            m2r = _method_to_role_for_address(authority_addr, control_graph_nodes)
-            roles = list(m2r.get(method, []))
-        for role in roles:
-            for principal in _principals_for_role_from_graph(
-                role,
-                control_graph_nodes,
-                authority_address=authority_addr,
-                control_graph_edges=control_graph_edges,
-            ):
-                key = (principal["address"], role, method, authority_addr)
-                if key in seen:
-                    continue
-                seen.add(key)
-                session.add(
-                    FunctionPrincipal(
-                        function_id=effective_function.id,
-                        address=principal["address"],
-                        resolved_type=principal.get("resolved_type"),
-                        origin=f"{target_var}.{method}",
-                        principal_type="external_call_guard",
-                        details={
-                            "role": role,
-                            "authority_address": authority_addr,
-                            "guard_method": method,
-                            "target_state_var": target_var,
-                            "guard_pattern": "role_args" if role_args else "method_to_role",
-                            **(principal.get("details") or {}),
-                        },
-                    )
-                )
-                added += 1
-    return added
+CHAIN_IDS = {"ethereum": 1, "mainnet": 1}
 
 
 def _root_artifacts(
@@ -368,6 +112,123 @@ def _load_nested_artifacts(session: Session, job_id) -> dict[str, LoadedArtifact
     }
 
 
+def _resolve_semantic_capabilities(
+    session: Session,
+    *,
+    contract_address: str,
+    job_id: Any,
+    chain: str | None = None,
+) -> dict[str, dict[str, Any]] | None:
+    """Run the semantic capability resolver for ``contract_address`` against
+    the in-progress job. Returns ``{function_signature: capability_dict}``
+    or None on miss / failure.
+
+    ``chain`` (e.g. ``"ethereum"``) plumbs through to the resolver's
+    ``_load_state_var_values`` so the controller-value lookup is
+    scoped by ``(job_id, chain)`` per Wave 4 C.1. The resolver also
+    derives this from ``job.request['chain']`` when None is passed,
+    so passing it here is belt-and-suspenders."""
+    try:
+        from services.resolution.capability_resolver import resolve_contract_capabilities
+    except Exception as exc:  # pragma: no cover — import-error handled defensively
+        record_degraded(
+            phase="semantic_capability_resolution",
+            exc=exc,
+            context={"address": contract_address, "job_id": str(job_id)},
+        )
+        logger.warning(
+            "semantic capability resolver unavailable for %s: %s",
+            contract_address,
+            exc,
+            extra={"exc_type": type(exc).__name__},
+        )
+        return None
+
+    try:
+        result = resolve_contract_capabilities(
+            session,
+            address=contract_address,
+            job_id=job_id,
+            chain=chain,
+        )
+        if result is None:
+            exc = RuntimeError("semantic capability resolver produced no output")
+            record_degraded(
+                phase="semantic_capability_resolution",
+                exc=exc,
+                context={"address": contract_address, "job_id": str(job_id), "chain": chain},
+            )
+            logger.warning(
+                "semantic capability resolver produced no output for %s",
+                contract_address,
+                extra={"chain": chain},
+            )
+        return result
+    except Exception as exc:
+        record_degraded(
+            phase="semantic_capability_resolution",
+            exc=exc,
+            context={"address": contract_address, "job_id": str(job_id), "chain": chain},
+        )
+        logger.warning(
+            "semantic capability resolution skipped for %s: %s",
+            contract_address,
+            exc,
+            extra={"exc_type": type(exc).__name__},
+        )
+        return None
+
+
+def _safe_address_lookup_from_graph(
+    control_graph_nodes: list[dict] | None,
+) -> dict[str, str]:
+    """Build ``{<function_signature>: <safe_contract_address>}`` from the
+    resolved control graph. The threshold_group writer reads this when
+    populating the synthetic Safe row's address. Falls back to
+    ``{"default": <first_safe>}`` so single-Safe contracts don't need
+    per-function graph metadata.
+
+    Returns ``{}`` when no Safe nodes are present — the writer then
+    drops back to the zero-address sentinel.
+    """
+    out: dict[str, str] = {}
+    safes: list[str] = []
+    for node in control_graph_nodes or []:
+        if str(node.get("resolved_type", "")).lower() != "safe":
+            continue
+        address = str(node.get("address", "")).lower()
+        if not (address.startswith("0x") and len(address) == 42):
+            continue
+        if address not in safes:
+            safes.append(address)
+        details = node.get("details") or {}
+        controller_label = str(details.get("controller_label", ""))
+        if controller_label:
+            out.setdefault(controller_label, address)
+    if safes and "default" not in out:
+        out["default"] = safes[0]
+    return out
+
+
+def _semantic_controller_context_address(
+    snapshot: dict,
+    nested_artifacts: dict[str, LoadedArtifacts],
+) -> str | None:
+    addresses: set[str] = set()
+    for value in snapshot.get("controller_values", {}).values():
+        if not isinstance(value, dict):
+            continue
+        address = str(value.get("value", "")).lower()
+        if address == "0x0000000000000000000000000000000000000000":
+            continue
+        if not (address.startswith("0x") and len(address) == 42):
+            continue
+        bundle = nested_artifacts.get(address)
+        if isinstance(bundle, dict):
+            addresses.add(address)
+    return sorted(addresses)[0] if addresses else None
+
+
 class PolicyWorker(BaseWorker):
     stage = JobStage.policy
     next_stage = JobStage.coverage
@@ -387,7 +248,28 @@ class PolicyWorker(BaseWorker):
         contract_analysis = get_artifact(session, job.id, "contract_analysis")
         control_snapshot = get_artifact(session, job.id, "control_snapshot")
         resolved_control_graph = get_artifact(session, job.id, "resolved_control_graph")
-        semantic_guards = get_artifact(session, job.id, "semantic_guards")
+        # ``predicate_trees`` and ``effects`` are the semantic inputs to
+        # ``build_effective_permissions``.
+        predicate_trees = get_artifact(session, job.id, "predicate_trees")
+        effects_artifact = get_artifact(session, job.id, "effects")
+        missing_semantic_inputs = [
+            name
+            for name, artifact in (("predicate_trees", predicate_trees), ("effects", effects_artifact))
+            if not isinstance(artifact, dict)
+        ]
+        if missing_semantic_inputs:
+            exc = RuntimeError("missing semantic input artifact(s): " + ", ".join(sorted(missing_semantic_inputs)))
+            record_degraded(
+                phase="effective_permissions_semantic_inputs",
+                exc=exc,
+                context={"job_id": str(job.id), "missing_artifacts": sorted(missing_semantic_inputs)},
+            )
+            logger.warning(
+                "Policy stage missing semantic inputs for job %s: %s",
+                job.id,
+                ", ".join(sorted(missing_semantic_inputs)),
+                extra={"missing_artifacts": sorted(missing_semantic_inputs)},
+            )
         tracking_plan = get_artifact(session, job.id, "control_tracking_plan")
         # Optional: classify cache populated by the resolution stage. Lets the
         # refresh + labeling passes skip 6-10 RPCs per address.
@@ -405,12 +287,11 @@ class PolicyWorker(BaseWorker):
 
         nested_artifacts = _load_nested_artifacts(session, job.id)
 
-        # Determine authority snapshot and policy state
+        # Determine nested controller context for effective-permission enrichment.
         authority_snapshot: dict | None = None
-        policy_state: dict | None = None
         principal_resolution: PrincipalResolution = {
             "status": "no_authority",
-            "reason": "Worker-mode authority resolution",
+            "reason": "No nested controller context resolved",
         }
         if isinstance(resolved_control_graph, dict):
             authority_result = self._resolve_authority(
@@ -421,7 +302,6 @@ class PolicyWorker(BaseWorker):
                 nested_artifacts,
             )
             authority_snapshot = authority_result.get("authority_snapshot")
-            policy_state = authority_result.get("policy_state")
             principal_resolution = authority_result.get("principal_resolution", principal_resolution)
             logger.info(
                 "Policy stage authority resolution for job %s address=%s status=%s",
@@ -433,16 +313,19 @@ class PolicyWorker(BaseWorker):
         # Build effective permissions
         self.update_detail(session, job, "Computing effective permissions")
 
-        external_snapshots = {
-            address: cast(dict, bundle["snapshot"])
-            for address, bundle in nested_artifacts.items()
-            if isinstance(bundle.get("snapshot"), dict)
-        }
-        external_policy_states: dict[str, dict] = {}
-        for address in external_snapshots:
-            nested_policy_state = get_artifact(session, job.id, artifact_key(address, "policy_state"))
-            if isinstance(nested_policy_state, dict):
-                external_policy_states[address] = nested_policy_state
+        # Resolve per-function CapabilityExpr now so the artifact builder
+        # and writer use the same semantic principal source.
+        # Pass job.id — without it the resolver's default
+        # ``Job.status==completed`` filter skips the in-progress job.
+        capability_resolver_output: dict[str, dict[str, Any]] | None = None
+        if isinstance(predicate_trees, dict) and job.address:
+            job_chain = job.request.get("chain") if isinstance(job.request, dict) else None
+            capability_resolver_output = _resolve_semantic_capabilities(
+                session,
+                contract_address=(job.address or "").lower(),
+                job_id=job.id,
+                chain=job_chain if isinstance(job_chain, str) else None,
+            )
 
         ep_data: dict = cast(
             dict,
@@ -450,91 +333,72 @@ class PolicyWorker(BaseWorker):
                 contract_analysis,
                 target_snapshot=control_snapshot,
                 authority_snapshot=authority_snapshot,
-                policy_state=policy_state,
-                semantic_guards=semantic_guards if isinstance(semantic_guards, dict) else None,
-                external_snapshots=external_snapshots,
-                external_policy_states=external_policy_states,
                 principal_resolution=principal_resolution,
+                predicate_trees=predicate_trees if isinstance(predicate_trees, dict) else None,
+                capability_resolver_output=capability_resolver_output,
+                effects=effects_artifact if isinstance(effects_artifact, dict) else None,
             ),
         )
 
-        # Write to effective_functions and function_principals tables
+        # Write to effective_functions and function_principals tables from
+        # resolver-native semantic capability rows only.
         contract_row = session.execute(select(Contract).where(Contract.job_id == job.id).limit(1)).scalar_one_or_none()
         if contract_row and isinstance(ep_data, dict):
-            session.query(EffectiveFunction).filter(EffectiveFunction.contract_id == contract_row.id).delete()
-            for fn in ep_data.get("functions", []):
-                ef = EffectiveFunction(
-                    contract_id=contract_row.id,
-                    function_name=fn.get("function", "").split("(")[0],
-                    selector=fn.get("selector"),
-                    abi_signature=fn.get("function") or fn.get("abi_signature"),
-                    effect_labels=fn.get("effect_labels", []),
-                    effect_targets=fn.get("effect_targets", []),
-                    action_summary=fn.get("action_summary"),
-                    authority_public=fn.get("authority_public", False),
-                    authority_roles=fn.get("authority_roles"),
-                )
-                session.add(ef)
-                session.flush()
-                # Add principals from all sources
-                do = fn.get("direct_owner")
-                if isinstance(do, dict) and do.get("address"):
-                    session.add(
-                        FunctionPrincipal(
-                            function_id=ef.id,
-                            address=do["address"].lower(),
-                            resolved_type=do.get("resolved_type"),
-                            origin="direct owner",
-                            principal_type="direct_owner",
-                            details=do.get("details"),
-                        )
-                    )
-                for ctrl in fn.get("controllers") or []:
-                    for p in ctrl.get("principals") or []:
-                        if isinstance(p, dict) and p.get("address"):
-                            session.add(
-                                FunctionPrincipal(
-                                    function_id=ef.id,
-                                    address=p["address"].lower(),
-                                    resolved_type=p.get("resolved_type"),
-                                    origin=ctrl.get("label") or ctrl.get("controller_id", "controller"),
-                                    principal_type="controller",
-                                    details=p.get("details"),
-                                )
-                            )
-                for role in fn.get("authority_roles") or []:
-                    for p in role.get("principals") or []:
-                        if isinstance(p, dict) and p.get("address"):
-                            session.add(
-                                FunctionPrincipal(
-                                    function_id=ef.id,
-                                    address=p["address"].lower(),
-                                    resolved_type=p.get("resolved_type"),
-                                    origin=f"role {role.get('role', '?')}",
-                                    principal_type="authority_role",
-                                    details=p.get("details"),
-                                )
-                            )
-                graph_nodes = resolved_control_graph.get("nodes") if isinstance(resolved_control_graph, dict) else None
-                graph_edges = resolved_control_graph.get("edges") if isinstance(resolved_control_graph, dict) else None
-                _apply_external_call_guard_bridge(
-                    session,
-                    effective_function=ef,
-                    function_record=fn,
-                    control_snapshot=control_snapshot,
-                    control_graph_nodes=graph_nodes if isinstance(graph_nodes, list) else None,
-                    control_graph_edges=graph_edges if isinstance(graph_edges, list) else None,
-                )
-                _apply_sink_bridge(
-                    session,
-                    effective_function=ef,
-                    function_record=fn,
-                    control_snapshot=control_snapshot,
-                    control_graph_nodes=graph_nodes if isinstance(graph_nodes, list) else None,
-                )
+            graph_nodes = resolved_control_graph.get("nodes") if isinstance(resolved_control_graph, dict) else None
+            safe_lookup = _safe_address_lookup_from_graph(graph_nodes if isinstance(graph_nodes, list) else None)
+
+            write_effective_function_rows(
+                session,
+                contract_id=contract_row.id,
+                function_records=ep_data.get("functions", []),
+                capability_by_function=capability_resolver_output,
+                safe_address_lookup=safe_lookup or None,
+            )
             session.commit()
 
         store_artifact(session, job.id, "effective_permissions", data=ep_data)
+        if contract_row and isinstance(predicate_trees, dict):
+            job_chain = job.request.get("chain") if isinstance(job.request, dict) else None
+            chain_id = CHAIN_IDS.get(str(job_chain or "ethereum").lower(), 1)
+            try:
+                state_var_values = _load_state_var_values(
+                    session,
+                    contract_row.address,
+                    job_id=job.id,
+                    chain=job_chain if isinstance(job_chain, str) else None,
+                )
+                principal_history = build_principal_history(
+                    contract_address=contract_row.address,
+                    chain_id=chain_id,
+                    predicate_trees=predicate_trees,
+                    state_var_values=state_var_values,
+                )
+            except Exception as exc:
+                record_degraded(
+                    phase="principal_history",
+                    exc=exc,
+                    context={"job_id": str(job.id), "address": contract_row.address},
+                )
+                logger.warning(
+                    "principal history skipped for job %s address=%s: %s",
+                    job.id,
+                    contract_row.address,
+                    exc,
+                    extra={"exc_type": type(exc).__name__},
+                )
+                principal_history = {
+                    "schema_version": "principal_history.v1",
+                    "contract_address": contract_row.address.lower(),
+                    "chain_id": chain_id,
+                    "status": "error",
+                    "reason": str(exc),
+                    "sources": [],
+                    "role_membership": [],
+                    "capability_roles": [],
+                    "function_permissions": [],
+                    "public_capabilities": [],
+                }
+            store_artifact(session, job.id, "principal_history", data=principal_history)
 
         logger.info(
             "Policy stage effective permissions complete for job %s address=%s name=%s",
@@ -773,13 +637,21 @@ class PolicyWorker(BaseWorker):
         if not sibling_targets:
             return {}
 
-        def _fetch_sibling_analysis(target: tuple[Any, str]) -> tuple[str, dict | None]:
+        def _fetch_sibling_analysis(
+            target: tuple[Any, str],
+        ) -> tuple[str, dict | None, dict | None]:
             sj_id, addr = target
             with SessionLocal() as s:
                 payload = get_artifact(s, sj_id, "contract_analysis")
-            return addr, payload if isinstance(payload, dict) else None
+                effects_payload = get_artifact(s, sj_id, "effects")
+            return (
+                addr,
+                payload if isinstance(payload, dict) else None,
+                effects_payload if isinstance(effects_payload, dict) else None,
+            )
 
         sibling_analyses: dict[str, dict] = {}
+        sibling_effects: dict[str, dict] = {}
         for (_sj_id, addr), outcome in parallel_map(_fetch_sibling_analysis, sibling_targets, max_workers=8):
             if isinstance(outcome, BaseException):
                 record_degraded(
@@ -789,17 +661,25 @@ class PolicyWorker(BaseWorker):
                 )
                 logger.warning("sibling artifact fetch failed for %s: %s", addr, outcome)
                 continue
-            _addr, payload = outcome
+            _addr, payload, effects_payload = outcome
             if payload is not None:
                 sibling_analyses[_addr] = payload
+            if effects_payload is not None:
+                sibling_effects[_addr] = effects_payload
 
         if not sibling_analyses:
             return {}
 
-        callee_map = build_callee_effect_map(sibling_analyses)
+        callee_map = build_callee_effect_map(sibling_analyses, effects_by_address=sibling_effects)
         controller_values = control_snapshot.get("controller_values", {})
+        target_effects = get_artifact(session, job.id, "effects")
 
-        enriched = enrich_cross_contract_effects(contract_analysis, controller_values, callee_map)
+        enriched = enrich_cross_contract_effects(
+            contract_analysis,
+            controller_values,
+            callee_map,
+            target_effects=target_effects if isinstance(target_effects, dict) else None,
+        )
         if enriched:
             logger.info(
                 "Job %s: cross-contract enrichment added labels: %s",
@@ -818,14 +698,6 @@ class PolicyWorker(BaseWorker):
                             EffectiveFunction.abi_signature == fn_sig,
                         )
                     ).scalar_one_or_none()
-                    if ef is None:
-                        fn_name = fn_sig.split("(")[0]
-                        ef = session.execute(
-                            select(EffectiveFunction).where(
-                                EffectiveFunction.contract_id == contract_row.id,
-                                EffectiveFunction.function_name == fn_name,
-                            )
-                        ).scalar_one_or_none()
                     if ef:
                         existing = set(ef.effect_labels or [])
                         ef.effect_labels = sorted(existing | set(new_labels))
@@ -840,20 +712,17 @@ class PolicyWorker(BaseWorker):
         snapshot: dict,
         nested_artifacts: dict[str, LoadedArtifacts],
     ) -> dict:
-        """Locate authority artifacts from the resolution stage's DB bundles.
+        """Locate nested controller context from resolution-stage DB bundles.
 
         The resolution worker persists per-sub-contract artifacts as
         ``recursive:<address>:<kind>`` rows. This method fetches the
-        authority's bundle from that set (or falls back to existing
-        ``policy_state`` / ``policy_event_history`` artifacts when present)
-        and, if HyperSync is configured, backfills missing policy state.
+        first nested snapshot referenced by the target's controller values.
+        Semantic capability resolution is responsible for function-level
+        principals; this snapshot only enriches controller labels/details.
         """
-        # Find authority address from snapshot
-        authority_address = None
-        for controller_id, value in snapshot.get("controller_values", {}).items():
-            if controller_id.endswith(":authority"):
-                authority_address = str(value.get("value", "")).lower()
-                break
+        del session, job, resolved_graph
+
+        authority_address = _semantic_controller_context_address(snapshot, nested_artifacts)
 
         if not authority_address or authority_address == "0x0000000000000000000000000000000000000000":
             return {"principal_resolution": {"status": "no_authority", "reason": "No non-zero authority found"}}
@@ -868,57 +737,12 @@ class PolicyWorker(BaseWorker):
             }
 
         authority_snapshot = cast(dict, authority_bundle["snapshot"])
-        authority_analysis = authority_bundle.get("analysis")
-        authority_plan = authority_bundle.get("tracking_plan")
-        policy_state = get_artifact(session, job.id, artifact_key(authority_address, "policy_state"))
-        if policy_state is not None and not isinstance(policy_state, dict):
-            policy_state = None
-
-        if (
-            isinstance(authority_analysis, dict)
-            and isinstance(authority_plan, dict)
-            and authority_analysis.get("policy_tracking")
-        ):
-            if isinstance(policy_state, dict):
-                return {
-                    "authority_snapshot": authority_snapshot,
-                    "policy_state": policy_state,
-                    "principal_resolution": {
-                        "status": "complete",
-                        "reason": "Existing authority policy state joined into permission view",
-                    },
-                }
-            if os.getenv("ENVIO_API_TOKEN"):
-                events, state = run_hypersync_policy_backfill(
-                    cast(ControlTrackingPlan, authority_plan),
-                    url=DEFAULT_HYPERSYNC_URL,
-                )
-                store_artifact(
-                    session,
-                    job.id,
-                    artifact_key(authority_address, "policy_event_history"),
-                    data=events,
-                )
-                store_artifact(
-                    session,
-                    job.id,
-                    artifact_key(authority_address, "policy_state"),
-                    data=state,
-                )
-                return {
-                    "authority_snapshot": authority_snapshot,
-                    "policy_state": state,
-                    "principal_resolution": {
-                        "status": "complete",
-                        "reason": "Authority policy backfill completed",
-                    },
-                }
 
         return {
             "authority_snapshot": authority_snapshot,
             "principal_resolution": {
-                "status": "missing_policy_state",
-                "reason": "Authority artifacts incomplete or ENVIO_API_TOKEN not set",
+                "status": "complete",
+                "reason": "Nested controller snapshot joined into semantic permission view",
             },
         }
 

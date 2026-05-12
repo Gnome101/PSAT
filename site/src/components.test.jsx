@@ -251,7 +251,7 @@ describe("ProductHero", () => {
         loading={false}
       />,
     );
-    expect(screen.getByText(/Every privileged path/i)).toBeInTheDocument();
+    expect(screen.getByText(/Detect every/i)).toBeInTheDocument();
     expectNoCrash();
   });
 });

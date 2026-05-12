@@ -3,7 +3,50 @@
 from __future__ import annotations
 
 from schemas.contract_analysis import ContractAnalysis
-from schemas.control_tracking import ControlTrackingPlan, EventWatch, PollingFallback, TrackedController, TrackedPolicy
+from schemas.control_tracking import ControlTrackingPlan, EventWatch, PollingFallback, TrackedController
+
+
+def _is_address_like_read_spec(read_spec: object) -> bool:
+    if not isinstance(read_spec, dict):
+        return True
+    type_kind = str(read_spec.get("type_kind") or "").strip().lower()
+    if type_kind:
+        return type_kind in {"address", "contract"}
+    type_name = str(read_spec.get("type") or "").strip().lower()
+    if not type_name:
+        return True
+    return _is_external_contract_read_spec(read_spec)
+
+
+def _is_external_contract_read_spec(read_spec: object) -> bool:
+    if not isinstance(read_spec, dict):
+        return True
+    type_kind = str(read_spec.get("type_kind") or "").strip().lower()
+    if type_kind:
+        return type_kind in {"address", "contract"}
+    type_name = str(read_spec.get("type") or "").strip().lower()
+    if not type_name:
+        return True
+    if type_name in {"address", "address payable"}:
+        return True
+    if "mapping" in type_name or "[" in type_name:
+        return False
+    if type_name.startswith(("bool", "uint", "int", "string", "bytes")):
+        return False
+    return True
+
+
+def _is_runtime_resolvable_controller(target: object) -> bool:
+    if not isinstance(target, dict):
+        return False
+    kind = target.get("kind")
+    if kind == "role_identifier":
+        return True
+    if kind == "state_variable":
+        return _is_address_like_read_spec(target.get("read_spec"))
+    if kind == "external_contract":
+        return _is_external_contract_read_spec(target.get("read_spec"))
+    return False
 
 
 def build_control_tracking_plan(analysis: ContractAnalysis) -> ControlTrackingPlan:
@@ -12,8 +55,9 @@ def build_control_tracking_plan(analysis: ContractAnalysis) -> ControlTrackingPl
     contract_name = analysis["subject"]["name"]
 
     tracked_controllers: list[TrackedController] = []
-    tracked_policies: list[TrackedPolicy] = []
     for target in analysis.get("controller_tracking", []):
+        if not _is_runtime_resolvable_controller(target):
+            continue
         associated_events = list(target.get("associated_events", []))
         writer_functions = [item["function"] for item in target.get("writer_functions", [])]
 
@@ -53,28 +97,10 @@ def build_control_tracking_plan(analysis: ContractAnalysis) -> ControlTrackingPl
             }
         )
 
-    for policy in analysis.get("policy_tracking", []):
-        tracked_policies.append(
-            {
-                "policy_id": policy["policy_id"],
-                "label": policy["label"],
-                "policy_function": policy["policy_function"],
-                "tracked_state_targets": list(policy.get("tracked_state_targets", [])),
-                "event_watch": {
-                    "transport": "wss_logs",
-                    "contract_address": contract_address,
-                    "events": list(policy.get("associated_events", [])),
-                    "writer_functions": [item["function"] for item in policy.get("writer_functions", [])],
-                },
-                "notes": list(policy.get("notes", [])),
-            }
-        )
-
     return {
         "schema_version": "0.1",
         "contract_address": contract_address,
         "contract_name": contract_name,
         "tracking_strategy": "event_first_with_polling_fallback",
         "tracked_controllers": sorted(tracked_controllers, key=lambda item: item["label"]),
-        "tracked_policies": sorted(tracked_policies, key=lambda item: item["label"]),
     }

@@ -1,3 +1,5 @@
+import React from "react";
+
 import { GuardGlyph } from "./GuardGlyph.jsx";
 
 export function GuardButton({ fnView, onSelect, onNavigate }) {
@@ -5,6 +7,13 @@ export function GuardButton({ fnView, onSelect, onNavigate }) {
   const principals = fnView.guard.principals || [];
   const isNavigable = onNavigate && principals.length > 0
     && kind !== "unknown" && kind !== "open";
+  const title = isNavigable
+    ? `Go to ${fnView.guard.label}`
+    : kind === "unknown"
+      ? "Unresolved guard"
+      : kind === "resolved_empty"
+        ? "No active principal"
+        : `Inspect guard details for ${fnView.name}`;
 
   const handleClick = (e) => {
     if (isNavigable) {
@@ -31,7 +40,7 @@ export function GuardButton({ fnView, onSelect, onNavigate }) {
       className={`ps-guard-button${kind === "unknown" ? " ps-guard-icon-only" : ""}${isNavigable ? " ps-guard-navigable" : ""}`}
       style={{ "--guard-accent": fnView.guard.accent }}
       onClick={handleClick}
-      title={isNavigable ? `Go to ${fnView.guard.label}` : kind === "unknown" ? "Unresolved guard" : `Inspect guard details for ${fnView.name}`}
+      title={title}
     >
       <span className="ps-guard-icon">
         <GuardGlyph kind={kind} accent={fnView.guard.accent} title={fnView.guard.label} />

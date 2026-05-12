@@ -5,6 +5,8 @@ from __future__ import annotations
 import logging
 import os
 import time
+from collections.abc import Callable
+from datetime import datetime, timezone
 from typing import cast
 
 from sqlalchemy import select
@@ -22,6 +24,10 @@ from db.models import (
 from db.nested_artifacts import store_bundle as store_nested_artifacts
 from db.queue import create_job, get_artifact, store_artifact
 from schemas.control_tracking import ControlSnapshot, ControlTrackingPlan
+from services.resolution.capability_resolver import (
+    find_analysis_job_for_address,
+    find_dependency_provider_job_for_address,
+)
 from services.resolution.recursive import LoadedArtifacts, resolve_control_graph
 from services.resolution.tracking import build_control_snapshot
 from utils.logging import record_degraded
@@ -37,12 +43,14 @@ def _build_root_artifacts(
     contract_analysis: dict,
     tracking_plan: dict,
     snapshot: ControlSnapshot,
+    predicate_trees: dict | None = None,
 ) -> LoadedArtifacts:
     """Package the root job's in-memory artifacts for the recursive resolver."""
     return {
         "analysis": contract_analysis,
         "tracking_plan": tracking_plan,
         "snapshot": snapshot,
+        "predicate_trees": predicate_trees,
     }
 
 
@@ -70,6 +78,9 @@ class ResolutionWorker(BaseWorker):
         contract_analysis = get_artifact(session, job.id, "contract_analysis")
         if not isinstance(contract_analysis, dict):
             raise RuntimeError("contract_analysis artifact not found")
+        predicate_trees = get_artifact(session, job.id, "predicate_trees")
+        if not isinstance(predicate_trees, dict):
+            predicate_trees = None
 
         # For impl jobs, read storage from the proxy address (where state lives)
         request = job.request if isinstance(job.request, dict) else {}
@@ -89,7 +100,11 @@ class ResolutionWorker(BaseWorker):
         # Build control snapshot via RPC calls
         self.update_detail(session, job, "Reading current controller state")
         t0 = time.monotonic()
-        snapshot = build_control_snapshot(cast(ControlTrackingPlan, tracking_plan), rpc_url)
+        snapshot = build_control_snapshot(
+            cast(ControlTrackingPlan, tracking_plan),
+            rpc_url,
+            heartbeat=lambda: self._heartbeat(session, job),
+        )
         logger.info(
             "resolution phase complete: control snapshot",
             extra={"duration_ms": int((time.monotonic() - t0) * 1000), "phase": "control_snapshot"},
@@ -124,9 +139,9 @@ class ResolutionWorker(BaseWorker):
         )
 
         # Fetch token balances
-        self._fetch_balances(session, job, contract_row)
+        self._fetch_balances(session, job, contract_row, heartbeat=lambda: self._heartbeat(session, job))
 
-        root_artifacts = _build_root_artifacts(contract_analysis, tracking_plan, snapshot)
+        root_artifacts = _build_root_artifacts(contract_analysis, tracking_plan, snapshot, predicate_trees)
 
         self.update_detail(session, job, "Resolving recursive control graph")
         t0 = time.monotonic()
@@ -207,6 +222,27 @@ class ResolutionWorker(BaseWorker):
             # Queue analysis jobs for contracts discovered during resolution
             self._queue_discovered_contracts(session, job, cast(dict, resolved_graph), rpc_url)
 
+        # Emit JobDependency edges so the policy stage waits for any
+        # external authority contract referenced by this job's predicate
+        # trees (e.g. EtherFiAdmin.upgradeTo's roleRegistry call).
+        # Defensive: a failure to enumerate deps must not block the
+        # resolution stage from completing — the depender just won't
+        # benefit from cross-contract inlining at policy time.
+        try:
+            self._emit_dependency_edges_from_predicate_trees(session, job, snapshot, rpc_url)
+        except Exception as exc:
+            record_degraded(
+                phase="resolution_dependency_emission",
+                exc=exc,
+                context={"address": job.address or "0x0"},
+            )
+            logger.warning(
+                "Job %s: dependency-edge emission failed: %s",
+                job.id,
+                exc,
+                extra={"exc_type": type(exc).__name__},
+            )
+
         self.update_detail(session, job, "Resolution complete")
         logger.info(
             "Resolution stage complete for job %s address=%s name=%s",
@@ -215,7 +251,14 @@ class ResolutionWorker(BaseWorker):
             job.name or "Contract",
         )
 
-    def _fetch_balances(self, session: Session, job: Job, contract_row: Contract | None) -> None:
+    def _fetch_balances(
+        self,
+        session: Session,
+        job: Job,
+        contract_row: Contract | None,
+        *,
+        heartbeat: Callable[[], None] | None = None,
+    ) -> None:
         """Fetch ETH + token balances and store in contract_balances table."""
         from utils.etherscan import get_eth_balance, get_eth_price, get_token_balances, parallel_get
 
@@ -235,7 +278,8 @@ class ResolutionWorker(BaseWorker):
                 "eth_wei": (lambda: get_eth_balance(target_address)),
                 "tokens": (lambda: get_token_balances(target_address)),
                 "eth_price": get_eth_price,
-            }
+            },
+            heartbeat=heartbeat,
         )
 
         eth_wei_raw = results.get("eth_wei")
@@ -389,6 +433,301 @@ class ResolutionWorker(BaseWorker):
                 job.id,
                 queued_count,
             )
+
+    def _emit_dependency_edges_from_predicate_trees(
+        self,
+        session: Session,
+        job: Job,
+        snapshot: ControlSnapshot,
+        rpc_url: str,
+    ) -> None:
+        """Insert ``JobDependency`` rows for every external contract A's
+        predicate trees reference as an authority source.
+
+        Walks the static stage's ``predicate_trees`` artifact, finds
+        leaves whose ``set_descriptor.authority_contract.address_source``
+        traces to a state variable, resolves that variable's value via
+        the just-written ``controller_values`` snapshot, then inserts an
+        edge ``(A, provider_address, required_stage=policy)`` so A's
+        policy stage waits until B's policy stage completes (whereupon
+        ``BaseWorker._satisfy_dependencies`` flips the row). For proxies,
+        ``provider_address`` is the implementation child job when known,
+        because that is where semantic policy artifacts are produced.
+
+        Provider B jobs that don't yet exist are spawned via
+        ``create_job`` under a ``(chain, address)`` advisory lock so
+        concurrent A workers can't race-create duplicate B jobs. This
+        mirrors the existing ``_queue_discovered_contracts`` pattern but
+        keys on the predicate-tree-referenced address rather than the
+        resolved-graph node list.
+
+        Idempotent: re-running resolution on the same A is a no-op
+        because ``ON CONFLICT DO NOTHING`` deduplicates on the unique
+        edge key. Safe to call before B exists, before B has predicate
+        trees, before B has reached any particular stage — the gate
+        itself blocks A from advancing until B is ready.
+        """
+        from sqlalchemy import text as _sa_text
+        from sqlalchemy.dialects.postgresql import insert as _pg_insert
+
+        from db.models import JobDependency
+
+        predicate_trees = get_artifact(session, job.id, "predicate_trees")
+        if not isinstance(predicate_trees, dict):
+            return
+        tree_maps = [
+            tree_map
+            for tree_map in (predicate_trees.get("trees"), predicate_trees.get("check_trees"))
+            if isinstance(tree_map, dict) and tree_map
+        ]
+        if not tree_maps:
+            return
+
+        controller_values = (snapshot or {}).get("controller_values") or {}
+        # Build a {state-variable-name: address} map from controller_values.
+        # Rows look like ``"state_variable:_owner": {"value": "0xabc..."}``;
+        # strip the ``state_variable:`` prefix so the predicate-tree
+        # operand-name lookup matches.
+        state_var_addresses: dict[str, str] = {}
+        for cid, payload in controller_values.items():
+            if not isinstance(cid, str) or not isinstance(payload, dict):
+                continue
+            value = payload.get("value")
+            if not isinstance(value, str) or not value.startswith("0x") or len(value) != 42:
+                continue
+            name = cid.split(":", 1)[1] if ":" in cid else cid
+            state_var_addresses.setdefault(name, value.lower())
+
+        # Walk every predicate tree and collect referenced authority
+        # contract state-vars. Worth doing once — the same registry can
+        # be referenced from many functions on A.
+        referenced: set[str] = set()
+        for tree_map in tree_maps:
+            for tree in tree_map.values():
+                _collect_authority_contract_state_vars(tree, referenced)
+        if not referenced:
+            return
+
+        # Resolve each referenced state-variable name to a concrete
+        # address. Missing values are skipped — the snapshot may not
+        # have populated the row yet (e.g. private state-var without a
+        # public getter, or RPC failure during the snapshot pass).
+        target_addresses = sorted({state_var_addresses[name] for name in referenced if name in state_var_addresses})
+        if not target_addresses:
+            return
+
+        request = job.request if isinstance(job.request, dict) else {}
+        chain = request.get("chain") if isinstance(request.get("chain"), str) else None
+        parent_company = job.company
+
+        edges_inserted = 0
+        for target_addr in target_addresses:
+            # Self-references — A's own state-var resolves to A's address
+            # — never form a useful dependency. Skip.
+            if target_addr == (job.address or "").lower():
+                continue
+            # Advisory xact-lock keyed on (chain, address) so two
+            # concurrent A jobs spawning the same B don't double-insert.
+            # Mirrors the generic event indexer's insert pattern.
+            lock_key = _stable_lock_key(chain, target_addr)
+            session.execute(_sa_text("SELECT pg_advisory_xact_lock(:k)"), {"k": lock_key})
+
+            provider_lookup = find_dependency_provider_job_for_address(session, target_addr, chain=chain)
+            provider_job = provider_lookup.analysis_job if provider_lookup is not None else None
+            dependency_provider_addr = (
+                (provider_job.address or target_addr).lower() if provider_job is not None else target_addr
+            )
+            if provider_job is None:
+                provider_request = {
+                    "address": target_addr,
+                    "name": target_addr,
+                    "rpc_url": rpc_url,
+                    "parent_job_id": str(job.id),
+                    "discovered_by": "resolution_dependency",
+                }
+                if chain:
+                    provider_request["chain"] = chain
+                provider_job = create_job(session, provider_request, initial_stage=JobStage.discovery)
+                if parent_company:
+                    provider_job.company = parent_company
+                if job.protocol_id:
+                    provider_job.protocol_id = job.protocol_id
+                session.commit()
+                dependency_provider_addr = target_addr
+
+            # Don't depend on yourself.
+            if provider_job.id == job.id:
+                continue
+
+            satisfied_lookup = find_analysis_job_for_address(
+                session,
+                target_addr,
+                required_artifact="effective_permissions",
+                chain=chain,
+                completed_only=False,
+            )
+            already_satisfied = False
+            if satisfied_lookup is not None:
+                provider_job = satisfied_lookup.analysis_job
+                dependency_provider_addr = (provider_job.address or dependency_provider_addr).lower()
+                already_satisfied = True
+
+            # Cycle detection: would inserting (A → B) close a path
+            # that's already (B → ... → A)? If so we'd have A waiting on
+            # B which is (transitively) waiting on A — deadlock under
+            # the claim gate. Insert with status='cycle_degraded'
+            # instead so the gate doesn't block A and the resolver
+            # short-circuits the leaf to external_check_only at
+            # evaluation time.
+            cycle_path = None
+            if not already_satisfied:
+                cycle_path = _detect_dep_cycle(
+                    session,
+                    proposed_depender_id=job.id,
+                    proposed_provider_id=provider_job.id,
+                )
+            edge_status = "satisfied" if already_satisfied else ("cycle_degraded" if cycle_path else "pending")
+            values = {
+                "depender_job_id": job.id,
+                "provider_chain": chain,
+                "provider_address": dependency_provider_addr,
+                "required_stage": JobStage.policy,
+                "status": edge_status,
+                "cycle_path": cycle_path,
+            }
+            if already_satisfied:
+                values["satisfied_at"] = datetime.now(timezone.utc)
+            stmt = (
+                _pg_insert(JobDependency)
+                .values(**values)
+                .on_conflict_do_nothing(
+                    index_elements=[
+                        "depender_job_id",
+                        "provider_chain",
+                        "provider_address",
+                        "required_stage",
+                    ],
+                )
+            )
+            result = session.execute(stmt)
+            # ``Result.rowcount`` is on the concrete ``CursorResult``
+            # but the generic ``Result[Any]`` Protocol pyright sees
+            # doesn't expose it. Same ``getattr`` pattern as
+            # ``workers.event_log_indexer._bulk_insert_logs``.
+            if (getattr(result, "rowcount", 0) or 0) > 0:
+                edges_inserted += 1
+
+        if edges_inserted:
+            session.commit()
+            logger.info(
+                "Job %s: emitted %d dependency edge(s) on external authority contracts",
+                job.id,
+                edges_inserted,
+            )
+
+
+def _collect_authority_contract_state_vars(node: dict, out: set[str]) -> None:
+    """Walk a predicate-tree node and add every state-variable name that
+    appears as an ``authority_contract.address_source`` to ``out``. The
+    address source is what the semantic builder writes when a leaf's external
+    call's destination traced back to a state variable (e.g.
+    ``authority.check(...)`` — the ``authority`` storage var)."""
+    if not isinstance(node, dict):
+        return
+    if node.get("op") == "LEAF":
+        leaf = node.get("leaf") or {}
+        descriptor = leaf.get("set_descriptor") or {}
+        authority = descriptor.get("authority_contract") or {}
+        address_source = authority.get("address_source") or {}
+        if address_source.get("source") == "state_variable":
+            sv = address_source.get("state_variable_name")
+            if isinstance(sv, str) and sv:
+                out.add(sv)
+        return
+    for child in node.get("children") or []:
+        _collect_authority_contract_state_vars(child, out)
+
+
+def _detect_dep_cycle(
+    session: Session,
+    *,
+    proposed_depender_id,
+    proposed_provider_id,
+) -> list[str] | None:
+    """If adding edge ``(depender → provider)`` would close a cycle,
+    return the dep-chain path through job IDs (most-recent-first) for
+    ops debugging. Otherwise return ``None`` and the edge is safe.
+
+    Uses a recursive CTE walking forward from ``proposed_provider_id``:
+    each hop joins ``job_dependencies.depender_job_id`` to the previous
+    row's provider via ``Job.address`` (we don't carry job-id pointers
+    on the dep row's provider side — only chain+address — so the join
+    goes through the ``jobs`` table). Bounded by ``ARRAY[…]`` cycle
+    elimination on ``path``. The CTE answer is "is the proposed
+    depender reachable from the proposed provider?"
+    """
+    from sqlalchemy import text as _sa_text
+
+    sql = _sa_text(
+        """
+        WITH RECURSIVE chain AS (
+            -- Base: edges leaving the proposed provider.
+            SELECT
+                jd.id AS edge_id,
+                jd.depender_job_id AS from_job,
+                provider_job.id AS to_job,
+                ARRAY[jd.depender_job_id::text] AS path
+            FROM job_dependencies jd
+            JOIN jobs provider_job
+              ON LOWER(provider_job.address) = LOWER(jd.provider_address)
+             AND COALESCE(provider_job.request->>'chain', '') = COALESCE(jd.provider_chain, '')
+            WHERE jd.depender_job_id = :start_provider
+              AND jd.status IN ('pending', 'satisfied')
+
+            UNION
+
+            -- Recurse: follow the next hop's depender forward.
+            SELECT
+                jd.id,
+                jd.depender_job_id,
+                provider_job.id,
+                chain.path || jd.depender_job_id::text
+            FROM job_dependencies jd
+            JOIN jobs provider_job
+              ON LOWER(provider_job.address) = LOWER(jd.provider_address)
+             AND COALESCE(provider_job.request->>'chain', '') = COALESCE(jd.provider_chain, '')
+            JOIN chain ON jd.depender_job_id = chain.to_job
+            WHERE jd.status IN ('pending', 'satisfied')
+              AND NOT (jd.depender_job_id::text = ANY(chain.path))
+        )
+        SELECT path FROM chain WHERE to_job = :target_depender LIMIT 1
+        """
+    )
+    row = session.execute(
+        sql,
+        {
+            "start_provider": str(proposed_provider_id),
+            "target_depender": str(proposed_depender_id),
+        },
+    ).first()
+    if row is None:
+        return None
+    path = list(row[0]) if row[0] is not None else []
+    # Append the closing edge so the path reads "B → ... → A → B".
+    path.append(str(proposed_provider_id))
+    return path
+
+
+def _stable_lock_key(chain: str | None, address: str) -> int:
+    """Hash ``(chain, address)`` to a 63-bit int for ``pg_advisory_xact_lock``.
+
+    Postgres advisory-lock keys are bigint; collapsing to 63 bits keeps
+    us inside the signed range. Stable across processes — two workers
+    racing to spawn the same provider job acquire the same lock."""
+    import hashlib
+
+    h = hashlib.sha256(f"{chain or 'ethereum'}:{address.lower()}".encode()).digest()
+    return int.from_bytes(h[:8], "big") & ((1 << 63) - 1)
 
 
 def main():

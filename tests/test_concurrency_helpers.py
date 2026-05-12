@@ -104,8 +104,8 @@ def test_parallel_map_propagates_lease_lost_from_heartbeat_parallel_path():
         parallel_map(lambda x: x * 2, [1, 2, 3], max_workers=2, heartbeat=lease_lost_heartbeat)
 
 
-def test_parallel_map_propagates_lease_lost_from_heartbeat_sequential_path():
-    """Same invariant for the ``max_workers=1`` sequential path."""
+def test_parallel_map_propagates_lease_lost_from_heartbeat_single_worker_path():
+    """Same invariant for the ``max_workers=1`` heartbeat path."""
     from db.queue import LeaseLost
 
     def lease_lost_heartbeat():
@@ -113,6 +113,64 @@ def test_parallel_map_propagates_lease_lost_from_heartbeat_sequential_path():
 
     with pytest.raises(LeaseLost):
         parallel_map(lambda x: x, [1, 2, 3], max_workers=1, heartbeat=lease_lost_heartbeat)
+
+
+def test_parallel_map_heartbeats_single_item_while_waiting(monkeypatch):
+    monkeypatch.setenv("PSAT_PARALLEL_HEARTBEAT_INTERVAL_S", "0.01")
+    release = threading.Event()
+    counter = {"n": 0}
+
+    def wait_for_release(x):
+        assert release.wait(timeout=2)
+        return x
+
+    def heartbeat():
+        counter["n"] += 1
+        release.set()
+
+    results = parallel_map(wait_for_release, [1], max_workers=8, heartbeat=heartbeat)
+
+    assert results == [(1, 1)]
+    assert counter["n"] >= 1
+
+
+def test_parallel_map_heartbeats_while_waiting(monkeypatch):
+    monkeypatch.setenv("PSAT_PARALLEL_HEARTBEAT_INTERVAL_S", "0.01")
+    release = threading.Event()
+    counter = {"n": 0}
+
+    def wait_for_release(x):
+        assert release.wait(timeout=2)
+        return x
+
+    def heartbeat():
+        counter["n"] += 1
+        release.set()
+
+    results = parallel_map(wait_for_release, [1, 2], max_workers=2, heartbeat=heartbeat)
+
+    assert [r for _, r in results] == [1, 2]
+    assert counter["n"] >= 1
+
+
+def test_parallel_map_heartbeats_while_submission_is_backpressured(monkeypatch):
+    monkeypatch.setenv("PSAT_PARALLEL_HEARTBEAT_INTERVAL_S", "0.01")
+    release = threading.Event()
+    counter = {"n": 0}
+
+    def wait_for_release(x):
+        if x in (1, 2):
+            assert release.wait(timeout=2)
+        return x
+
+    def heartbeat():
+        counter["n"] += 1
+        release.set()
+
+    results = parallel_map(wait_for_release, [1, 2, 3], max_workers=2, heartbeat=heartbeat)
+
+    assert [r for _, r in results] == [1, 2, 3]
+    assert counter["n"] >= 1
 
 
 def test_parallel_map_empty_input_returns_empty():

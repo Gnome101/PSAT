@@ -1,0 +1,78 @@
+contract_name: C
+description: |
+  Real OZ 5.0+ Pausable shape — distinct from oz_pausable.yaml's
+  pre-5.x ``require(!_paused)`` form. The 5.x version stacks:
+
+    - if-revert with a custom error (EnforcedPause)
+    - cross-fn helper (_requireNotPaused internal)
+    - getter view function (paused() public view) instead of
+      direct ``_paused`` state-var read
+
+  All three paths exercised by ``whenNotPaused`` -> ``_requireNotPaused``
+  -> ``if (paused()) revert EnforcedPause()``.
+
+  This is the pattern @openzeppelin/contracts ships in 5.0+ and is
+  used by EtherFi, Lido, and most modern protocols on top of the
+  Pausable mixin. Pinning this manifest validates:
+
+    1. RevertDetector classifies the if-revert with a custom error
+       as kind=if_revert (not opaque)
+    2. Polarity normalizer flips ``if (paused()) revert`` -> the
+       gate is "allowed when NOT paused", and authority_role=pause
+    3. Cross-fn provenance walks through _requireNotPaused via the
+       call_chain
+    4. paused() getter is transparent — the writer-gate path finds
+       the underlying _paused state-var via the getter return
+
+  Combined with admin-gated pause/unpause writers, the writer-gate
+  pass should detect the pause authority_role on `transfer()` and
+  caller_authority on `pause()` / `unpause()`.
+
+source: |
+  pragma solidity ^0.8.19;
+  contract C {
+      address public ownerVar;
+      bool private _paused;
+      uint256 public x;
+      error EnforcedPause();
+
+      function paused() public view returns (bool) {
+          return _paused;
+      }
+      function _requireNotPaused() internal view {
+          if (paused()) revert EnforcedPause();
+      }
+      modifier whenNotPaused() {
+          _requireNotPaused();
+          _;
+      }
+      function pause() external {
+          require(msg.sender == ownerVar);
+          _paused = true;
+      }
+      function unpause() external {
+          require(msg.sender == ownerVar);
+          _paused = false;
+      }
+      function transfer() external whenNotPaused {
+          x = x + 1;
+      }
+  }
+
+expected_functions:
+  "transfer()":
+    authority_role: pause
+    confidence: high
+  "pause()":
+    authority_role: caller_authority
+    kind: equality
+    operator: eq
+    confidence: high
+  "unpause()":
+    authority_role: caller_authority
+    kind: equality
+    operator: eq
+    confidence: high
+
+unguarded:
+  - "paused()"

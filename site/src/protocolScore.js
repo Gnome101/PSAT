@@ -121,6 +121,25 @@ function principalProtectionScore(principal, actionKind) {
   return 0.3;
 }
 
+function isExactEmptyCapability(cap) {
+  if (!cap || typeof cap !== "object") return false;
+  if (cap.kind === "finite_set") {
+    return cap.membership_quality === "exact" && Array.isArray(cap.members) && cap.members.length === 0;
+  }
+  const children = asArray(cap.children);
+  if (cap.kind === "AND") return children.some(isExactEmptyCapability);
+  if (cap.kind === "OR") return children.length > 0 && children.every(isExactEmptyCapability);
+  return false;
+}
+
+function isResolvedEmptyFunction(fn) {
+  return fn?.status === "resolved_empty" || isExactEmptyCapability(fn?.capability_expr);
+}
+
+function isResolvedEmptyAction(action) {
+  return isResolvedEmptyFunction(action.fn);
+}
+
 function collectPrincipals(fn) {
   const out = [];
   if (fn?.direct_owner) out.push(fn.direct_owner);
@@ -180,7 +199,10 @@ function collectActions(contracts) {
 }
 
 function actionProtectionScore(action) {
-  if (action.principals.length === 0) return action.fn?.authority_public ? 0.1 : 0.35;
+  if (action.principals.length === 0) {
+    if (isResolvedEmptyAction(action)) return 0.95;
+    return action.fn?.authority_public ? 0.1 : 0.35;
+  }
   return Math.min(...action.principals.map((principal) => principalProtectionScore(principal, action.kind)));
 }
 
@@ -225,6 +247,10 @@ function safeguardScore(actions) {
   for (const action of actions) {
     const safeguards = action.principals.filter((principal) => ["safe", "timelock"].includes(principalType(principal)));
     if (safeguards.length === 0) {
+      if (isResolvedEmptyAction(action)) {
+        rows.push({ value: 0.95, weight: action.weight });
+        continue;
+      }
       if (action.severity > 0.4) rows.push({ value: 0.2, weight: action.weight });
       continue;
     }
@@ -407,12 +433,13 @@ function actionExample(action, reason) {
   const principals = action.principals.map(principalLabel).join(", ");
   const address = action.contract?.address || action.contract?.implementation || "";
   const signature = action.fn?.function || action.fn?.abi_signature || "";
+  const emptyMeta = isResolvedEmptyAction(action) ? "no active principal" : "controller unresolved";
   return {
     title: `${contractName(action.contract)} · ${functionLabel(action.fn)}`,
     detail: reason,
     meta: [
       action.kind,
-      principals ? `by ${principals}` : "controller unresolved",
+      principals ? `by ${principals}` : emptyMeta,
       shortAddress(address),
     ].filter(Boolean).join(" · "),
     contractAddress: address,
@@ -479,21 +506,31 @@ function isImportantContract(contract) {
 function buildAuthorityTooltip(actions) {
   const sensitive = actions.filter(isHighRiskAction);
   const protectedActions = sensitive.filter((action) => actionProtectionScore(action) >= 0.65);
+  const noActivePrincipal = sensitive.filter(isResolvedEmptyAction);
   const weakActions = sensitive.filter((action) => actionProtectionScore(action) < 0.65);
   const eoaControlled = sensitive.filter((action) => (
     action.kind !== "pause"
       && action.principals.some((principal) => principalType(principal) === "eoa")
   ));
-  const unresolved = sensitive.filter((action) => action.principals.length === 0);
+  const unresolved = sensitive.filter((action) => (
+    action.principals.length === 0 && !isResolvedEmptyAction(action) && !action.fn?.authority_public
+  ));
 
-  const positive = sensitive.length
-    ? `${protectedActions.length}/${sensitive.length} sensitive actions have strong resolved protection.`
-    : "No sensitive function-level authority was detected.";
-  const negative = eoaControlled.length
-    ? `${plural(eoaControlled.length, "sensitive action")} ${verb(eoaControlled.length, "still traces", "still trace")} to EOAs.`
-    : unresolved.length
-      ? `${plural(unresolved.length, "sensitive action")} ${verb(unresolved.length, "has", "have")} unresolved controllers.`
-      : "Remaining risk comes from lower-confidence contract or proxy-admin control paths.";
+  let positive = "No sensitive function-level authority was detected.";
+  if (noActivePrincipal.length) {
+    positive = `${plural(noActivePrincipal.length, "sensitive action")} currently ${verb(noActivePrincipal.length, "has", "have")} no active principal.`;
+  } else if (sensitive.length) {
+    positive = `${protectedActions.length}/${sensitive.length} sensitive actions have strong resolved protection.`;
+  }
+
+  let negative = "Remaining risk comes from lower-confidence contract or proxy-admin control paths.";
+  if (eoaControlled.length) {
+    negative = `${plural(eoaControlled.length, "sensitive action")} ${verb(eoaControlled.length, "still traces", "still trace")} to EOAs.`;
+  } else if (unresolved.length) {
+    negative = `${plural(unresolved.length, "sensitive action")} ${verb(unresolved.length, "has", "have")} unresolved controllers.`;
+  } else if (noActivePrincipal.length === sensitive.length && sensitive.length > 0) {
+    negative = "No sensitive authority is currently assigned to an active principal.";
+  }
 
   const negativeExamples = weakActions.map((action) => {
     const eoas = action.principals.filter((principal) => principalType(principal) === "eoa");
@@ -679,7 +716,8 @@ function buildSafesTooltip(actions) {
   const timelocks = uniquePrincipals(actions, (principal) => principalType(principal) === "timelock");
   const strongSafes = safes.filter((safe) => safeScore(safe.details) >= 0.75);
   const unsafeguarded = sensitive.filter((action) => (
-    !action.principals.some((principal) => ["safe", "timelock"].includes(principalType(principal)))
+    !isResolvedEmptyAction(action)
+      && !action.principals.some((principal) => ["safe", "timelock"].includes(principalType(principal)))
   ));
   const weakSafeActions = sensitive.filter((action) => (
     action.principals.some((principal) => (

@@ -506,63 +506,6 @@ def test_build_principal_labels_skips_nonterminal_contract_principals():
     assert "0x3333333333333333333333333333333333333333" in principals
 
 
-def test_build_principal_labels_skips_unresolved_aragon_app_contract_principals():
-    effective_permissions = {
-        "contract_address": "0x1111111111111111111111111111111111111111",
-        "contract_name": "Target",
-        "functions": [],
-    }
-    resolved_graph = {
-        "nodes": [
-            {
-                "id": "address:0x1111111111111111111111111111111111111111",
-                "address": "0x1111111111111111111111111111111111111111",
-                "node_type": "contract",
-                "resolved_type": "contract",
-                "label": "Target",
-                "contract_name": "Target",
-                "depth": 0,
-                "analyzed": True,
-                "details": {"address": "0x1111111111111111111111111111111111111111"},
-                "artifacts": {},
-            },
-            {
-                "id": "address:0x2222222222222222222222222222222222222222",
-                "address": "0x2222222222222222222222222222222222222222",
-                "node_type": "contract",
-                "resolved_type": "contract",
-                "label": "Lido",
-                "contract_name": "Lido",
-                "depth": 1,
-                "analyzed": True,
-                "details": {
-                    "address": "0x2222222222222222222222222222222222222222",
-                    "authority_kind": "aragon_app_like",
-                },
-                "artifacts": {},
-            },
-        ],
-        "edges": [
-            {
-                "from_id": "address:0x1111111111111111111111111111111111111111",
-                "to_id": "address:0x2222222222222222222222222222222222222222",
-                "relation": "role_principal",
-                "label": "role principal",
-                "source_controller_id": None,
-                "notes": [],
-            }
-        ],
-    }
-
-    payload = build_principal_labels(
-        effective_permissions,
-        resolved_control_graph=resolved_graph,
-    )
-
-    principals = {item["address"]: item for item in payload["principals"]}
-    assert "0x2222222222222222222222222222222222222222" not in principals
-
-
 def test_build_principal_labels_skips_permission_controller_contract_principals():
     effective_permissions = {
         "contract_address": "0x1111111111111111111111111111111111111111",

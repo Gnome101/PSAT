@@ -349,7 +349,7 @@ def _setup_monitored(
         "watch_upgrades": contract_type == "proxy",
         "watch_ownership": True,
         "watch_pause": contract_type == "pausable",
-        "watch_roles": contract_type == "access_control",
+        "watch_roles": contract_type == "role_control",
         "watch_safe_signers": contract_type == "safe",
         "watch_timelock": contract_type == "timelock",
     }

@@ -2,18 +2,16 @@
 
 from __future__ import annotations
 
-from typing import Literal, TypedDict
+from typing import Any, Literal, TypedDict
 
 from typing_extensions import NotRequired
 
 ResolvedAddressType = Literal["zero", "eoa", "safe", "timelock", "proxy_admin", "contract", "unknown"]
+EffectiveFunctionStatus = Literal["public", "unsupported", "resolved_empty"]
 PrincipalResolutionStatus = Literal[
     "complete",
-    "missing_hypersync_token",
-    "missing_policy_state",
     "no_authority",
     "no_authority_snapshot",
-    "no_policy_tracking",
 ]
 
 
@@ -28,6 +26,7 @@ class ResolvedPrincipal(TypedDict):
     details: dict[str, object]
     source_contract: NotRequired[str]
     source_controller_id: NotRequired[str]
+    principal_type: NotRequired[str]
 
 
 class AuthorityRoleGrant(TypedDict):
@@ -56,8 +55,10 @@ class EffectiveFunctionPermission(TypedDict):
     effect_labels: list[str]
     action_summary: str
     notes: list[str]
-    external_call_guards: NotRequired[list[dict]]
-    sinks: NotRequired[list[dict]]
+    capability_expr: NotRequired[dict[str, Any]]
+    conditions: NotRequired[list[dict[str, Any]]]
+    status: NotRequired[EffectiveFunctionStatus]
+    signature_witnesses: NotRequired[list[ResolvedPrincipal]]
 
 
 class EffectivePermissions(TypedDict):

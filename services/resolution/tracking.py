@@ -7,6 +7,7 @@ import logging
 import os
 import threading
 import time
+from collections.abc import Callable
 from typing import Any
 
 from eth_abi.abi import decode
@@ -26,8 +27,6 @@ from utils.rpc import (
     selector as _selector,
 )
 
-from .controller_adapters import expand_role_identifier_principals, type_authority_contract
-
 logger = logging.getLogger(__name__)
 
 # Distinguishes "RPC succeeded, function absent" (None) from "RPC raised" — caching the latter would cement
@@ -44,6 +43,16 @@ _CLASSIFY_CACHE_TTL_S = float(os.getenv("PSAT_CLASSIFY_CACHE_TTL_S", "1800"))
 # Single-batch classify probes (default ON); falls back to sequential on whole-batch failure. Toggle
 # PSAT_CLASSIFY_BATCH=0 to force sequential.
 _CLASSIFY_BATCH_ENABLED = os.getenv("PSAT_CLASSIFY_BATCH", "1").lower() in ("1", "true", "yes")
+
+
+def type_authority_contract(rpc_url: str, address: str, block_tag: str = "latest") -> dict[str, object]:
+    """Compatibility hook for old callers/tests.
+
+    Runtime authority expansion is now handled by semantic predicate
+    capabilities, not by standard-specific controller probes.
+    """
+    del rpc_url, address, block_tag
+    return {}
 
 
 def clear_classify_cache() -> None:
@@ -64,11 +73,47 @@ def _log_classify_pressure() -> None:
         logger.info("[CACHE_PRESSURE] %s", msg)
 
 
-def _decode_controller_value(raw_value: Any, controller_kind: str) -> str:
+def _decode_controller_value(
+    raw_value: Any,
+    controller_kind: str,
+    read_spec: ControllerReadSpec | None = None,
+) -> str:
     value = _normalize_hex(raw_value if isinstance(raw_value, str) else "0x")
+    if isinstance(read_spec, dict) and read_spec.get("member_path"):
+        return _decode_projected_member_value(value, read_spec)
     if controller_kind in {"state_variable", "external_contract"} and len(value) == 66:
         return "0x" + value[-40:]
     return value
+
+
+def _decode_projected_member_value(raw_value: str, read_spec: ControllerReadSpec) -> str:
+    member_path = read_spec.get("member_path")
+    components = read_spec.get("components")
+    if not isinstance(member_path, list) or len(member_path) != 1:
+        raise RuntimeError(f"Unsupported projected member path: {member_path!r}")
+    if not isinstance(components, list) or not components:
+        raise RuntimeError("Projected member read is missing struct components")
+
+    names = [component.get("name") for component in components if isinstance(component, dict)]
+    abi_types = [component.get("abi_type") for component in components if isinstance(component, dict)]
+    if member_path[0] not in names or not all(isinstance(abi_type, str) and abi_type for abi_type in abi_types):
+        raise RuntimeError(f"Projected member {member_path[0]!r} is not present in struct components")
+
+    data = bytes.fromhex(_normalize_hex(raw_value)[2:])
+    values = decode(list(abi_types), data)
+    value = values[names.index(member_path[0])]
+    projected_type = read_spec.get("type")
+    if projected_type in {"address", "address payable"}:
+        return str(value).lower()
+    if projected_type == "bytes32":
+        if isinstance(value, bytes):
+            return "0x" + value.hex()
+        return str(value)
+    if isinstance(value, bool):
+        return "1" if value else "0"
+    if isinstance(value, int):
+        return str(value)
+    return str(value)
 
 
 def _eth_call_raw(rpc_url: str, contract_address: str, signature: str, block_tag: str = "latest") -> str:
@@ -403,26 +448,17 @@ def _read_polling_source(
         if isinstance(read_target, str) and read_target:
             target = read_target
     raw = _eth_call_raw(rpc_url, contract_address, f"{target}()", block_tag)
-    return _decode_controller_value(raw, controller_kind)
+    return _decode_controller_value(raw, controller_kind, read_spec)
 
 
-def _controller_address_from_value(value: object) -> str | None:
-    if not isinstance(value, str):
-        return None
-    normalized = _normalize_hex(value)
-    if len(normalized) != 42 or normalized == "0x0000000000000000000000000000000000000000":
-        return None
-    return normalized
-
-
-def build_control_snapshot(plan: ControlTrackingPlan, rpc_url: str, block_tag: str = "latest") -> ControlSnapshot:
+def build_control_snapshot(
+    plan: ControlTrackingPlan,
+    rpc_url: str,
+    block_tag: str = "latest",
+    *,
+    heartbeat: Callable[[], None] | None = None,
+) -> ControlSnapshot:
     """Resolve every tracked controller's value at the given block.
-
-    Controllers form a DAG via ``read_spec.contract_source`` — controller A
-    depends on controller B when A reads from a contract whose address comes
-    from B's value. The DAG is topo-sorted into levels here so that every
-    level can be evaluated concurrently, while ensuring each level only
-    depends on values produced by strictly-prior levels.
 
     The classification cache is the process-wide ``_CLASSIFY_CACHE`` (see
     ``classify_resolved_address``); the previous per-snapshot cache was an
@@ -431,72 +467,46 @@ def build_control_snapshot(plan: ControlTrackingPlan, rpc_url: str, block_tag: s
     """
     from utils.concurrency import parallel_map
 
-    block_number = _current_block_number(rpc_url) if block_tag == "latest" else int(block_tag, 16)
-    controller_values: dict[str, Any] = {}
-    controllers_by_source: dict[str, list[TrackedController]] = {}
-    for controller in plan["tracked_controllers"]:
-        controllers_by_source.setdefault(controller["source"], []).append(controller)
+    def _call_with_heartbeat(fn: Callable[[], int]) -> int:
+        if heartbeat is None:
+            return fn()
+        results = parallel_map(lambda _item: fn(), [None], max_workers=1, heartbeat=heartbeat)
+        outcome = results[0][1]
+        if isinstance(outcome, BaseException):
+            raise outcome
+        return outcome
 
-    def _resolve_read_contract_address(controller: TrackedController) -> str:
-        """Read-only lookup against ``controller_values``: dependencies are
-        resolved by the prior topo level, so we never recurse here."""
-        read_spec = controller.get("read_spec")
-        if isinstance(read_spec, dict):
-            contract_source = read_spec.get("contract_source")
-            if isinstance(contract_source, str) and contract_source:
-                for dependency in controllers_by_source.get(contract_source, []):
-                    value = controller_values.get(dependency["controller_id"], {}).get("value")
-                    resolved = _controller_address_from_value(value)
-                    if resolved:
-                        return resolved
-        return plan["contract_address"]
+    block_number = (
+        _call_with_heartbeat(lambda: _current_block_number(rpc_url)) if block_tag == "latest" else int(block_tag, 16)
+    )
+    controller_values: dict[str, Any] = {}
 
     def _compute_controller(controller: TrackedController) -> tuple[str, dict[str, Any]]:
-        """Pure function: compute one controller's value dict. Reads only the
-        prior-level ``controller_values`` snapshot and ``classify_resolved_address``
-        (which is process-locked). Returns ``(controller_id, value_dict)``."""
+        """Pure function: compute one controller's value dict."""
         controller_id = controller["controller_id"]
         source = controller["source"]
         read_spec = controller.get("read_spec")
         try:
-            read_contract_address = _resolve_read_contract_address(controller)
             value = _read_polling_source(
                 rpc_url,
-                read_contract_address,
+                plan["contract_address"],
                 source,
                 controller["kind"],
                 block_tag,
                 read_spec=read_spec if isinstance(read_spec, dict) else None,
             )
             if controller["kind"] == "role_identifier":
-                member_addresses, adapter_meta = expand_role_identifier_principals(
-                    rpc_url,
-                    read_contract_address,
-                    value,
-                    block_tag,
-                )
-                resolved_principals = []
-                for member_address in member_addresses:
-                    resolved_type, details = classify_resolved_address(rpc_url, member_address, block_tag)
-                    resolved_principals.append(
-                        {
-                            "address": member_address,
-                            "resolved_type": resolved_type,
-                            "details": details,
-                        }
-                    )
                 return controller_id, {
                     "source": source,
                     "value": value,
                     "block_number": block_number,
-                    "observed_via": f"eth_call+{adapter_meta.get('adapter', 'none')}",
+                    "observed_via": "eth_call",
                     "resolved_type": "unknown",
                     "details": {
                         "source": source,
                         "role_id": value,
-                        "authority_contract": read_contract_address,
-                        **adapter_meta,
-                        "resolved_principals": resolved_principals,
+                        "authority_contract": plan["contract_address"],
+                        "principal_source": "capability_expr",
                     },
                 }
             entry: dict[str, Any] = {
@@ -522,17 +532,15 @@ def build_control_snapshot(plan: ControlTrackingPlan, rpc_url: str, block_tag: s
                 },
             }
 
-    levels = _controller_topo_levels(plan["tracked_controllers"], controllers_by_source)
-    for level in levels:
-        results = parallel_map(_compute_controller, level, max_workers=8)
-        for _controller, outcome in results:
-            if isinstance(outcome, BaseException):
-                # parallel_map captures exceptions, but ``_compute_controller``
-                # already converts every internal failure to an error-shaped
-                # entry. Anything reaching here is a genuine bug — surface it.
-                raise outcome
-            cid, entry = outcome
-            controller_values[cid] = entry
+    results = parallel_map(_compute_controller, plan["tracked_controllers"], max_workers=8, heartbeat=heartbeat)
+    for _controller, outcome in results:
+        if isinstance(outcome, BaseException):
+            # parallel_map captures exceptions, but ``_compute_controller``
+            # already converts every internal failure to an error-shaped
+            # entry. Anything reaching here is a genuine bug — surface it.
+            raise outcome
+        cid, entry = outcome
+        controller_values[cid] = entry
 
     return {
         "schema_version": "0.1",
@@ -541,54 +549,6 @@ def build_control_snapshot(plan: ControlTrackingPlan, rpc_url: str, block_tag: s
         "block_number": block_number,
         "controller_values": controller_values,
     }
-
-
-def _controller_topo_levels(
-    controllers: list[TrackedController],
-    controllers_by_source: dict[str, list[TrackedController]],
-) -> list[list[TrackedController]]:
-    """Group controllers into DAG levels: level N reads only level <N output.
-
-    A controller depends on every controller whose ``source`` matches its
-    ``read_spec.contract_source``. Cycles (or unresolvable deps) are placed
-    into a single trailing level so they still run — they just won't see each
-    other's freshly-resolved values, mirroring the behaviour of the prior
-    sequential code when ``in_progress`` short-circuited recursion.
-    """
-    by_id: dict[str, TrackedController] = {c["controller_id"]: c for c in controllers}
-    deps_of: dict[str, set[str]] = {}
-    for controller in controllers:
-        cid = controller["controller_id"]
-        deps: set[str] = set()
-        read_spec = controller.get("read_spec")
-        if isinstance(read_spec, dict):
-            contract_source = read_spec.get("contract_source")
-            if isinstance(contract_source, str) and contract_source:
-                for dep in controllers_by_source.get(contract_source, []):
-                    if dep["controller_id"] != cid:
-                        deps.add(dep["controller_id"])
-        # Only consider deps that exist in the plan; orphan refs collapse to no-dep.
-        deps_of[cid] = {d for d in deps if d in by_id}
-
-    levels: list[list[TrackedController]] = []
-    resolved: set[str] = set()
-    remaining_ids: set[str] = set(by_id.keys())
-    while remaining_ids:
-        ready = [by_id[cid] for cid in remaining_ids if all(d in resolved for d in deps_of[cid])]
-        if not ready:
-            # Cycle or external orphan dep — flush the rest as one level so the
-            # loop terminates. Within that level the contract_source lookup
-            # falls back to the plan's contract_address for unresolved deps.
-            ready = [by_id[cid] for cid in remaining_ids]
-        # Preserve plan order within a level for deterministic iteration.
-        ready_ids = {c["controller_id"] for c in ready}
-        ready_in_plan_order = [c for c in controllers if c["controller_id"] in ready_ids]
-        levels.append(ready_in_plan_order)
-        for c in ready_in_plan_order:
-            resolved.add(c["controller_id"])
-            remaining_ids.discard(c["controller_id"])
-
-    return levels
 
 
 def _decode_event_log_fields(event_ref: AssociatedEvent, log_entry: dict[str, Any]) -> dict[str, Any]:

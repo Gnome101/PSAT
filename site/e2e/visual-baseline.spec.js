@@ -189,7 +189,7 @@ test.describe("visual baselines", () => {
 
   test("home page", async ({ page }) => {
     await page.goto("/", { waitUntil: "domcontentloaded" });
-    await page.locator(".product-hero-eyebrow").waitFor({ state: "visible" });
+    await page.locator(".ph-title").waitFor({ state: "visible" });
     await expect(page).toHaveScreenshot("home.png", SCREENSHOT_OPTS);
   });
 

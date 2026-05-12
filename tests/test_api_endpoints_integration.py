@@ -705,6 +705,12 @@ def test_analysis_detail_proxy_inherits_impl_artifacts(mock_session_cls, mock_ge
         "contract_analysis": impl_analysis,
         "effective_permissions": impl_permissions,
         "principal_labels": {"principals": []},
+        "principal_history": {
+            "schema_version": "principal_history.v1",
+            "contract_address": impl_addr,
+            "status": "ok",
+            "function_permissions": [{"function": "pause()", "principal": "0xowner"}],
+        },
         "resolved_control_graph": {"nodes": [], "edges": []},
         "control_snapshot": {"controller_values": {}},
     }
@@ -741,6 +747,7 @@ def test_analysis_detail_proxy_inherits_impl_artifacts(mock_session_cls, mock_ge
     assert body["contract_analysis"]["summary"]["control_model"] == "authority"
     assert body["effective_permissions"]["functions"][0]["function"] == "pause()"
     assert "principal_labels" in body
+    assert body["principal_history"]["function_permissions"][0]["principal"] == "0xowner"
     assert "resolved_control_graph" in body
     assert body["contract_name"] == "VaultImpl"
     assert body["implementation_address"] == impl_addr

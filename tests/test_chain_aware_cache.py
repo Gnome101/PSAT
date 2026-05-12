@@ -30,7 +30,6 @@ def _create_completed_job_with_chain(session, address, chain, name="TestContract
         ContractSummary,
         JobStage,
         JobStatus,
-        PrivilegedFunction,
         RoleDefinition,
     )
     from db.queue import create_job, store_source_files
@@ -69,15 +68,6 @@ def _create_completed_job_with_chain(session, address, chain, name="TestContract
             is_pausable=True,
             has_timelock=False,
             risk_level="medium",
-        )
-    )
-    session.add(
-        PrivilegedFunction(
-            contract_id=contract.id,
-            function_name="pause",
-            selector="0x8456cb59",
-            effect_labels=["pause"],
-            authority_public=False,
         )
     )
     session.add(

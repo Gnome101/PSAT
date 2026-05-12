@@ -99,8 +99,8 @@ describe("App router smoke tests", () => {
   it("renders the home / runs page at /", async () => {
     navigateTo("/");
     render(<App />);
-    expect(await screen.findByText(/Every privileged path/i)).toBeInTheDocument();
-    expect(document.querySelector(".product-hero-eyebrow")).toBeInTheDocument();
+    expect(await screen.findByText(/Detect every/i)).toBeInTheDocument();
+    expect(document.querySelector(".ph-title")).toBeInTheDocument();
     expectNoCrash();
   });
 

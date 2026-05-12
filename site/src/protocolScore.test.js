@@ -120,4 +120,35 @@ describe("computeProtocolScore", () => {
       ]),
     );
   });
+
+  it("does not classify exact empty principal sets as unresolved controllers", () => {
+    const contract = {
+      address: "0xcontract",
+      name: "Vault",
+      source_verified: true,
+      role: "value_handler",
+      total_usd: 100_000_000,
+      functions: [
+        {
+          function: "recover(address)",
+          effect_labels: ["asset_send"],
+          status: "resolved_empty",
+          capability_expr: {
+            kind: "finite_set",
+            members: [],
+            membership_quality: "exact",
+            confidence: "enumerable",
+          },
+          controllers: [],
+        },
+      ],
+    };
+
+    const score = computeProtocolScore({ contracts: [contract] }, null);
+    const authorityAxis = score.axes.find((entry) => entry.key === "authority");
+
+    expect(axis(score, "authority")).toBeGreaterThan(0.9);
+    expect(authorityAxis.tooltip.negative).not.toContain("unresolved controllers");
+    expect(JSON.stringify(authorityAxis.tooltip.negativeExamples)).not.toContain("controller unresolved");
+  });
 });

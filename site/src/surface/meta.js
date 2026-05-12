@@ -35,7 +35,9 @@ export const TYPE_META = {
   eoa: { label: "EOA", accent: "#a09870" },
   contract: { label: "CON", accent: "#7a8098" },
   proxy_admin: { label: "ADM", accent: "#8880a0" },
+  address: { label: "ADDR", accent: "#94a3b8" },
   unknown: { label: "UNK", accent: "#94a3b8" },
+  resolved_empty: { label: "NONE", accent: "#64748b" },
   open: { label: "OPEN", accent: "#64748b" },
   many: { label: "MULTI", accent: "#8a80a0" },
 };

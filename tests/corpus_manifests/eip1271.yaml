@@ -1,0 +1,30 @@
+contract_name: C
+description: |
+  F3 (codex round-7): EIP-1271 magic-value oracle.
+  ``IERC1271(signer).isValidSignature(hash, sig) == 0x1626ba7e``
+  recognized as ``signature_auth`` purely structurally — the
+  detection key is the magic value 0x1626ba7e (the EIP-1271
+  protocol fingerprint), NOT a function-name match.
+
+  The leaf is caller_authority HIGH (signature-based admission;
+  any other constant on the rhs would emit a generic external_bool
+  delegated_authority leaf instead).
+
+source: |
+  pragma solidity ^0.8.19;
+  interface IERC1271 {
+      function isValidSignature(bytes32 hash, bytes memory signature) external view returns (bytes4);
+  }
+  contract C {
+      address public signerContract;
+      function f(bytes32 hash, bytes calldata sig) external view {
+          require(IERC1271(signerContract).isValidSignature(hash, sig) == 0x1626ba7e);
+      }
+  }
+
+expected_functions:
+  "f(bytes32,bytes)":
+    authority_role: caller_authority
+    kind: signature_auth
+    operator: truthy
+    confidence: high

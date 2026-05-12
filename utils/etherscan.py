@@ -261,7 +261,11 @@ def _build_selector_map(abi_json: str) -> dict[str, str]:
     return selector_map
 
 
-def parallel_get(calls: Mapping[str, Callable[[], object]]) -> dict[str, object | BaseException]:
+def parallel_get(
+    calls: Mapping[str, Callable[[], object]],
+    *,
+    heartbeat: Callable[[], None] | None = None,
+) -> dict[str, object | BaseException]:
     """Submit Etherscan callables concurrently and return ``{call_id: result_or_exception}``.
 
     Each callable is expected to be a thunk over an existing helper (typically
@@ -274,21 +278,24 @@ def parallel_get(calls: Mapping[str, Callable[[], object]]) -> dict[str, object 
     Failures are returned in-place rather than raised so the caller can
     decide which IDs to skip (mirrors :func:`utils.concurrency.parallel_map`).
     """
-    from concurrent.futures import as_completed
-
-    from utils.concurrency import RpcExecutor
+    from utils.concurrency import parallel_map
 
     if not calls:
         return {}
 
-    futures = {RpcExecutor.submit(fn): call_id for call_id, fn in calls.items()}
+    items = list(calls.items())
+
+    def _run(item: tuple[str, Callable[[], object]]) -> tuple[str, object]:
+        call_id, fn = item
+        return call_id, fn()
+
     results: dict[str, object | BaseException] = {}
-    for fut in as_completed(futures):
-        call_id = futures[fut]
-        try:
-            results[call_id] = fut.result()
-        except BaseException as exc:  # noqa: BLE001 — preserve every exception type
-            results[call_id] = exc
+    for (call_id, _fn), outcome in parallel_map(_run, items, max_workers=len(items), heartbeat=heartbeat):
+        if isinstance(outcome, BaseException):
+            results[call_id] = outcome
+            continue
+        result_call_id, value = outcome
+        results[result_call_id] = value
     return results
 
 

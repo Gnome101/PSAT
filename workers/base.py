@@ -12,11 +12,12 @@ import traceback
 import uuid
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from datetime import datetime, timezone
+from typing import cast
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from db.models import Job, JobStage, JobStatus, SessionLocal
+from db.models import Job, JobDependency, JobStage, JobStatus, SessionLocal
 from db.queue import (
     DEFAULT_JOB_LEASE_TTL_S,
     LeaseLost,
@@ -52,6 +53,15 @@ STALE_JOB_TIMEOUT = int(os.getenv("PSAT_STALE_JOB_TIMEOUT", "600"))  # seconds
 # Per-worker throttle for the stuck-job sweep; default 30s keeps fleet sweeps well under the 900s stale_timeout while
 # cutting per-poll DB load.
 RECLAIM_INTERVAL_S = float(os.getenv("PSAT_RECLAIM_INTERVAL_S", "30"))
+
+
+def _job_heartbeat_interval_s() -> float:
+    """Resolve the max wait between background job heartbeats."""
+    try:
+        value = float(os.getenv("PSAT_JOB_HEARTBEAT_INTERVAL_S", os.getenv("PSAT_PARALLEL_HEARTBEAT_INTERVAL_S", "30")))
+    except ValueError:
+        return 30.0
+    return max(0.1, value)
 
 
 def _resolve_job_concurrency(stage_value: str) -> int:
@@ -294,7 +304,13 @@ class BaseWorker:
             # Snapshot the lease at claim time so every mutating queue
             # write threads it through. ``getattr`` keeps test stubs that
             # build a bare SimpleNamespace job from tripping AttributeError.
+            claim_job_id = getattr(job, "id")
             claim_lease_id = getattr(job, "lease_id", None)
+            # Heartbeats run from background/parallel helper threads. Keep
+            # them on the immutable claim-time token instead of rereading ORM
+            # attributes from a long-lived worker session.
+            setattr(job, "_heartbeat_job_id", claim_job_id)
+            setattr(job, "_heartbeat_lease_id", claim_lease_id)
             # Register this (job_id, lease_id) for graceful-shutdown release.
             # ``_handle_sigterm`` reads this map on its daemon thread; the
             # ``finally`` below removes the entry whether the job completes,
@@ -302,8 +318,38 @@ class BaseWorker:
             inflight_registered = False
             if claim_lease_id is not None:
                 with self._inflight_lock:
-                    self._inflight_jobs[job.id] = claim_lease_id
+                    self._inflight_jobs[claim_job_id] = claim_lease_id
                 inflight_registered = True
+            heartbeat_stop = threading.Event()
+            heartbeat_thread: threading.Thread | None = None
+
+            def _background_heartbeat() -> None:
+                while not heartbeat_stop.wait(_job_heartbeat_interval_s()):
+                    try:
+                        self._heartbeat(session, job)
+                    except LeaseLost as lease_exc:
+                        logger.warning(
+                            "Worker %s: background heartbeat lost lease for job %s: %s",
+                            self.worker_id,
+                            claim_job_id,
+                            lease_exc,
+                            extra={"phase": "job", "outcome": "lease_lost"},
+                        )
+                        return
+                    except Exception:
+                        logger.warning(
+                            "Worker %s: background heartbeat failed for job %s",
+                            self.worker_id,
+                            claim_job_id,
+                        )
+
+            if claim_lease_id is not None:
+                heartbeat_thread = threading.Thread(
+                    target=_background_heartbeat,
+                    name=f"{self.worker_id}-heartbeat-{str(job.id)[:8]}",
+                    daemon=True,
+                )
+                heartbeat_thread.start()
             try:
                 logger.info("Worker %s claimed job %s", self.worker_id, job.id)
                 t0 = time.monotonic()
@@ -345,6 +391,12 @@ class BaseWorker:
                     # artifact is visible to the next-stage worker at its claim.
                     if degraded_accumulator:
                         self._persist_stage_errors(job, degraded_accumulator)
+                    # Flip JobDependency rows where this job is the provider
+                    # and its just-completed stage meets-or-exceeds the
+                    # depender's required_stage. Queued in the same tx as
+                    # advance_job/complete_job below so dependents become
+                    # claimable atomically with the stage change.
+                    self._satisfy_dependencies(session, job, completed_stage=self.stage)
                     if self.next_stage == JobStage.done:
                         from db.queue import complete_job
 
@@ -496,6 +548,12 @@ class BaseWorker:
                                 lease_id=claim_lease_id,
                             )
                         else:
+                            # Terminal failure → flip pending deps where this
+                            # job is the provider to ``degraded`` so dependents
+                            # short-circuit instead of blocking forever.
+                            # Queued before fail_job_terminal so the same tx
+                            # commits both.
+                            self._degrade_dependencies(session, job)
                             fail_job_terminal(
                                 session,
                                 job.id,
@@ -540,6 +598,7 @@ class BaseWorker:
                                     lease_id=claim_lease_id,
                                 )
                             else:
+                                self._degrade_dependencies(fresh, job)
                                 fail_job_terminal(
                                     fresh,
                                     job.id,
@@ -571,10 +630,13 @@ class BaseWorker:
                                 "Could not update job %s for retry/terminal even with fresh session", job.id
                             )
             finally:
+                heartbeat_stop.set()
+                if heartbeat_thread is not None:
+                    heartbeat_thread.join(timeout=1)
                 degraded_errors_var.reset(accumulator_token)
                 if inflight_registered:
                     with self._inflight_lock:
-                        self._inflight_jobs.pop(job.id, None)
+                        self._inflight_jobs.pop(claim_job_id, None)
 
     def _run_one_job(self, job_id) -> None:
         """K>1 dispatcher entry point: open a per-job session, re-fetch the job
@@ -765,7 +827,13 @@ class BaseWorker:
         load-bearing for stall detection, and silent failures on a
         critical path is what hid this bug across multiple PR previews.
         """
-        lease_id = getattr(job, "lease_id", None)
+        missing = object()
+        job_id = getattr(job, "_heartbeat_job_id", missing)
+        if job_id is missing:
+            job_id = getattr(job, "id")
+        lease_id = getattr(job, "_heartbeat_lease_id", missing)
+        if lease_id is missing:
+            lease_id = getattr(job, "lease_id", None)
         if lease_id is None:
             # Pre-migration row, or a job claimed by an out-of-process
             # legacy claim path; fall back to bumping updated_at so the
@@ -774,7 +842,7 @@ class BaseWorker:
 
             try:
                 with SessionLocal() as fresh:
-                    fresh.execute(sa_update(Job).where(Job.id == job.id).values(updated_at=datetime.now(timezone.utc)))
+                    fresh.execute(sa_update(Job).where(Job.id == job_id).values(updated_at=datetime.now(timezone.utc)))
                     fresh.commit()
             except Exception:
                 logger.warning("heartbeat (legacy path) write failed", exc_info=True)
@@ -782,11 +850,110 @@ class BaseWorker:
 
         try:
             with SessionLocal() as fresh:
-                heartbeat_job(fresh, job.id, lease_id=lease_id, lease_ttl_seconds=DEFAULT_JOB_LEASE_TTL_S)
+                heartbeat_job(
+                    fresh,
+                    job_id,
+                    lease_id=cast(uuid.UUID, lease_id),
+                    lease_ttl_seconds=DEFAULT_JOB_LEASE_TTL_S,
+                )
         except LeaseLost:
             raise
         except Exception:
             logger.warning("heartbeat write failed (non-fatal)", exc_info=True)
+
+    def _satisfy_dependencies(self, session: Session, job: Job, *, completed_stage: JobStage) -> int:
+        """Mark every pending ``JobDependency`` row whose provider is this
+        job as ``satisfied`` when the just-completed stage meets-or-exceeds
+        the depender's ``required_stage``.
+
+        Stage ordering follows the natural ``JobStage`` enum order
+        (discovery < dapp_crawl < ... < policy < coverage < done). Mutates
+        rows IN this session WITHOUT committing — the caller's
+        ``advance_job`` / ``complete_job`` commit flushes them in the same
+        transaction so dependents become claimable atomically with the
+        provider's stage change.
+
+        Returns the count of rows flipped (mostly for logging / tests).
+        Best-effort: a query failure logs and returns 0 rather than
+        propagating; the success path of stage advancement should not be
+        blocked by a dependency-bookkeeping bug.
+        """
+        chain = self._provider_chain_for(job)
+        addr = (getattr(job, "address", None) or "").lower()
+        if not addr:
+            return 0
+        try:
+            stage_order = [s.value for s in JobStage]
+            completed_idx = stage_order.index(completed_stage.value)
+            satisfied_stages = {s for s in JobStage if stage_order.index(s.value) <= completed_idx}
+            stmt = select(JobDependency).where(
+                JobDependency.provider_chain == chain,
+                JobDependency.provider_address == addr,
+                JobDependency.status == "pending",
+                JobDependency.required_stage.in_(satisfied_stages),
+            )
+            rows = session.execute(stmt).scalars().all()
+            now = datetime.now(timezone.utc)
+            for row in rows:
+                row.status = "satisfied"
+                row.satisfied_at = now
+            return len(rows)
+        except Exception as exc:
+            logger.warning(
+                "satisfy_dependencies failed for job %s: %s",
+                job.id,
+                exc,
+                extra={"exc_type": type(exc).__name__},
+            )
+            return 0
+
+    def _degrade_dependencies(self, session: Session, job: Job) -> int:
+        """Mark every pending ``JobDependency`` row whose provider is this
+        job as ``degraded`` after the provider terminally fails.
+
+        Dependents short-circuit cross-contract authority leaves to
+        ``external_check_only`` rather than block forever. Same
+        non-committing semantics as ``_satisfy_dependencies``.
+        """
+        chain = self._provider_chain_for(job)
+        addr = (getattr(job, "address", None) or "").lower()
+        if not addr:
+            return 0
+        try:
+            stmt = select(JobDependency).where(
+                JobDependency.provider_chain == chain,
+                JobDependency.provider_address == addr,
+                JobDependency.status == "pending",
+            )
+            rows = session.execute(stmt).scalars().all()
+            now = datetime.now(timezone.utc)
+            for row in rows:
+                row.status = "degraded"
+                row.satisfied_at = now
+            return len(rows)
+        except Exception as exc:
+            logger.warning(
+                "degrade_dependencies failed for job %s: %s",
+                job.id,
+                exc,
+                extra={"exc_type": type(exc).__name__},
+            )
+            return 0
+
+    @staticmethod
+    def _provider_chain_for(job: Job) -> str | None:
+        """Pull the provider's chain identifier out of the job's request
+        payload. Mirrors the convention ``_queue_discovered_contracts``
+        uses when stamping ``request['chain']`` on spawned children.
+
+        ``getattr`` over direct attribute access so test doubles
+        (SimpleNamespace fakes that omit ``request``) don't trigger
+        AttributeError on the dependency hooks."""
+        request = getattr(job, "request", None)
+        if not isinstance(request, dict):
+            return None
+        chain = request.get("chain")
+        return chain if isinstance(chain, str) and chain else None
 
     def _persist_stage_errors(self, job: Job, errors: list[StageError]) -> None:
         """Write the ``stage_errors`` artifact via a fresh session, merging

@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
-"""Join protected-contract analysis with authority policy state."""
+"""Build effective permission artifacts from semantic resolver output."""
 
 from __future__ import annotations
 
 import argparse
 import json
+import logging
 import sys
+from dataclasses import is_dataclass
 from pathlib import Path
 from typing import Any, Mapping, cast
 
@@ -17,7 +19,6 @@ if __package__ in {None, ""}:
 from schemas.contract_analysis import ContractAnalysis
 from schemas.control_tracking import ControlSnapshot
 from schemas.effective_permissions import (
-    AuthorityRoleGrant,
     EffectiveFunctionPermission,
     EffectivePermissions,
     PrincipalResolution,
@@ -25,6 +26,9 @@ from schemas.effective_permissions import (
     ResolvedControllerGrant,
     ResolvedPrincipal,
 )
+from services.policy.capability_surface import capability_surface_status, project_capability_surface
+
+logger = logging.getLogger(__name__)
 
 ELEMENTARY_TYPE_PREFIXES = (
     "address",
@@ -175,43 +179,6 @@ def _controller_lookup(snapshot: Mapping[str, Any] | None) -> dict[str, list[tup
     return lookup
 
 
-def _snapshot_address(snapshot: Mapping[str, Any] | None) -> str | None:
-    if not snapshot:
-        return None
-    address = _lower_string(snapshot.get("contract_address", ""))
-    if address.startswith("0x") and len(address) == 42:
-        return address
-    return None
-
-
-def _external_snapshot_for_source(
-    source: str,
-    controller_lookup: dict[str, list[tuple[str, dict[str, Any]]]],
-    external_snapshots: dict[str, dict[str, Any]],
-) -> dict[str, Any] | None:
-    for controller_id, value in controller_lookup.get(source, []):
-        if not isinstance(controller_id, str) or not isinstance(value, dict):
-            continue
-        address = _lower_string(value.get("value", ""))
-        if address.startswith("0x") and len(address) == 42 and address in external_snapshots:
-            return external_snapshots[address]
-    return None
-
-
-def _external_policy_state_for_source(
-    source: str,
-    controller_lookup: dict[str, list[tuple[str, dict[str, Any]]]],
-    external_policy_states: dict[str, dict[str, Any]],
-) -> dict[str, Any] | None:
-    for controller_id, value in controller_lookup.get(source, []):
-        if not isinstance(controller_id, str) or not isinstance(value, dict):
-            continue
-        address = _lower_string(value.get("value", ""))
-        if address.startswith("0x") and len(address) == 42 and address in external_policy_states:
-            return external_policy_states[address]
-    return None
-
-
 def _controller_grants_for_refs(
     controller_refs: list[str],
     controller_lookup: dict[str, list[tuple[str, dict[str, Any]]]],
@@ -220,8 +187,6 @@ def _controller_grants_for_refs(
     grants: list[ResolvedControllerGrant] = []
     seen: set[str] = set()
     for ref in controller_refs:
-        if ref in {"owner", "authority"}:
-            continue
         for controller_id, value in controller_lookup.get(ref, []):
             if controller_id in seen:
                 continue
@@ -255,12 +220,7 @@ def _controller_grants_for_refs(
                 and raw_value != "0x0000000000000000000000000000000000000000"
             ):
                 kind = controller_id.split(":", 1)[0] if ":" in controller_id else "unknown"
-                ref_lower = ref.lower()
-                auth_like = any(
-                    token in ref_lower
-                    for token in ("owner", "admin", "govern", "guardian", "authority", "committee", "timelock")
-                )
-                if not principals and (kind in {"state_variable", "singleton_slot", "computed"} or auth_like):
+                if not principals and kind in {"state_variable", "singleton_slot", "computed"}:
                     principals.append(_principal_for_address(raw_value, known))
             elif raw_value and not principals:
                 notes.append(f"value={raw_value}")
@@ -280,220 +240,190 @@ def _controller_grants_for_refs(
     return grants
 
 
-def _controller_refs_from_effect_targets(effect_targets: list[str]) -> list[str]:
+def _normalize_capability_output(
+    capability_resolver_output: Mapping[str, Any] | None,
+) -> dict[str, dict[str, Any]]:
+    """``capability_resolver_output`` may carry either dataclass
+    ``CapabilityExpr`` instances (from a direct resolver call) or
+    already-serialized dicts (from a persisted artifact / test
+    fixture). Normalize to dicts up-front so downstream column shaping
+    has one shape to handle."""
+    if not capability_resolver_output:
+        return {}
+    out: dict[str, dict[str, Any]] = {}
+    for fn_signature, cap in capability_resolver_output.items():
+        if cap is None:
+            continue
+        if isinstance(cap, dict):
+            cap_dict = dict(cap)
+            if not isinstance(cap_dict.get("kind"), str):
+                cap_dict = _unsupported_capability("malformed_semantic_capability")
+            out[str(fn_signature)] = cap_dict
+            continue
+        if is_dataclass(cap):
+            try:
+                from services.resolution.capability_resolver import capability_to_dict
+
+                cap_dict = capability_to_dict(cap)  # type: ignore[arg-type]
+                if not isinstance(cap_dict.get("kind"), str):
+                    cap_dict = _unsupported_capability("malformed_semantic_capability")
+                out[str(fn_signature)] = cap_dict
+            except Exception as exc:
+                logger.warning(
+                    "Failed to serialize CapabilityExpr for function %s: %s",
+                    fn_signature,
+                    exc,
+                )
+                out[str(fn_signature)] = _unsupported_capability("malformed_semantic_capability")
+            continue
+        out[str(fn_signature)] = _unsupported_capability("malformed_semantic_capability")
+    return out
+
+
+def _unsupported_capability(reason: str) -> dict[str, Any]:
+    return {
+        "kind": "unsupported",
+        "unsupported_reason": reason,
+        "membership_quality": "exact",
+        "confidence": "check_only",
+    }
+
+
+def _public_capability() -> dict[str, Any]:
+    return {
+        "kind": "conditional_universal",
+        "conditions": [],
+        "membership_quality": "exact",
+        "confidence": "enumerable",
+    }
+
+
+def _effects_by_function(
+    effects: Mapping[str, Any] | None,
+) -> dict[str, dict[str, Any]]:
+    """The semantic ``effects`` artifact keyed by function full-name.
+    Returns a flat ``{function_signature: effect_record}`` dict where each
+    record carries ``effect_labels`` / ``effect_targets`` / ``action_summary``.
+
+    Falls back to ``{}`` if the artifact is missing or malformed."""
+    if not isinstance(effects, dict):
+        return {}
+    functions = effects.get("functions")
+    if not isinstance(functions, dict):
+        return {}
+    return {str(fn_sig): record for fn_sig, record in functions.items() if isinstance(record, dict)}
+
+
+def _predicate_trees_by_function(predicate_trees: Mapping[str, Any] | None) -> dict[str, dict[str, Any]]:
+    if not isinstance(predicate_trees, dict):
+        return {}
+    trees = predicate_trees.get("trees")
+    if not isinstance(trees, dict):
+        return {}
+    return {str(fn_sig): tree for fn_sig, tree in trees.items() if isinstance(tree, dict)}
+
+
+def _controller_refs_from_tree(tree: Mapping[str, Any] | None) -> list[str]:
+    if not isinstance(tree, dict):
+        return []
     refs: list[str] = []
-    for target in effect_targets:
-        lowered = str(target or "").lower()
-        if ".onlyprotocolupgrader" in lowered and "roleregistry" in lowered:
-            refs.append("roleRegistry")
-    return sorted(set(refs))
+    seen: set[str] = set()
+
+    def add(name: Any) -> None:
+        if isinstance(name, str) and name and name not in seen:
+            seen.add(name)
+            refs.append(name)
+
+    def visit(node: Any) -> None:
+        if not isinstance(node, dict):
+            return
+        if node.get("op") == "LEAF":
+            leaf = node.get("leaf") or {}
+            if not isinstance(leaf, dict):
+                return
+            for operand in leaf.get("operands") or []:
+                if isinstance(operand, dict) and operand.get("source") == "state_variable":
+                    add(operand.get("state_variable_name"))
+            descriptor = leaf.get("set_descriptor") or {}
+            if isinstance(descriptor, dict):
+                authority = descriptor.get("authority_contract") or {}
+                if isinstance(authority, dict):
+                    address_source = authority.get("address_source") or {}
+                    if isinstance(address_source, dict) and address_source.get("source") == "state_variable":
+                        add(address_source.get("state_variable_name"))
+                for key_source in descriptor.get("key_sources") or []:
+                    if isinstance(key_source, dict) and key_source.get("source") == "state_variable":
+                        add(key_source.get("state_variable_name"))
+            return
+        for child in node.get("children") or []:
+            visit(child)
+
+    visit(tree)
+    return refs
 
 
-def _semantic_guards_by_function(semantic_guards: Mapping[str, Any] | None) -> dict[str, dict[str, Any]]:
-    if not isinstance(semantic_guards, dict):
-        return {}
-    entries = semantic_guards.get("functions", [])
-    if not isinstance(entries, list):
-        return {}
-    result: dict[str, dict[str, Any]] = {}
-    for entry in entries:
-        if not isinstance(entry, dict):
-            continue
-        function = str(entry.get("function", ""))
-        if function:
-            result[function] = entry
-    return result
+_SENSITIVE_SINK_KINDS = frozenset({"state_write", "external_call", "delegatecall", "contract_creation", "selfdestruct"})
 
 
-def _semantic_controller_grants(
-    semantic_entry: dict[str, Any],
+def _effect_record_has_sensitive_sink(record: Mapping[str, Any]) -> bool:
+    for sink in record.get("sinks") or []:
+        if isinstance(sink, dict) and sink.get("kind") in _SENSITIVE_SINK_KINDS:
+            return True
+    return False
+
+
+def _function_records_from_semantic_artifacts(
     *,
-    target_function_selector: str,
-    target_snapshot: Mapping[str, Any] | None,
-    controller_lookup: dict[str, list[tuple[str, dict[str, Any]]]],
-    external_snapshots: dict[str, dict[str, Any]],
-    external_policy_states: dict[str, dict[str, Any]],
-    known: dict[str, ResolvedPrincipal],
-) -> tuple[
-    ResolvedPrincipal | None,
-    list[ResolvedControllerGrant],
-    list[str],
-    bool | None,
-    list[AuthorityRoleGrant] | None,
-]:
-    direct_owner: ResolvedPrincipal | None = None
-    controller_grants: list[ResolvedControllerGrant] = []
-    notes = list(semantic_entry.get("notes", [])) if isinstance(semantic_entry.get("notes"), list) else []
-    semantic_status = str(semantic_entry.get("status", ""))
-    semantic_authority_public: bool | None = None
-    semantic_role_grants: list[AuthorityRoleGrant] | None = None
-    predicates = semantic_entry.get("predicates", [])
-    if not isinstance(predicates, list):
-        return direct_owner, controller_grants, notes, semantic_authority_public, semantic_role_grants
+    capability_dicts: Mapping[str, dict[str, Any]],
+    effects_by_function: Mapping[str, dict[str, Any]],
+    predicate_trees_by_function: Mapping[str, dict[str, Any]],
+    resolver_output_available: bool,
+) -> list[dict[str, Any]]:
+    """Build effective-permission function records from semantic resolver/effects data."""
+    signatures = set(capability_dicts)
+    signatures.update(predicate_trees_by_function)
+    signatures.update(
+        signature for signature, record in effects_by_function.items() if _effect_record_has_sensitive_sink(record)
+    )
 
-    for predicate in predicates:
-        if not isinstance(predicate, dict):
-            continue
-        kind = str(predicate.get("kind", ""))
-
-        if kind == "role_member":
-            role_source = str(predicate.get("role_source", ""))
-            authority_source_raw = predicate.get("authority_source", "")
-            if isinstance(authority_source_raw, list):
-                authority_sources = [str(item) for item in authority_source_raw if str(item)]
-                authority_source = authority_sources[0] if len(authority_sources) == 1 else ""
+    records: list[dict[str, Any]] = []
+    for signature in sorted(signatures):
+        effect_info = effects_by_function.get(signature) or {}
+        record: dict[str, Any] = {
+            "function": signature,
+            "controller_refs": _controller_refs_from_tree(predicate_trees_by_function.get(signature)),
+            "effect_targets": list(effect_info.get("effect_targets") or []),
+            "effect_labels": list(effect_info.get("effect_labels") or []),
+            "action_summary": effect_info.get("action_summary") or "Performs a contract action.",
+        }
+        if signature not in capability_dicts:
+            if signature in predicate_trees_by_function:
+                record["capability_expr"] = _unsupported_capability("missing_semantic_capability_for_predicate_tree")
+                record["status"] = "unsupported"
+            elif resolver_output_available:
+                record["capability_expr"] = _public_capability()
+                record["status"] = "public"
+                record["authority_public"] = True
             else:
-                authority_source = str(authority_source_raw or "")
-            if role_source:
-                external_snapshot = (
-                    _external_snapshot_for_source(authority_source, controller_lookup, external_snapshots)
-                    if authority_source
-                    else None
-                )
-                if external_snapshot is not None:
-                    external_known = dict(known)
-                    external_known.update(_known_principals(external_snapshot))
-                    external_lookup = _controller_lookup(external_snapshot)
-                    controller_grants.extend(
-                        _controller_grants_for_refs([role_source], external_lookup, external_known)
-                    )
-                else:
-                    controller_grants.extend(_controller_grants_for_refs([role_source], controller_lookup, known))
-            continue
+                record["capability_expr"] = _unsupported_capability("missing_semantic_capability_resolver_output")
+                record["status"] = "unsupported"
+        records.append(record)
+    return records
 
-        if kind == "mapping_membership":
-            source = str(predicate.get("controller_source", ""))
-            if source:
-                controller_grants.extend(_controller_grants_for_refs([source], controller_lookup, known))
-            continue
 
-        if kind == "caller_equals_controller":
-            controller_source = str(predicate.get("controller_source", ""))
-            read_spec = predicate.get("read_spec")
-            contract_source = read_spec.get("contract_source") if isinstance(read_spec, dict) else None
-            contract_source = str(contract_source) if isinstance(contract_source, str) and contract_source else None
-
-            if contract_source:
-                external_snapshot = _external_snapshot_for_source(
-                    contract_source,
-                    controller_lookup,
-                    external_snapshots,
-                )
-                if external_snapshot is None:
-                    continue
-                external_known = dict(known)
-                external_known.update(_known_principals(external_snapshot))
-                external_lookup = _controller_lookup(external_snapshot)
-                external_owner_value = next(
-                    (
-                        _lower_string(value.get("value", ""))
-                        for key, value in (external_snapshot.get("controller_values", {}) or {}).items()
-                        if isinstance(key, str) and key.endswith(":owner") and isinstance(value, dict)
-                    ),
-                    None,
-                )
-                if controller_source == "owner" and external_owner_value:
-                    principal = _principal_for_address(external_owner_value, external_known)
-                    controller_grants.append(
-                        {
-                            "controller_id": "external_owner:owner",
-                            "label": "owner",
-                            "source": "owner",
-                            "kind": "state_variable",
-                            "principals": [principal],
-                            "notes": [f"contract_source={contract_source}"],
-                        }
-                    )
-                else:
-                    controller_grants.extend(
-                        _controller_grants_for_refs([controller_source], external_lookup, external_known)
-                    )
-                continue
-
-            if controller_source == "owner" and target_snapshot:
-                owner_value = next(
-                    (
-                        _lower_string(value.get("value", ""))
-                        for key, value in (target_snapshot.get("controller_values", {}) or {}).items()
-                        if isinstance(key, str) and key.endswith(":owner") and isinstance(value, dict)
-                    ),
-                    None,
-                )
-                if owner_value and owner_value != "0x0000000000000000000000000000000000000000":
-                    direct_owner = _principal_for_address(owner_value, known)
-                    continue
-
-            if controller_source:
-                controller_grants.extend(_controller_grants_for_refs([controller_source], controller_lookup, known))
-            continue
-
-        if kind == "policy_check":
-            authority_source_raw = predicate.get("authority_source", "")
-            if isinstance(authority_source_raw, list):
-                authority_sources = [str(item) for item in authority_source_raw if str(item)]
-                authority_source = authority_sources[0] if len(authority_sources) == 1 else ""
-            else:
-                authority_source = str(authority_source_raw or "")
-            if not authority_source:
-                continue
-            policy_state = _external_policy_state_for_source(
-                authority_source,
-                controller_lookup,
-                external_policy_states,
-            )
-            if policy_state is None:
-                continue
-
-            target_address = _snapshot_address(target_snapshot)
-            public_enabled = any(
-                str(entry.get("target", "")).lower() == target_address
-                and str(entry.get("function_sig", "")).lower() == target_function_selector
-                and bool(entry.get("enabled"))
-                for entry in policy_state.get("public_capabilities", [])
-                if isinstance(entry, dict)
-            )
-            role_capabilities = [
-                entry
-                for entry in policy_state.get("role_capabilities", [])
-                if isinstance(entry, dict)
-                and str(entry.get("target", "")).lower() == target_address
-                and str(entry.get("function_sig", "")).lower() == target_function_selector
-                and bool(entry.get("enabled"))
-            ]
-            users_by_role: dict[int, list[dict[str, Any]]] = {}
-            for entry in policy_state.get("user_roles", []):
-                if not isinstance(entry, dict) or not entry.get("enabled"):
-                    continue
-                users_by_role.setdefault(int(entry["role"]), []).append(entry)
-
-            policy_snapshot = _external_snapshot_for_source(authority_source, controller_lookup, external_snapshots)
-            policy_known = dict(known)
-            if policy_snapshot:
-                policy_known.update(_known_principals(policy_snapshot))
-
-            semantic_role_grants = []
-            for capability in sorted(role_capabilities, key=lambda item: int(item["role"])):
-                role = int(capability["role"])
-                principals = [
-                    _principal_for_address(user_entry["user"], policy_known)
-                    for user_entry in sorted(users_by_role.get(role, []), key=lambda item: item["user"])
-                ]
-                semantic_role_grants.append({"role": role, "principals": principals})
-
-            semantic_authority_public = public_enabled
-            notes.append(f"policy_check={authority_source}")
-
-    if semantic_status == "public":
-        notes.append("semantic_guards=public")
-
-    deduped: list[ResolvedControllerGrant] = []
-    seen_ids: set[str] = set()
-    for grant in controller_grants:
-        if grant["controller_id"] in seen_ids:
-            continue
-        seen_ids.add(grant["controller_id"])
-        deduped.append(grant)
-    return direct_owner, deduped, notes, semantic_authority_public, semantic_role_grants
+def _column_values_for_capability(cap_dict: dict[str, Any]) -> dict[str, Any]:
+    """Mirror of the writer's per-kind column rules — kept here so the
+    artifact dict carries the right shape even when the writer isn't
+    invoked (read-only callers like the recursive resolver)."""
+    surface = project_capability_surface(cap_dict)
+    conditions = surface.conditions
+    out: dict[str, Any] = {
+        "capability_expr": dict(cap_dict),
+        "conditions": conditions or None,
+        "status": capability_surface_status(cap_dict, surface),
+        "authority_public": surface.authority_public,
+    }
+    return out
 
 
 def build_effective_permissions(
@@ -501,160 +431,123 @@ def build_effective_permissions(
     *,
     target_snapshot: Mapping[str, Any] | ControlSnapshot | None = None,
     authority_snapshot: Mapping[str, Any] | ControlSnapshot | None = None,
-    policy_state: Mapping[str, Any] | None = None,
-    semantic_guards: Mapping[str, Any] | None = None,
-    external_snapshots: dict[str, dict[str, Any]] | None = None,
-    external_policy_states: dict[str, dict[str, Any]] | None = None,
     artifact_paths: dict[str, str] | None = None,
     principal_resolution: PrincipalResolution | None = None,
+    predicate_trees: Mapping[str, Any] | None = None,
+    capability_resolver_output: Mapping[str, Any] | None = None,
+    effects: Mapping[str, Any] | None = None,
 ) -> EffectivePermissions:
+    """Build the ``effective_permissions`` artifact from semantic resolver/effects
+    inputs only.
+
+    ``capability_resolver_output`` is the per-function CapabilityExpr
+    dict the resolver produces. Tests typically supply it directly to
+    avoid spinning up Slither + the full adapter chain.
+
+    ``effects`` is the semantic ``effects`` artifact keyed by function full-name.
+    """
     contract_address = target_analysis["subject"]["address"].lower()
     contract_name = target_analysis["subject"]["name"]
-    policy_state = policy_state or {"public_capabilities": [], "role_capabilities": [], "user_roles": []}
-    external_snapshots = external_snapshots or {}
-    external_policy_states = external_policy_states or {}
 
     known = _known_principals(target_snapshot, authority_snapshot)
-    target_controller_values = (target_snapshot or {}).get("controller_values", {})
     controller_lookup = _controller_lookup(target_snapshot)
-    semantic_by_function = _semantic_guards_by_function(semantic_guards)
-    owner_value = next(
-        (
-            _lower_string(value.get("value", ""))
-            for key, value in target_controller_values.items()
-            if key.endswith(":owner")
-        ),
-        None,
+    capability_dicts = _normalize_capability_output(capability_resolver_output)
+    effects_by_function = _effects_by_function(effects)
+    predicate_tree_functions = _predicate_trees_by_function(predicate_trees)
+    function_records = _function_records_from_semantic_artifacts(
+        capability_dicts=capability_dicts,
+        effects_by_function=effects_by_function,
+        predicate_trees_by_function=predicate_tree_functions,
+        resolver_output_available=capability_resolver_output is not None,
     )
-    authority_value = next(
-        (
-            _lower_string(value.get("value", ""))
-            for key, value in target_controller_values.items()
-            if key.endswith(":authority")
-        ),
-        None,
-    )
-
-    public_by_selector = {
-        entry["function_sig"].lower(): bool(entry["enabled"])
-        for entry in policy_state.get("public_capabilities", [])
-        if entry["target"].lower() == contract_address
-    }
-
-    role_capabilities_by_selector: dict[str, list[dict]] = {}
-    for entry in policy_state.get("role_capabilities", []):
-        if entry["target"].lower() != contract_address or not entry.get("enabled"):
-            continue
-        role_capabilities_by_selector.setdefault(entry["function_sig"].lower(), []).append(entry)
-
-    users_by_role: dict[int, list[dict]] = {}
-    for entry in policy_state.get("user_roles", []):
-        if not entry.get("enabled"):
-            continue
-        users_by_role.setdefault(int(entry["role"]), []).append(entry)
 
     functions: list[EffectiveFunctionPermission] = []
-    for privileged in target_analysis["access_control"]["privileged_functions"]:
-        selector = _selector(privileged["function"])
-        controller_refs = list(privileged.get("controller_refs", [])) + _controller_refs_from_effect_targets(
-            list(privileged.get("effect_targets", []))
-        )
-        controller_refs = sorted(set(controller_refs))
+    for function_record in function_records:
+        selector = _selector(function_record["function"])
+        controller_refs = sorted(set(function_record.get("controller_refs", [])))
         direct_owner = None
-        if "owner" in controller_refs and owner_value and owner_value != "0x0000000000000000000000000000000000000000":
-            direct_owner = _principal_for_address(owner_value, known)
 
-        role_grants: list[AuthorityRoleGrant] = []
-        for capability in sorted(role_capabilities_by_selector.get(selector, []), key=lambda item: item["role"]):
-            role = int(capability["role"])
-            principals = [
-                _principal_for_address(user_entry["user"], known)
-                for user_entry in sorted(users_by_role.get(role, []), key=lambda item: item["user"])
-            ]
-            role_grants.append(
-                {
-                    "role": role,
-                    "principals": principals,
-                }
-            )
-
-        semantic_entry = semantic_by_function.get(privileged["function"])
-        semantic_direct_owner = None
-        semantic_controller_grants: list[ResolvedControllerGrant] = []
-        semantic_authority_public: bool | None = None
-        semantic_role_grants: list[AuthorityRoleGrant] | None = None
         notes: list[str] = []
-        if semantic_entry:
-            (
-                semantic_direct_owner,
-                semantic_controller_grants,
-                semantic_notes,
-                semantic_authority_public,
-                semantic_role_grants,
-            ) = _semantic_controller_grants(
-                semantic_entry,
-                target_function_selector=selector,
-                target_snapshot=target_snapshot,
-                controller_lookup=controller_lookup,
-                external_snapshots=external_snapshots,
-                external_policy_states=external_policy_states,
-                known=known,
-            )
-            notes.extend(semantic_notes)
-        controller_grants = (
-            semantic_controller_grants
-            if semantic_entry
-            and (semantic_controller_grants or semantic_direct_owner or semantic_entry.get("status") != "unresolved")
-            else _controller_grants_for_refs(controller_refs, controller_lookup, known)
+        controller_grants = _controller_grants_for_refs(
+            controller_refs,
+            controller_lookup,
+            known,
         )
-        if semantic_direct_owner is not None:
-            direct_owner = semantic_direct_owner
-        if semantic_role_grants is not None:
-            role_grants = semantic_role_grants
-        if "authority" in controller_refs and authority_value:
-            notes.append(f"authority={authority_value}")
-        if direct_owner is None and "owner" in controller_refs and owner_value:
-            notes.append(f"owner={owner_value}")
+
+        # The ``effects`` artifact is the source of truth for effect labels,
+        # targets, and summaries when present.
+        fn_signature = function_record["function"]
+        effects_record = effects_by_function.get(fn_signature) or {}
+        semantic_effect_labels = effects_record.get("effect_labels") if effects_record else None
+        semantic_effect_targets = effects_record.get("effect_targets") if effects_record else None
+        semantic_action_summary = effects_record.get("action_summary") if effects_record else None
+
+        effect_labels_out = (
+            list(semantic_effect_labels)
+            if isinstance(semantic_effect_labels, list)
+            else list(function_record.get("effect_labels", []))
+        )
+        effect_targets_out = (
+            list(semantic_effect_targets)
+            if isinstance(semantic_effect_targets, list)
+            else list(function_record.get("effect_targets", []))
+        )
+        action_summary_out = (
+            semantic_action_summary
+            if isinstance(semantic_action_summary, str) and semantic_action_summary
+            else function_record.get("action_summary", "Performs a contract action.")
+        )
 
         function_permission: EffectiveFunctionPermission = {
-            "function": privileged["function"],
-            "abi_signature": _abi_signature(privileged["function"]),
+            "function": fn_signature,
+            "abi_signature": _abi_signature(fn_signature),
             "selector": selector,
             "direct_owner": direct_owner,
-            "authority_public": (
-                semantic_authority_public
-                if semantic_authority_public is not None
-                else bool(public_by_selector.get(selector, False))
-            ),
-            "authority_roles": role_grants,
+            "authority_public": False,
+            "authority_roles": [],
             "controllers": controller_grants,
-            "effect_targets": list(privileged.get("effect_targets", [])),
-            "effect_labels": list(privileged.get("effect_labels", [])),
-            "action_summary": privileged.get("action_summary", "Performs a permissioned contract action."),
+            "effect_targets": effect_targets_out,
+            "effect_labels": effect_labels_out,
+            "action_summary": action_summary_out,
             "notes": notes,
         }
-        external_call_guards = list(privileged.get("external_call_guards") or [])
-        if external_call_guards:
-            function_permission["external_call_guards"] = [dict(g) for g in external_call_guards]
-        # Phase 4: pass the full sinks list through so policy_worker's
-        # sink-dispatch bridge can route caller_equals / caller_in_mapping
-        # sinks that the legacy external_call_guards projection drops.
-        caller_sinks = list(privileged.get("sinks") or [])
-        if caller_sinks:
-            function_permission["sinks"] = [dict(s) for s in caller_sinks]
+
+        # Semantic capability columns: when a CapabilityExpr is supplied for this
+        # function, it dictates capability_expr / conditions / status /
+        # authority_public. The dict-form override here lets the writer
+        # propagate these columns onto EffectiveFunction without re-resolving.
+        cap_dict = capability_dicts.get(fn_signature)
+        if cap_dict is not None:
+            cap_columns = _column_values_for_capability(cap_dict)
+            function_permission["capability_expr"] = cap_columns["capability_expr"]
+            if cap_columns["conditions"] is not None:
+                function_permission["conditions"] = cap_columns["conditions"]
+            if cap_columns["status"] is not None:
+                function_permission["status"] = cap_columns["status"]
+            # conditional_universal short-circuits authority_public.
+            if cap_columns["authority_public"]:
+                function_permission["authority_public"] = True
+        else:
+            if function_record.get("capability_expr") is not None:
+                function_permission["capability_expr"] = function_record["capability_expr"]
+            if function_record.get("conditions") is not None:
+                function_permission["conditions"] = function_record["conditions"]
+            if function_record.get("status") is not None:
+                function_permission["status"] = function_record["status"]
+            if function_record.get("authority_public") is True:
+                function_permission["authority_public"] = True
+
         functions.append(function_permission)
 
     return {
         "schema_version": "0.1",
         "contract_address": contract_address,
         "contract_name": contract_name,
-        "authority_contract": authority_value if authority_value else None,
+        "authority_contract": None,
         "principal_resolution": principal_resolution
         or {
-            "status": "complete" if policy_state else "missing_policy_state",
-            "reason": "Authority policy state was joined into the permission view."
-            if policy_state
-            else "No authority policy state was provided for this artifact.",
+            "status": "complete",
+            "reason": "Semantic capability resolver output was joined into the permission view.",
         },
         "artifacts": artifact_paths or {},
         "functions": functions,
@@ -666,8 +559,6 @@ def write_effective_permissions_from_files(
     *,
     target_snapshot_path: Path | None = None,
     authority_snapshot_path: Path | None = None,
-    policy_state_path: Path | None = None,
-    semantic_guards_path: Path | None = None,
     resolved_control_graph_path: Path | None = None,
     output_path: Path | None = None,
     principal_resolution: PrincipalResolution | None = None,
@@ -675,29 +566,6 @@ def write_effective_permissions_from_files(
     target_analysis = _load_json(target_analysis_path)
     target_snapshot = _load_json(target_snapshot_path) if target_snapshot_path else None
     authority_snapshot = _load_json(authority_snapshot_path) if authority_snapshot_path else None
-    policy_state = _load_json(policy_state_path) if policy_state_path else None
-    semantic_guards = _load_json(semantic_guards_path) if semantic_guards_path else None
-    external_snapshots: dict[str, dict[str, Any]] = {}
-    external_policy_states: dict[str, dict[str, Any]] = {}
-    if resolved_control_graph_path:
-        resolved_control_graph = _load_json(resolved_control_graph_path)
-        for node in resolved_control_graph.get("nodes", []):
-            if not isinstance(node, dict):
-                continue
-            address = _lower_string(node.get("address", ""))
-            artifacts_obj = node.get("artifacts")
-            artifacts: dict[str, Any] = artifacts_obj if isinstance(artifacts_obj, dict) else {}
-            snapshot_ref = artifacts.get("snapshot")
-            if (
-                address.startswith("0x")
-                and len(address) == 42
-                and isinstance(snapshot_ref, str)
-                and Path(snapshot_ref).exists()
-            ):
-                external_snapshots[address] = _load_json(Path(snapshot_ref))
-                policy_path = Path(snapshot_ref).with_name("policy_state.json")
-                if policy_path.exists():
-                    external_policy_states[address] = _load_json(policy_path)
 
     artifact_paths = {
         "target_analysis": str(target_analysis_path),
@@ -706,10 +574,6 @@ def write_effective_permissions_from_files(
         artifact_paths["target_snapshot"] = str(target_snapshot_path)
     if authority_snapshot_path:
         artifact_paths["authority_snapshot"] = str(authority_snapshot_path)
-    if policy_state_path:
-        artifact_paths["policy_state"] = str(policy_state_path)
-    if semantic_guards_path:
-        artifact_paths["semantic_guards"] = str(semantic_guards_path)
     if resolved_control_graph_path:
         artifact_paths["resolved_control_graph"] = str(resolved_control_graph_path)
 
@@ -717,10 +581,6 @@ def write_effective_permissions_from_files(
         target_analysis,
         target_snapshot=target_snapshot,
         authority_snapshot=authority_snapshot,
-        policy_state=policy_state,
-        semantic_guards=semantic_guards,
-        external_snapshots=external_snapshots,
-        external_policy_states=external_policy_states,
         artifact_paths=artifact_paths,
         principal_resolution=principal_resolution,
     )
@@ -732,12 +592,11 @@ def write_effective_permissions_from_files(
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Resolve effective permissions from contract analysis and authority policy state."
+        description="Resolve effective permissions from semantic contract-analysis artifacts."
     )
     parser.add_argument("target_analysis", help="Path to target contract_analysis.json")
     parser.add_argument("--target-snapshot", help="Optional path to target control_snapshot.json")
     parser.add_argument("--authority-snapshot", help="Optional path to authority control_snapshot.json")
-    parser.add_argument("--policy-state", help="Optional path to authority policy_state.json")
     parser.add_argument("--out", help="Optional path to effective_permissions.json")
     args = parser.parse_args()
 
@@ -745,7 +604,6 @@ def main() -> None:
         Path(args.target_analysis),
         target_snapshot_path=Path(args.target_snapshot) if args.target_snapshot else None,
         authority_snapshot_path=Path(args.authority_snapshot) if args.authority_snapshot else None,
-        policy_state_path=Path(args.policy_state) if args.policy_state else None,
         output_path=Path(args.out) if args.out else None,
     )
     print(f"Effective permissions: {output_path}")

@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import os
 import signal
+import threading
 import uuid
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
@@ -220,6 +221,36 @@ def test_run_loop_job_handled_directly_skips_advance(mock_advance, mock_claim, m
 
 
 @patch("workers.base.signal.signal")
+@patch("workers.base.advance_job")
+def test_execute_job_heartbeats_while_process_blocks(mock_advance, mock_signal, monkeypatch):
+    """A processing job gets a background heartbeat even if process() is blocked."""
+    monkeypatch.setenv("PSAT_JOB_HEARTBEAT_INTERVAL_S", "0.01")
+    release = threading.Event()
+    job = _make_job(lease_id=uuid.uuid4())
+    mock_session = MagicMock()
+
+    w = _TestWorker()
+    w._record_stage_timing = MagicMock()
+    w._satisfy_dependencies = MagicMock(return_value=0)
+
+    def heartbeat(_session, _job):
+        release.set()
+
+    def process(_session, _job):
+        assert release.wait(timeout=2)
+
+    w._heartbeat = MagicMock(side_effect=heartbeat)
+    w.process = MagicMock(side_effect=process)
+
+    w._execute_job(mock_session, cast(Any, job))
+
+    assert w._heartbeat.call_count >= 1
+    mock_advance.assert_called_once_with(
+        mock_session, job.id, JobStage.static, "Completed discovery", lease_id=job.lease_id
+    )
+
+
+@patch("workers.base.signal.signal")
 @patch("workers.base.SessionLocal")
 @patch("workers.base.claim_job")
 @patch("workers.base.fail_job_terminal")
@@ -425,6 +456,40 @@ def test_heartbeat_issues_update_and_commits(mock_signal, SessionLocalMock):
     fresh.commit.assert_called_once()
     # Worker's main session must NOT be touched.
     worker_session.execute.assert_not_called()
+
+
+@patch("workers.base.heartbeat_job")
+@patch("workers.base.SessionLocal")
+@patch("workers.base.signal.signal")
+def test_heartbeat_uses_claim_time_token(mock_signal, SessionLocalMock, mock_heartbeat_job):
+    """Heartbeat threads use the claim-time token cached by ``_execute_job``."""
+    fresh = MagicMock()
+    fresh.__enter__ = MagicMock(return_value=fresh)
+    fresh.__exit__ = MagicMock(return_value=False)
+    SessionLocalMock.return_value = fresh
+
+    job_id = uuid.uuid4()
+    lease_id = uuid.uuid4()
+
+    class _CachedJob:
+        @property
+        def id(self):
+            raise AssertionError("heartbeat should not touch live ORM id")
+
+        @property
+        def lease_id(self):
+            raise AssertionError("heartbeat should not touch live ORM lease_id")
+
+    job = _CachedJob()
+    setattr(job, "_heartbeat_job_id", job_id)
+    setattr(job, "_heartbeat_lease_id", lease_id)
+
+    w = _TestWorker()
+    w._heartbeat(MagicMock(), cast(Any, job))
+
+    mock_heartbeat_job.assert_called_once()
+    assert mock_heartbeat_job.call_args.args[1] == job_id
+    assert mock_heartbeat_job.call_args.kwargs["lease_id"] == lease_id
 
 
 @patch("workers.base.SessionLocal")
