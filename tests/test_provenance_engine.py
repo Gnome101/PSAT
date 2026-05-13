@@ -118,25 +118,35 @@ def test_is_top_singleton_invariant():
     assert not is_top(frozenset({Source(kind="parameter", parameter_index=0)}))
     assert not is_top(frozenset())
 
-    # 3. Constructing a Source(kind="top", ...) with any metadata is
-    # rejected at construction time — that's how the O(1) optimization
-    # stays correct in the face of future drift.
-    for kwargs in (
-        {"parameter_index": 0},
-        {"parameter_name": "x"},
-        {"state_variable_name": "x"},
-        {"callee": "x"},
-        {"callee_args_digest": "x"},
-        {"callee_signature": "x"},
-        {"callee_selector": "x"},
-        {"constant_value": "x"},
-        {"value_type": "x"},
-        {"computed_kind": "x"},
-        {"block_context_kind": "x"},
-        {"member_path": ("x",)},
-    ):
-        with _pytest.raises(ValueError, match="bare sentinel"):
-            Source(kind="top", **kwargs)
+    # 3. Constructing a Source(kind="top", ...) with any metadata field
+    # set is rejected at construction time — that's how the O(1)
+    # optimization stays correct in the face of future drift. One
+    # rejection assertion per field so a single broken field is named
+    # in the failure rather than buried in a parametrize id.
+    with _pytest.raises(ValueError, match="bare sentinel"):
+        Source(kind="top", parameter_index=0)
+    with _pytest.raises(ValueError, match="bare sentinel"):
+        Source(kind="top", parameter_name="x")
+    with _pytest.raises(ValueError, match="bare sentinel"):
+        Source(kind="top", state_variable_name="x")
+    with _pytest.raises(ValueError, match="bare sentinel"):
+        Source(kind="top", callee="x")
+    with _pytest.raises(ValueError, match="bare sentinel"):
+        Source(kind="top", callee_args_digest="x")
+    with _pytest.raises(ValueError, match="bare sentinel"):
+        Source(kind="top", callee_signature="x")
+    with _pytest.raises(ValueError, match="bare sentinel"):
+        Source(kind="top", callee_selector="x")
+    with _pytest.raises(ValueError, match="bare sentinel"):
+        Source(kind="top", constant_value="x")
+    with _pytest.raises(ValueError, match="bare sentinel"):
+        Source(kind="top", value_type="x")
+    with _pytest.raises(ValueError, match="bare sentinel"):
+        Source(kind="top", computed_kind="x")
+    with _pytest.raises(ValueError, match="bare sentinel"):
+        Source(kind="top", block_context_kind="x")
+    with _pytest.raises(ValueError, match="bare sentinel"):
+        Source(kind="top", member_path=("x",))
 
 
 def test_source_unknown_kind_raises():
