@@ -841,7 +841,24 @@ def _build_flows_and_principals(
     return fund_flows, list(principal_map.values())
 
 
-def _all_addresses_for_protocol(
+def _all_addresses_count(session: Session, protocol_row: Protocol | None, jobs: list[Job]) -> int:
+    if protocol_row:
+        return int(
+            session.execute(
+                select(func.count()).select_from(Contract).where(Contract.protocol_id == protocol_row.id)
+            ).scalar_one()
+        )
+    fallback_job_ids = [j.id for j in jobs]
+    if not fallback_job_ids:
+        return 0
+    return int(
+        session.execute(
+            select(func.count()).select_from(Contract).where(Contract.job_id.in_(fallback_job_ids))
+        ).scalar_one()
+    )
+
+
+def all_addresses_for_protocol(
     session: Session, protocol_row: Protocol | None, jobs: list[Job]
 ) -> list[dict[str, Any]]:
     if protocol_row:
@@ -930,7 +947,10 @@ def assemble_company_payload(
         "principals": governance.principals,
         "ownership_hierarchy": governance.hierarchy,
         "fund_flows": governance.fund_flows,
-        "all_addresses": _all_addresses_for_protocol(session, protocol_row, jobs),
+        # Just the count here — the full inventory (~167 KB for ether.fi) is
+        # served by /api/company/{name}/addresses and fetched lazily by
+        # AddressesModal when the user opens it.
+        "all_addresses_count": _all_addresses_count(session, protocol_row, jobs),
     }
 
 

@@ -9,6 +9,7 @@ from sqlalchemy import select
 
 from db.models import AuditContractCoverage, AuditReport, Contract, Protocol
 from services.aggregations import CompanyNotFound, build_company_overview
+from services.aggregations.company_overview import all_addresses_for_protocol, resolve_company_jobs
 from services.audits.serializers import _audit_brief, _audit_report_to_dict
 
 from . import deps
@@ -29,6 +30,22 @@ def company_overview(company_name: str, response: Response) -> dict:
             return build_company_overview(session, company_name)
         except CompanyNotFound:
             raise HTTPException(status_code=404, detail="Company not found")
+
+
+@router.get("/api/company/{company_name}/addresses")
+def company_addresses(company_name: str, response: Response) -> dict[str, Any]:
+    """Full inventory of contract addresses for a protocol.
+
+    Split out from the main ``/api/company/{name}`` payload so the
+    167 KB list isn't shipped on every page-load — ``AddressesModal``
+    fetches this lazily when the user opens it.
+    """
+    response.headers["Cache-Control"] = "private, max-age=15, stale-while-revalidate=60"
+    with deps.SessionLocal() as session:
+        protocol_row, jobs = resolve_company_jobs(session, company_name)
+        if protocol_row is None and not jobs:
+            raise HTTPException(status_code=404, detail="Company not found")
+        return {"all_addresses": all_addresses_for_protocol(session, protocol_row, jobs)}
 
 
 @router.get("/api/company/{company_name}/audits")

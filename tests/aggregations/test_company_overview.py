@@ -202,8 +202,9 @@ def test_build_company_overview_end_to_end_protocol_path(db_session):
     assert payload["contract_count"] == 1
     addrs = {c["address"] for c in payload["contracts"]}
     assert addr in addrs
-    # all_addresses includes every Contract row for the protocol
-    assert any(a["address"] == addr for a in payload["all_addresses"])
+    # The full inventory moved to /api/company/{name}/addresses; the main
+    # payload only carries the count.
+    assert payload["all_addresses_count"] == 1
 
 
 def test_build_company_overview_raises_when_unknown(db_session):

@@ -160,7 +160,7 @@ export default function CompanyOverview({ companyName, onSelectContract, onNavig
               </svg>
               <span>Addresses</span>
               <span className="company-surface-action-count">
-                {data.all_addresses?.length ?? contracts.length}
+                {data.all_addresses_count ?? contracts.length}
               </span>
             </button>
             <button
