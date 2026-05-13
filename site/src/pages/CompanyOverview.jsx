@@ -195,12 +195,17 @@ export default function CompanyOverview({ companyName, onSelectContract, onNavig
           </div>
         </div>
         <div className="company-surface-embed">
-          {/* Pass the already-fetched companyData so the embedded surface
-              skips its own /api/company fetch — that response can be
-              1-3 MB and was previously requested twice in parallel on
-              every overview page-load. */}
+          {/* Pass the already-fetched companyData + auditCoverage so the
+              embedded surface skips its own /api/company and
+              /audit_coverage fetches — both were previously fired a
+              second time on every overview page-load. */}
           <Suspense fallback={<LoadingFallback label="Loading control surface..." />}>
-            <ProtocolSurface companyName={companyName} initialData={data} embedded />
+            <ProtocolSurface
+              companyName={companyName}
+              initialData={data}
+              initialCoverage={auditCoverage}
+              embedded
+            />
           </Suspense>
         </div>
       </section>

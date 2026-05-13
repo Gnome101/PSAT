@@ -27,7 +27,7 @@ import { SurfaceMonitoringPanel } from "./surface/sidebar/monitoring/SurfaceMoni
 import { SearchModesBar } from "./surface/sidebar/search/SearchModesBar.jsx";
 import { SearchNavigator } from "./surface/sidebar/search/SearchNavigator.jsx";
 
-export default function ProtocolSurface({ companyName, initialData = null, embedded = false }) {
+export default function ProtocolSurface({ companyName, initialData = null, initialCoverage = null, embedded = false }) {
   // initialData lets a parent (CompanyOverview) hand us the
   // /api/company/{name} payload it already fetched, so we don't fire a
   // second 1-3 MB request on mount. We still pull functions out of it
@@ -105,8 +105,10 @@ export default function ProtocolSurface({ companyName, initialData = null, embed
   }, []);
 
   // Coverage payload — one call, cached locally. Used to build the audits
-  // list + the audit_id → address-set map for highlight propagation.
-  const [coverageData, setCoverageData] = useState(null);
+  // list + the audit_id → address-set map for highlight propagation. When
+  // the embedded surface gets it from CompanyOverview via initialCoverage,
+  // skip the duplicate fetch.
+  const [coverageData, setCoverageData] = useState(initialCoverage);
   const [coverageError, setCoverageError] = useState(null);
   const [coverageLoading, setCoverageLoading] = useState(false);
 
@@ -131,6 +133,12 @@ export default function ProtocolSurface({ companyName, initialData = null, embed
   useEffect(() => { refreshAddressLabels(); }, [refreshAddressLabels]);
   useEffect(() => {
     if (!companyName) return undefined;
+    if (initialCoverage) {
+      setCoverageData(initialCoverage);
+      setCoverageError(null);
+      setCoverageLoading(false);
+      return undefined;
+    }
     let cancelled = false;
     setCoverageLoading(true);
     setCoverageError(null);
@@ -138,7 +146,7 @@ export default function ProtocolSurface({ companyName, initialData = null, embed
       .then((d) => { if (!cancelled) { setCoverageData(d); setCoverageLoading(false); } })
       .catch((e) => { if (!cancelled) { setCoverageError(e?.message || "Failed"); setCoverageLoading(false); } });
     return () => { cancelled = true; };
-  }, [companyName]);
+  }, [companyName, initialCoverage]);
 
   // Agent-emitted highlights: addresses the LLM mentioned in its last
   // answer, intersected server-side with the protocol's in-scope contracts.
