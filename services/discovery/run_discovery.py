@@ -25,8 +25,11 @@ import yaml
 from services.discovery import audit_reports as audit_reports_mod
 from services.discovery import inventory as inventory_mod
 from services.discovery import inventory_domain as inventory_domain_mod
+from services.discovery.audit_enrichment import enrich_audit_reports
 from services.discovery.audit_reports_llm import _parse_json_object
+from services.discovery.chain_resolver import validate_claimed_chains
 from utils import exa, llm
+from utils.chains import canonical_chain
 
 logger = logging.getLogger(__name__)
 
@@ -219,6 +222,10 @@ _AUDIT_SCHEMA: dict[str, Any] = {
                 "properties": {
                     "auditor": {"type": "string"},
                     "url": {"type": "string"},
+                    "pdf_url": {"type": "string"},
+                    "source_repo": {"type": "string"},
+                    "reviewed_commits": {"type": "array", "items": {"type": "string"}},
+                    "referenced_repos": {"type": "array", "items": {"type": "string"}},
                     "title": {"type": "string"},
                     "date": {"type": "string"},
                 },
@@ -299,6 +306,47 @@ def _dependency_classifier_evidence(contracts: list[dict], audits: list[dict]) -
     return {"contracts": contract_evidence, "audits": audit_evidence}
 
 
+def _audit_metadata_from_ai(item: dict[str, Any], *, provenance: str) -> dict[str, Any]:
+    out: dict[str, Any] = {"metadata_provenance": provenance}
+    for key in ("pdf_url", "source_repo", "date", "title", "auditor"):
+        value = item.get(key)
+        if value:
+            out[key] = value
+    reviewed = [str(v).strip() for v in item.get("reviewed_commits") or [] if str(v).strip()]
+    refs = [str(v).strip() for v in item.get("referenced_repos") or [] if str(v).strip()]
+    if reviewed:
+        out["reviewed_commits"] = reviewed
+    if refs:
+        out["referenced_repos"] = refs
+    return out
+
+
+def _audit_key(url: str | None) -> str:
+    return str(url or "").strip().rstrip("/").lower()
+
+
+def _merge_ai_audit_metadata(audit_result: dict[str, Any], metadata_by_url: dict[str, dict[str, Any]]) -> None:
+    if not metadata_by_url:
+        return
+    for report in audit_result.get("reports", []) or []:
+        if not isinstance(report, dict):
+            continue
+        keys = [_audit_key(report.get("url")), _audit_key(report.get("pdf_url")), _audit_key(report.get("source_url"))]
+        metadata = next((metadata_by_url[key] for key in keys if key in metadata_by_url), None)
+        if not metadata:
+            continue
+        for key, value in metadata.items():
+            if key in {"reviewed_commits", "referenced_repos"}:
+                existing = [str(v) for v in report.get(key) or [] if v]
+                for item in value:
+                    if item not in existing:
+                        existing.append(item)
+                if existing:
+                    report[key] = existing
+            elif value and not report.get(key):
+                report[key] = value
+
+
 def _needs_dependency_pass(protocol: str, contracts: list[dict], audits: list[dict]) -> bool:
     evidence = _dependency_classifier_evidence(contracts, audits)
     if not evidence["contracts"] and not evidence["audits"]:
@@ -368,9 +416,14 @@ def _dependency_research(protocol: str, budget: _Budget) -> list[dict]:
             dep_audits.append(
                 {
                     "url": url,
+                    "pdf_url": a.get("pdf_url"),
                     "auditor": a.get("auditor"),
                     "title": f"[dep: {c.get('name')}] {a.get('title', '')}".strip(),
                     "date": a.get("date"),
+                    "source_repo": a.get("source_repo"),
+                    "reviewed_commits": a.get("reviewed_commits") or [],
+                    "referenced_repos": a.get("referenced_repos") or [],
+                    "metadata_provenance": "ai_returned",
                     "discovery_source": "dependency_two_pass",
                     "dependency_component": c.get("name"),
                     "dependency_author": c.get("author"),
@@ -419,6 +472,7 @@ def run_discovery(protocol: str, *, official_domain: str | None = None, chain: s
 
     # 1a. Deep Research for audit seeds
     audit_seeds: list[dict] = []
+    audit_seed_metadata: dict[str, dict[str, Any]] = {}
     try:
         budget.charge_research()
         r = _cached_deep_research(_audit_research_instructions(protocol), schema=_AUDIT_SCHEMA)
@@ -427,6 +481,10 @@ def run_discovery(protocol: str, *, official_domain: str | None = None, chain: s
             if not url:
                 continue
             snippet = f"{item.get('auditor') or ''} audit report for {protocol}. {item.get('date') or ''}".strip()
+            metadata = _audit_metadata_from_ai(item, provenance="ai_returned")
+            audit_seed_metadata[_audit_key(url)] = metadata
+            if item.get("pdf_url"):
+                audit_seed_metadata[_audit_key(item.get("pdf_url"))] = metadata
             audit_seeds.append(
                 {
                     "url": url,
@@ -451,6 +509,7 @@ def run_discovery(protocol: str, *, official_domain: str | None = None, chain: s
     finally:
         _restore_search(original_search)
         audit_reports_mod.classify_search_results = original_classify  # type: ignore[attr-defined]
+    _merge_ai_audit_metadata(audit_result, audit_seed_metadata)
 
     # ---- Addresses ----
     _patch_search(_make_search_fn("auto", budget))  # exa/regular
@@ -460,7 +519,7 @@ def run_discovery(protocol: str, *, official_domain: str | None = None, chain: s
             chain=chain,
             limit=500,
             max_queries=4,
-            run_deployer=False,
+            run_deployer=True,
             debug=False,
         )
     finally:
@@ -478,7 +537,7 @@ def run_discovery(protocol: str, *, official_domain: str | None = None, chain: s
                 {
                     "name": item.get("name"),
                     "address": addr,
-                    "chains": [item.get("chain")] if item.get("chain") else [],
+                    "chains": [chain_key] if (chain_key := canonical_chain(item.get("chain"))) else [],
                     "confidence": 1.0,
                     "source": ["exa_deep_research"],
                     "evidence": {"deep_research": 1},
@@ -486,6 +545,15 @@ def run_discovery(protocol: str, *, official_domain: str | None = None, chain: s
             )
     except Exception as exc:
         logger.warning("deep research (addresses) failed for %s: %s", protocol, exc)
+
+    try:
+        inventory_result["contracts"] = validate_claimed_chains(
+            inventory_result.get("contracts", []),
+            source_names=("exa_deep_research",),
+            debug=False,
+        )
+    except Exception as exc:
+        logger.warning("claimed-chain sanity check failed for %s: %s", protocol, exc)
 
     # ---- Dependency two-pass (conditional) ----
     dependency_pass_triggered = _needs_dependency_pass(
@@ -502,6 +570,7 @@ def run_discovery(protocol: str, *, official_domain: str | None = None, chain: s
 
     # ---- SPA override (gmx, etc.) ----
     _apply_spa_overrides(protocol, inventory_result, audit_result)
+    enrich_audit_reports(audit_result, protocol, debug=False)
 
     elapsed_ms = int((time.monotonic() - started_at) * 1000)
     return {

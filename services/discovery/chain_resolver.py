@@ -33,6 +33,8 @@ from typing import Any
 
 from dotenv import load_dotenv
 
+from utils.chains import canonical_chain, canonical_chain_list
+
 from .inventory_domain import CHAIN_IDS, RateLimiter, _debug_log
 from .static_dependencies import RPC_TIMEOUT_SECONDS, has_deployed_code
 
@@ -208,7 +210,7 @@ def _probe_chains(
 def _primary_chain(contract: dict[str, Any]) -> str:
     """Return the first chain from a contract's chains list, or 'unknown'."""
     chains = contract.get("chains", [])
-    return chains[0] if chains else "unknown"
+    return (canonical_chain(chains[0]) if chains else None) or "unknown"
 
 
 def resolve_unknown_chains(
@@ -239,7 +241,7 @@ def resolve_unknown_chains(
     known_chains: list[str] = []
     seen: set[str] = set()
     for c in contracts:
-        for ch in c.get("chains", []):
+        for ch in canonical_chain_list(c.get("chains", [])) or []:
             if ch not in seen and ch != "unknown" and ch in CHAIN_IDS:
                 known_chains.append(ch)
                 seen.add(ch)
@@ -274,9 +276,61 @@ def resolve_unknown_chains(
     for contract in unknowns:
         chains = matched.get(contract["address"], [])
         if chains:
-            contract["chains"] = chains
+            contract["chains"] = canonical_chain_list(chains)
             resolved_count += 1
             _debug_log(debug, f"  {contract['address']}: resolved to {chains}")
 
     _debug_log(debug, f"Chain resolution: resolved {resolved_count}/{len(unknowns)} contract(s)")
+    return contracts
+
+
+def validate_claimed_chains(
+    contracts: list[dict[str, Any]],
+    *,
+    source_names: tuple[str, ...] = ("exa_deep_research",),
+    debug: bool = False,
+) -> list[dict[str, Any]]:
+    """Verify high-risk AI-supplied chain claims with ``eth_getCode``.
+
+    If a claimed chain has no code, probe the remaining supported chains and
+    either correct to the detected chain(s) or mark it unknown.
+    """
+    targets: list[tuple[dict[str, Any], str, list[str]]] = []
+    for contract in contracts:
+        sources = set(contract.get("source") or [])
+        if sources.isdisjoint(source_names):
+            continue
+        address = str(contract.get("address") or "").lower()
+        chains = canonical_chain_list(contract.get("chains")) or []
+        claimed = [chain for chain in chains if chain and chain != "unknown" and chain in CHAIN_IDS]
+        if address and claimed:
+            targets.append((contract, address, claimed))
+
+    if not targets:
+        return contracts
+
+    api_key = _get_alchemy_key()
+
+    for contract, address, claimed in targets:
+        matched: dict[str, list[str]] = {address: []}
+        _probe_chains([address], claimed, api_key, matched, debug)
+        if matched[address]:
+            contract["chains"] = canonical_chain_list(matched[address])
+            continue
+
+        remaining = [chain for chain in CHAIN_IDS if chain not in set(claimed)]
+        if remaining:
+            _probe_chains([address], remaining, api_key, matched, debug)
+        if matched[address]:
+            corrected = canonical_chain_list(matched[address]) or ["unknown"]
+            contract["chains"] = corrected
+            _debug_log(debug, f"  {address}: corrected claimed chain {claimed} -> {corrected}")
+        else:
+            contract["chains"] = ["unknown"]
+            contract["chain_sanity"] = {
+                "status": "unresolved_no_code_on_claimed_or_supported_chains",
+                "claimed_chains": claimed,
+            }
+            _debug_log(debug, f"  {address}: no code on claimed chain(s) {claimed}; marked unknown")
+
     return contracts

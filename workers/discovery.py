@@ -64,6 +64,9 @@ def _sync_audit_reports_to_db(session: Session, protocol_id: int, reports: list[
             source_url=report.get("source_url"),
             # Needed by services/audits/source_equivalence for GitHub lookup.
             source_repo=report.get("source_repo"),
+            reviewed_commits=report.get("reviewed_commits") or None,
+            referenced_repos=report.get("referenced_repos") or None,
+            classified_commits=report.get("classified_commits") or None,
         )
         stmt = stmt.on_conflict_do_update(
             constraint="uq_audit_report_protocol_url",
@@ -75,6 +78,9 @@ def _sync_audit_reports_to_db(session: Session, protocol_id: int, reports: list[
                 "confidence": stmt.excluded.confidence,
                 "source_url": stmt.excluded.source_url,
                 "source_repo": stmt.excluded.source_repo,
+                "reviewed_commits": stmt.excluded.reviewed_commits,
+                "referenced_repos": stmt.excluded.referenced_repos,
+                "classified_commits": stmt.excluded.classified_commits,
             },
         )
         session.execute(stmt)
@@ -209,7 +215,7 @@ class DiscoveryWorker(BaseWorker):
         # already in the table from a prior source gains this one as
         # corroboration rather than being dropped.
         # Build the bulk payload in one pass. Inventory entries carry their
-        # own ``source`` list (e.g. ``["tavily_ai_inventory", "deployer_expansion"]``)
+        # own ``source`` list (e.g. ``["ai_inventory", "deployer_expansion"]``)
         # when multiple inventory signals agreed; preserve that granularity
         # so ranking sees the richer corroboration story.
         bulk_entries: list[dict] = []

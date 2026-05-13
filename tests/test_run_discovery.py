@@ -9,6 +9,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from services.discovery import audit_enrichment as ae
 from services.discovery import run_discovery as rd
 
 
@@ -22,6 +23,12 @@ def _clear_cache():
 # ---------------------------------------------------------------------------
 # _Budget
 # ---------------------------------------------------------------------------
+
+
+def test_audit_schema_accepts_enrichment_fields():
+    props = rd._AUDIT_SCHEMA["properties"]["auditReports"]["items"]["properties"]
+    for field in ("pdf_url", "source_repo", "reviewed_commits", "referenced_repos"):
+        assert field in props
 
 
 def test_budget_charge_search_increments_and_costs():
@@ -202,6 +209,79 @@ def test_apply_spa_overrides_injects(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# audit enrichment
+# ---------------------------------------------------------------------------
+
+
+def test_enrich_extracts_static_pdf_and_verified_github_commit(monkeypatch):
+    sha = "abc123def456"
+    html = f'<a href="/reports/acme.pdf">PDF</a> <a href="https://github.com/acme/protocol/commit/{sha}">commit</a>'
+    monkeypatch.setattr(ae, "_fetch_html", lambda url, debug=False: html)
+    monkeypatch.setattr(ae, "_commit_exists", lambda repo, commit: repo == "acme/protocol" and commit == sha)
+
+    result = {"reports": [{"url": "https://auditor.test/acme"}]}
+    ae.enrich_audit_reports(result, "Acme")
+
+    report = result["reports"][0]
+    assert report["pdf_url"] == "https://auditor.test/reports/acme.pdf"
+    assert report["source_repo"] == "acme/protocol"
+    assert report["reviewed_commits"] == [sha]
+    assert report["classified_commits"] == [{"sha": sha, "label": "reviewed", "provenance": "html_ref"}]
+
+
+def test_enrich_drops_ai_commits_that_do_not_resolve(monkeypatch):
+    monkeypatch.setattr(ae, "_fetch_html", lambda url, debug=False: None)
+    monkeypatch.setattr(ae, "_commit_exists", lambda repo, commit: False)
+
+    result = {
+        "reports": [
+            {
+                "url": "https://auditor.test/acme",
+                "source_repo": "acme/protocol",
+                "reviewed_commits": ["abc123def456"],
+            }
+        ]
+    }
+    ae.enrich_audit_reports(result, "Acme")
+    assert result["reports"][0]["reviewed_commits"] == []
+
+
+def test_enrich_prefers_repo_hosted_dependency_pdf(monkeypatch):
+    monkeypatch.setattr(ae, "_fetch_html", lambda url, debug=False: None)
+    monkeypatch.setattr(
+        ae,
+        "_discover_repo_audit_folders",
+        lambda owner, repo, debug=False: [{"ref": "main", "path": "audits"}],
+    )
+    monkeypatch.setattr(
+        ae,
+        "_fetch_github_tree_as_reports",
+        lambda *a, **kw: {
+            "reports": [
+                {
+                    "title": "BoringVault Audit",
+                    "pdf_url": "https://raw.githubusercontent.com/veda/boring-vault/main/audits/boringvault.pdf",
+                    "source_repo": "veda/boring-vault",
+                }
+            ]
+        },
+    )
+
+    result = {
+        "reports": [
+            {
+                "url": "https://auditor.example.com/view/boringvault",
+                "source_repo": "veda/boring-vault",
+                "dependency_component": "BoringVault",
+            }
+        ]
+    }
+    ae.enrich_audit_reports(result, "EtherFi")
+    assert result["reports"][0]["url"].endswith("/audits/boringvault.pdf")
+    assert result["reports"][0]["pdf_url"].endswith("/audits/boringvault.pdf")
+
+
+# ---------------------------------------------------------------------------
 # _needs_dependency_pass
 # ---------------------------------------------------------------------------
 
@@ -375,6 +455,7 @@ def test_dependency_research_breaks_when_budget_exhausted(monkeypatch):
 
 def _stub_discovery_modules(monkeypatch, *, audit_reports=None, address_contracts=None):
     """Replace the heavy pipeline functions with cheap stubs."""
+    calls = {}
 
     def fake_search_audit_reports(protocol, official_domain=None, max_queries=4, debug=False):
         return {
@@ -384,6 +465,7 @@ def _stub_discovery_modules(monkeypatch, *, audit_reports=None, address_contract
         }
 
     def fake_search_protocol_inventory(protocol, chain=None, limit=500, max_queries=4, run_deployer=False, debug=False):
+        calls["inventory_run_deployer"] = run_deployer
         return {
             "contracts": list(address_contracts or []),
             "official_domain": "example.com",
@@ -393,10 +475,11 @@ def _stub_discovery_modules(monkeypatch, *, audit_reports=None, address_contract
 
     monkeypatch.setattr(rd.audit_reports_mod, "search_audit_reports", fake_search_audit_reports)
     monkeypatch.setattr(rd.inventory_mod, "search_protocol_inventory", fake_search_protocol_inventory)
+    return calls
 
 
 def test_run_discovery_happy_path_no_deps(monkeypatch):
-    _stub_discovery_modules(
+    calls = _stub_discovery_modules(
         monkeypatch,
         audit_reports=[{"url": "https://aud", "auditor": "X", "title": "core"}],
         address_contracts=[{"name": "Token", "address": "0x" + "1" * 40}],
@@ -430,6 +513,41 @@ def test_run_discovery_happy_path_no_deps(monkeypatch):
     assert out["meta"]["search_calls"] >= 0
     # Dependency classifier chose not to trigger.
     assert out["meta"]["dependency_pass_triggered"] is False
+    assert calls["inventory_run_deployer"] is True
+
+
+def test_run_discovery_carries_verified_ai_audit_metadata(monkeypatch):
+    sha = "abc123def456"
+    _stub_discovery_modules(
+        monkeypatch,
+        audit_reports=[{"url": "https://seed.example.com/a.pdf", "auditor": "Tob", "title": "core"}],
+    )
+
+    def fake_dr(instructions, schema=None):
+        if "audit reports" in instructions:
+            return {
+                "data": {
+                    "auditReports": [
+                        {
+                            "auditor": "Tob",
+                            "url": "https://seed.example.com/a.pdf",
+                            "source_repo": "etherfi/protocol",
+                            "reviewed_commits": [sha],
+                        }
+                    ]
+                }
+            }
+        return {"data": {"contracts": []}}
+
+    monkeypatch.setattr(rd, "_cached_deep_research", fake_dr)
+    monkeypatch.setattr(rd, "_needs_dependency_pass", lambda protocol, contracts, audits: False)
+    monkeypatch.setattr(ae, "_commit_exists", lambda repo, commit: repo == "etherfi/protocol" and commit == sha)
+
+    out = rd.run_discovery("ether.fi")
+    report = out["audits"]["reports"][0]
+    assert report["source_repo"] == "etherfi/protocol"
+    assert report["reviewed_commits"] == [sha]
+    assert report["classified_commits"][0]["provenance"] == "ai_returned"
 
 
 def test_run_discovery_triggers_dependency_pass(monkeypatch):

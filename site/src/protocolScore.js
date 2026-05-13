@@ -827,7 +827,7 @@ export function computeProtocolScore(companyOrContracts, hierarchyOrCoverage, ma
 
   const axes = [
     { key: "authority", label: "Authority", value: authorityScore(actions), weight: 0.25 },
-    { key: "audits", label: "Audits", value: auditScore(contracts, coverageByAddress), weight: 0.22 },
+    { key: "audits", label: "Verified Audit Coverage", value: auditScore(contracts, coverageByAddress), weight: 0.22 },
     { key: "upgrades", label: "Upgrades", value: upgradeScore(contracts, actions, coverageByAddress), weight: 0.18 },
     { key: "pause", label: "Pause", value: pauseScore(contracts, actions), weight: 0.14 },
     { key: "safes", label: "Safes", value: safeguardScore(actions), weight: 0.13 },

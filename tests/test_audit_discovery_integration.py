@@ -613,6 +613,9 @@ def test_sync_upserts_on_duplicate_url(db_session):
             "confidence": 0.95,
             "source_url": "https://ex.com/",
             "source_repo": "spearbit/portfolio",
+            "reviewed_commits": ["abc123def456"],
+            "referenced_repos": ["owner/protocol"],
+            "classified_commits": [{"sha": "abc123def456", "label": "reviewed", "provenance": "ai_returned"}],
         }
     ]
     _sync_audit_reports_to_db(db_session, protocol_id, r2)
@@ -622,6 +625,9 @@ def test_sync_upserts_on_duplicate_url(db_session):
     assert rows[0].title == "Updated title"
     assert float(rows[0].confidence) == 0.95
     assert rows[0].source_repo == "spearbit/portfolio"
+    assert rows[0].reviewed_commits == ["abc123def456"]
+    assert rows[0].referenced_repos == ["owner/protocol"]
+    assert rows[0].classified_commits == [{"sha": "abc123def456", "label": "reviewed", "provenance": "ai_returned"}]
 
 
 # ---------------------------------------------------------------------------
