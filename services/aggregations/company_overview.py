@@ -1063,9 +1063,7 @@ def build_company_overview(session: Session, name: str) -> dict[str, Any]:
     with _time_phase(timings_ms, "prefetch_contracts"):
         contracts_by_job_id = prefetch_contracts(session, jobs)
     with _time_phase(timings_ms, "resolve_implementation_contracts"):
-        impl_job_by_addr, contracts_by_job_id = resolve_implementation_contracts(
-            session, jobs, contracts_by_job_id
-        )
+        impl_job_by_addr, contracts_by_job_id = resolve_implementation_contracts(session, jobs, contracts_by_job_id)
     with _time_phase(timings_ms, "build_governance_view"):
         governance = build_governance_view(session, jobs, contracts_by_job_id, impl_job_by_addr)
     with _time_phase(timings_ms, "assemble_payload"):
