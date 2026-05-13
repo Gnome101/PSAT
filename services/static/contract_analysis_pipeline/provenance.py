@@ -117,11 +117,33 @@ class Source:
     def __post_init__(self) -> None:
         if self.kind not in SOURCE_KINDS:
             raise ValueError(f"unknown source kind {self.kind!r}")
+        # The "top" lattice element is a bare sentinel — no metadata
+        # fields. ``is_top`` does an O(1) ``_TOP_SOURCE in set`` check,
+        # which only works if every kind="top" instance hashes/equals
+        # ``_TOP_SOURCE``. Enforce that here so a future caller can't
+        # silently break the optimization by tagging a "top with
+        # metadata".
+        if self.kind == "top" and (
+            self.parameter_index is not None
+            or self.parameter_name is not None
+            or self.state_variable_name is not None
+            or self.callee is not None
+            or self.callee_args_digest is not None
+            or self.callee_signature is not None
+            or self.callee_selector is not None
+            or self.constant_value is not None
+            or self.value_type is not None
+            or self.computed_kind is not None
+            or self.block_context_kind is not None
+            or self.member_path
+        ):
+            raise ValueError("Source(kind='top') must be the bare sentinel — no metadata fields")
 
 
 SourceSet = frozenset[Source]
 EMPTY: SourceSet = frozenset()
-TOP: SourceSet = frozenset({Source(kind="top")})
+_TOP_SOURCE = Source(kind="top")
+TOP: SourceSet = frozenset({_TOP_SOURCE})
 
 
 def _solidity_type_name(value: Any) -> str | None:
@@ -133,7 +155,11 @@ def _solidity_type_name(value: Any) -> str | None:
 
 
 def is_top(s: SourceSet) -> bool:
-    return any(src.kind == "top" for src in s)
+    # O(1) frozenset hash lookup. Equivalence with the prior
+    # ``any(src.kind == "top" for src in s)`` is held by the
+    # ``__post_init__`` invariant above: every kind="top" Source
+    # equals (and hashes as) ``_TOP_SOURCE``.
+    return _TOP_SOURCE in s
 
 
 def union(a: SourceSet, b: SourceSet) -> SourceSet:

@@ -101,6 +101,44 @@ def test_lattice_empty_identity():
     assert union(EMPTY, a) == a
 
 
+def test_is_top_singleton_invariant():
+    """``is_top`` is O(1) (``_TOP_SOURCE in s`` frozenset lookup),
+    which only works if every kind="top" Source equals the bare
+    sentinel. The dataclass ``__post_init__`` enforces it. Pin both
+    halves so a future change can't quietly tag a "top with metadata"
+    and watch ``is_top`` silently miss it.
+    """
+    import pytest as _pytest
+
+    # 1. The bare sentinel is detected.
+    assert is_top(TOP)
+    assert is_top(frozenset({Source(kind="top")}))
+
+    # 2. Sets that contain non-top sources aren't.
+    assert not is_top(frozenset({Source(kind="parameter", parameter_index=0)}))
+    assert not is_top(frozenset())
+
+    # 3. Constructing a Source(kind="top", ...) with any metadata is
+    # rejected at construction time — that's how the O(1) optimization
+    # stays correct in the face of future drift.
+    for kwargs in (
+        {"parameter_index": 0},
+        {"parameter_name": "x"},
+        {"state_variable_name": "x"},
+        {"callee": "x"},
+        {"callee_args_digest": "x"},
+        {"callee_signature": "x"},
+        {"callee_selector": "x"},
+        {"constant_value": "x"},
+        {"value_type": "x"},
+        {"computed_kind": "x"},
+        {"block_context_kind": "x"},
+        {"member_path": ("x",)},
+    ):
+        with _pytest.raises(ValueError, match="bare sentinel"):
+            Source(kind="top", **kwargs)
+
+
 def test_source_unknown_kind_raises():
     with pytest.raises(ValueError):
         Source(kind="not_a_real_kind")
