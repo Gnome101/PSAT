@@ -18,7 +18,7 @@ Stages (each returns plain Python data, not ORM rows that pin a session):
    tables to produce the contract entries, ownership hierarchy,
    non-contract principals, and inter-contract fund-flow edges.
 5. ``assemble_company_payload`` — adds the protocol-wide views
-   (all_addresses, latest TVL, audit reports) and shapes the final dict.
+   (all_addresses, latest TVL) and shapes the final dict.
 """
 
 from __future__ import annotations
@@ -30,7 +30,6 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
 from db.models import (
-    AuditReport,
     Contract,
     ContractBalance,
     ControlGraphEdge,
@@ -915,31 +914,6 @@ def _latest_tvl(session: Session, protocol_row: Protocol | None) -> dict[str, An
     }
 
 
-def _audit_reports(session: Session, protocol_row: Protocol | None) -> list[dict[str, Any]]:
-    if protocol_row is None:
-        return []
-    audit_rows = (
-        session.execute(
-            select(AuditReport)
-            .where(AuditReport.protocol_id == protocol_row.id)
-            .order_by(AuditReport.date.desc().nullslast())
-        )
-        .scalars()
-        .all()
-    )
-    return [
-        {
-            "url": ar.url,
-            "pdf_url": ar.pdf_url,
-            "auditor": ar.auditor,
-            "title": ar.title,
-            "date": ar.date,
-            "confidence": float(ar.confidence) if ar.confidence is not None else None,
-        }
-        for ar in audit_rows
-    ]
-
-
 def assemble_company_payload(
     session: Session,
     name: str,
@@ -952,7 +926,6 @@ def assemble_company_payload(
         "protocol_id": protocol_row.id if protocol_row else None,
         "contract_count": len(governance.contracts),
         "tvl": _latest_tvl(session, protocol_row),
-        "audit_reports": _audit_reports(session, protocol_row),
         "contracts": governance.contracts,
         "principals": governance.principals,
         "ownership_hierarchy": governance.hierarchy,
