@@ -1027,9 +1027,12 @@ class ContractMaterialization(Base):
     + Slither pass. Read/written via ``db.contract_materializations`` with
     request-coalescing through ``pg_advisory_xact_lock``.
 
-    ``status='pending'`` means a builder holds the advisory lock for this
-    row; ``'ready'`` means the bundle is usable; ``'failed'`` is kept for
-    ops triage but never returned to readers.
+    ``status='building'`` marks a row whose builder is currently running
+    (``builder_started_at`` records when); concurrent callers poll the
+    row instead of duplicating the build. ``'ready'`` means the bundle
+    is usable; ``'failed'`` is kept for ops triage but never returned to
+    readers. ``'pending'`` is the legacy default kept for compatibility
+    with pre-migration rows.
     """
 
     __tablename__ = "contract_materializations"
@@ -1040,10 +1043,13 @@ class ContractMaterialization(Base):
     contract_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     analysis: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
     tracking_plan: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    predicate_trees: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
     analysis_blob_key: Mapped[str | None] = mapped_column(Text, nullable=True)
     tracking_plan_blob_key: Mapped[str | None] = mapped_column(Text, nullable=True)
+    predicate_trees_blob_key: Mapped[str | None] = mapped_column(Text, nullable=True)
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending", server_default="pending")
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    builder_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     materialized_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=text("NOW()"), nullable=False
     )

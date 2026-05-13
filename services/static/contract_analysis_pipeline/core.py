@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
-from collections.abc import Mapping
+import time
+from collections.abc import Iterator, Mapping
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -33,6 +36,37 @@ from .summaries import (
 from .tracking import build_controller_tracking
 
 logger = logging.getLogger(__name__)
+
+
+def _phase_log_threshold_ms() -> int:
+    """Per-phase log threshold for the pipeline profiler.
+
+    Phases shorter than this are folded into the aggregate-only line.
+    Default 100 ms keeps log volume bounded on cheap contracts while
+    still catching the 1–10 s outliers we expect to see on
+    LayerZero / EtherFi-class contracts.
+
+    Env: ``PSAT_PIPELINE_PROFILE_THRESHOLD_MS`` (default 100).
+    """
+    try:
+        return max(0, int(os.getenv("PSAT_PIPELINE_PROFILE_THRESHOLD_MS", "100")))
+    except ValueError:
+        return 100
+
+
+@contextmanager
+def _phase(name: str, durations_ms: dict[str, int]) -> Iterator[None]:
+    """Time the wrapped block and record its duration into ``durations_ms``.
+
+    Exceptions are still timed (the duration reflects the partial work)
+    and propagate so the caller's error path stays unchanged.
+    """
+    start = time.monotonic()
+    try:
+        yield
+    finally:
+        durations_ms[name] = int((time.monotonic() - start) * 1000)
+
 
 _VYPER_PRAGMA_RE = re.compile(r"^\s*#\s*(?:@version|pragma\s+version)\s+([^\s]+)", re.MULTILINE)
 
@@ -131,23 +165,44 @@ def collect_contract_analysis_with_artifacts(
     """Collect the analysis dict plus semantic predicate/effect artifacts in
     a single pass. Returns ``(analysis, predicate_trees, effects)``.
 
+    Emits a single ``pipeline_profile`` log line at the end with per-phase
+    durations so the next live run can pinpoint which step dominates on
+    pathological contracts (the PR-79 motivation: 60-150 s contract_analysis
+    phases on LayerZero / EtherFi while PR-71 baselines stayed at 1-10 s).
+    Per-phase durations exceeding ``_phase_log_threshold_ms()`` also emit
+    their own ``pipeline_phase`` line so a Loki query can rank phases
+    without parsing the aggregate JSON.
+
     Vyper projects flow through the same Slither path as Solidity.
     """
+    durations_ms: dict[str, int] = {}
+    pipeline_started = time.monotonic()
+
     meta = _load_json(project_dir / "contract_meta.json", {})
     _guard_vyper_version(project_dir, meta)
-    slither = Slither(_slither_target(project_dir, meta))
+
+    with _phase("slither_parse", durations_ms):
+        slither = Slither(_slither_target(project_dir, meta))
     slither_output = _load_json(project_dir / "slither_results.json", {})
 
     subject_contract = _select_subject_contract(slither, meta.get("contract_name"))
     if subject_contract is None:
         raise RuntimeError(f"No analyzable contracts found in {project_dir}")
 
+    subject_name = getattr(subject_contract, "name", None)
+    external_fn_count = sum(
+        1
+        for fn in (getattr(subject_contract, "functions", []) or [])
+        if getattr(fn, "visibility", "") in ("public", "external")
+    )
+
     # Predicate trees + effects are the only source of truth for the static
     # stage's controller-tracking / semantic-control / pausability outputs.
     predicate_trees_artifact: dict[str, Any]
     pause_info: PauseInfo
     try:
-        predicate_trees_artifact, pause_info = build_predicate_artifacts_with_pause_info(subject_contract)
+        with _phase("predicate_trees", durations_ms):
+            predicate_trees_artifact, pause_info = build_predicate_artifacts_with_pause_info(subject_contract)
     except Exception as exc:
         logger.exception("semantic predicate_trees emit failed for %s", project_dir)
         predicate_trees_artifact = {"schema_version": "semantic", "error": str(exc)}
@@ -160,28 +215,35 @@ def collect_contract_analysis_with_artifacts(
 
     effects_artifact: EffectsArtifact | dict[str, Any]
     try:
-        effects_artifact = build_effects(subject_contract)
+        with _phase("effects", durations_ms):
+            effects_artifact = build_effects(subject_contract)
     except Exception as exc:
         logger.exception("semantic effects emit failed for %s", project_dir)
         effects_artifact = {"schema_version": "semantic", "error": str(exc)}
 
-    classification = _detect_contract_classification(subject_contract, project_dir, effects_artifact)
-    semantic_control = _build_semantic_control_summary(
-        subject_contract,
-        project_dir,
-        predicate_trees_artifact,
-        effects_artifact,
-    )
-    controller_tracking = build_controller_tracking(
-        subject_contract,
-        project_dir,
-        predicate_trees_artifact,
-        effects_artifact,
-        semantic_control,
-    )
-    upgradeability = _detect_upgradeability(subject_contract, project_dir, effects_artifact)
-    pausability = _detect_pausability(subject_contract, project_dir, pause_info)
-    timelock = _detect_timelock(subject_contract, project_dir, semantic_control["role_definitions"])
+    with _phase("classification", durations_ms):
+        classification = _detect_contract_classification(subject_contract, project_dir, effects_artifact)
+    with _phase("semantic_control", durations_ms):
+        semantic_control = _build_semantic_control_summary(
+            subject_contract,
+            project_dir,
+            predicate_trees_artifact,
+            effects_artifact,
+        )
+    with _phase("controller_tracking", durations_ms):
+        controller_tracking = build_controller_tracking(
+            subject_contract,
+            project_dir,
+            predicate_trees_artifact,
+            effects_artifact,
+            semantic_control,
+        )
+    with _phase("upgradeability", durations_ms):
+        upgradeability = _detect_upgradeability(subject_contract, project_dir, effects_artifact)
+    with _phase("pausability", durations_ms):
+        pausability = _detect_pausability(subject_contract, project_dir, pause_info)
+    with _phase("timelock", durations_ms):
+        timelock = _detect_timelock(subject_contract, project_dir, semantic_control["role_definitions"])
     slither_summary = _summarize_slither(slither_output)
     audit_alignment: AuditAlignment = {
         "status": "not_checked",
@@ -224,4 +286,63 @@ def collect_contract_analysis_with_artifacts(
         "tracking_hints": _build_tracking_hints(semantic_control, upgradeability, pausability, timelock),
         "controller_tracking": controller_tracking,
     }
+
+    total_ms = int((time.monotonic() - pipeline_started) * 1000)
+    _emit_pipeline_profile(
+        contract_name=subject_name,
+        external_fn_count=external_fn_count,
+        durations_ms=durations_ms,
+        total_ms=total_ms,
+    )
+
     return analysis, predicate_trees_artifact, effects_artifact
+
+
+def _emit_pipeline_profile(
+    *,
+    contract_name: str | None,
+    external_fn_count: int,
+    durations_ms: dict[str, int],
+    total_ms: int,
+) -> None:
+    """Emit per-phase + aggregate log lines for the contract-analysis pipeline.
+
+    Two log shapes so Loki queries can either drill into specific phases
+    or rank contracts by total cost without parsing nested JSON:
+
+      * ``pipeline_phase`` (one per phase that crosses the threshold):
+        ``phase``, ``duration_ms``, ``contract_name``, ``external_fn_count``.
+      * ``pipeline_profile`` (always, once per contract): aggregate
+        ``durations_ms`` map and ``total_ms``.
+    """
+    threshold = _phase_log_threshold_ms()
+    for phase, ms in durations_ms.items():
+        if ms < threshold:
+            continue
+        logger.info(
+            "pipeline phase %s took %dms (%s)",
+            phase,
+            ms,
+            contract_name or "<unknown>",
+            extra={
+                "phase": phase,
+                "duration_ms": ms,
+                "contract_name": contract_name,
+                "external_fn_count": external_fn_count,
+                "profile_kind": "pipeline_phase",
+            },
+        )
+
+    logger.info(
+        "pipeline profile: %s total=%dms fns=%d",
+        contract_name or "<unknown>",
+        total_ms,
+        external_fn_count,
+        extra={
+            "total_ms": total_ms,
+            "durations_ms": dict(durations_ms),
+            "contract_name": contract_name,
+            "external_fn_count": external_fn_count,
+            "profile_kind": "pipeline_profile",
+        },
+    )
