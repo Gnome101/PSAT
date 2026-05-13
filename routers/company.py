@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+import time
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Response
@@ -15,6 +17,24 @@ from services.audits.serializers import _audit_brief, _audit_report_to_dict
 from . import deps
 
 router = APIRouter()
+logger = logging.getLogger("routers.company")
+
+
+def _log_endpoint(route: str, *, company: str, started: float, **extras: Any) -> None:
+    """Emit one structured log line per endpoint hit with elapsed time.
+
+    Pairs with the ``x-psat-trace-id`` middleware so each line is grepable
+    by trace_id in Loki. Matches the ``duration_ms`` field already used by
+    ``workers/base.py`` for stage timings.
+    """
+    elapsed_ms = int((time.monotonic() - started) * 1000)
+    logger.info(
+        "%s elapsed_ms=%d company=%s",
+        route,
+        elapsed_ms,
+        company,
+        extra={"phase": "http_endpoint", "route": route, "duration_ms": elapsed_ms, "company": company, **extras},
+    )
 
 
 @router.get("/api/company/{company_name}")
@@ -25,11 +45,21 @@ def company_overview(company_name: str, response: Response) -> dict:
     # tab switches inside the company page instant — both CompanyOverview
     # and ProtocolSurface read this URL on mount.
     response.headers["Cache-Control"] = "private, max-age=15, stale-while-revalidate=60"
+    started = time.monotonic()
     with deps.SessionLocal() as session:
         try:
-            return build_company_overview(session, company_name)
+            payload = build_company_overview(session, company_name)
         except CompanyNotFound:
+            _log_endpoint("/api/company/{name}", company=company_name, started=started, outcome="not_found")
             raise HTTPException(status_code=404, detail="Company not found")
+    _log_endpoint(
+        "/api/company/{name}",
+        company=company_name,
+        started=started,
+        outcome="success",
+        contract_count=len(payload.get("contracts") or []),
+    )
+    return payload
 
 
 @router.get("/api/company/{company_name}/addresses")
@@ -41,19 +71,31 @@ def company_addresses(company_name: str, response: Response) -> dict[str, Any]:
     fetches this lazily when the user opens it.
     """
     response.headers["Cache-Control"] = "private, max-age=15, stale-while-revalidate=60"
+    started = time.monotonic()
     with deps.SessionLocal() as session:
         protocol_row, jobs = resolve_company_jobs(session, company_name)
         if protocol_row is None and not jobs:
+            _log_endpoint("/api/company/{name}/addresses", company=company_name, started=started, outcome="not_found")
             raise HTTPException(status_code=404, detail="Company not found")
-        return {"all_addresses": all_addresses_for_protocol(session, protocol_row, jobs)}
+        addresses = all_addresses_for_protocol(session, protocol_row, jobs)
+    _log_endpoint(
+        "/api/company/{name}/addresses",
+        company=company_name,
+        started=started,
+        outcome="success",
+        address_count=len(addresses),
+    )
+    return {"all_addresses": addresses}
 
 
 @router.get("/api/company/{company_name}/audits")
 def company_audits(company_name: str) -> dict[str, Any]:
     """List all known audit reports for a company."""
+    started = time.monotonic()
     with deps.SessionLocal() as session:
         protocol_row = session.execute(select(Protocol).where(Protocol.name == company_name)).scalar_one_or_none()
         if protocol_row is None:
+            _log_endpoint("/api/company/{name}/audits", company=company_name, started=started, outcome="not_found")
             raise HTTPException(status_code=404, detail="Company not found")
 
         audit_rows = (
@@ -65,12 +107,20 @@ def company_audits(company_name: str) -> dict[str, Any]:
             .scalars()
             .all()
         )
-        return {
+        result = {
             "company": company_name,
             "protocol_id": protocol_row.id,
             "audit_count": len(audit_rows),
             "audits": [_audit_report_to_dict(ar) for ar in audit_rows],
         }
+    _log_endpoint(
+        "/api/company/{name}/audits",
+        company=company_name,
+        started=started,
+        outcome="success",
+        audit_count=len(audit_rows),
+    )
+    return result
 
 
 @router.get("/api/company/{company_name}/audit_coverage")
@@ -85,9 +135,16 @@ def company_audit_coverage(company_name: str) -> dict[str, Any]:
     ``match_type`` + ``match_confidence`` so the UI can flag low-confidence
     links differently.
     """
+    started = time.monotonic()
     with deps.SessionLocal() as session:
         protocol_row = session.execute(select(Protocol).where(Protocol.name == company_name)).scalar_one_or_none()
         if protocol_row is None:
+            _log_endpoint(
+                "/api/company/{name}/audit_coverage",
+                company=company_name,
+                started=started,
+                outcome="not_found",
+            )
             raise HTTPException(status_code=404, detail="Company not found")
 
         contracts = session.execute(select(Contract).where(Contract.protocol_id == protocol_row.id)).scalars().all()
@@ -165,10 +222,20 @@ def company_audit_coverage(company_name: str) -> dict[str, Any]:
                     "audits": matching,
                 }
             )
-        return {
+        result = {
             "company": company_name,
             "protocol_id": protocol_row.id,
             "contract_count": len(coverage),
             "audit_count": len(audit_rows),
             "coverage": coverage,
         }
+    _log_endpoint(
+        "/api/company/{name}/audit_coverage",
+        company=company_name,
+        started=started,
+        outcome="success",
+        contract_count=len(coverage),
+        audit_count=len(audit_rows),
+        coverage_row_count=len(coverage_rows),
+    )
+    return result

@@ -23,8 +23,11 @@ Stages (each returns plain Python data, not ORM rows that pin a session):
 
 from __future__ import annotations
 
+import logging
+import time
+from contextlib import contextmanager
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Iterator
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
@@ -43,6 +46,24 @@ from db.models import (
     UpgradeEvent,
 )
 from services.governance.principals import _build_company_function_entry
+
+logger = logging.getLogger("services.aggregations.company_overview")
+
+
+@contextmanager
+def _time_phase(timings_ms: dict[str, int], name: str) -> Iterator[None]:
+    """Record the elapsed ms of the wrapped block into ``timings_ms[name]``.
+
+    Mirrors the ``_phase`` helper in
+    ``services.static.contract_analysis_pipeline.core``; the bundled-timing
+    style (single log line per request with every stage as a field) keeps
+    log volume bounded and groups well in Loki.
+    """
+    start = time.monotonic()
+    try:
+        yield
+    finally:
+        timings_ms[name] = int((time.monotonic() - start) * 1000)
 
 
 class CompanyNotFound(Exception):
@@ -214,36 +235,77 @@ def _prefetch_child_tables(session: Session, contract_ids: set[int]) -> dict[str
         return out
 
     id_list = list(contract_ids)
-    for cv in session.execute(select(ControllerValue).where(ControllerValue.contract_id.in_(id_list))).scalars():
-        out["controller_values"].setdefault(cv.contract_id, []).append(cv)
-    for ef in session.execute(
-        select(EffectiveFunction)
-        .where(EffectiveFunction.contract_id.in_(id_list))
-        .options(selectinload(EffectiveFunction.principals))
-    ).scalars():
-        out["ef_rows"].setdefault(ef.contract_id, []).append(ef)
-    for cid, count in session.execute(
-        select(UpgradeEvent.contract_id, func.count(UpgradeEvent.id))
-        .where(UpgradeEvent.contract_id.in_(id_list))
-        .group_by(UpgradeEvent.contract_id)
-    ).all():
-        out["upgrade_events_count"][cid] = count
-    for cid, last_block, last_ts in session.execute(
-        select(
-            UpgradeEvent.contract_id,
-            func.max(UpgradeEvent.block_number),
-            func.max(UpgradeEvent.timestamp),
-        )
-        .where(UpgradeEvent.contract_id.in_(id_list))
-        .group_by(UpgradeEvent.contract_id)
-    ).all():
-        out["upgrade_events_last"][cid] = {"block": last_block, "timestamp": last_ts}
-    for b in session.execute(select(ContractBalance).where(ContractBalance.contract_id.in_(id_list))).scalars():
-        out["balances"].setdefault(b.contract_id, []).append(b)
-    for n in session.execute(select(ControlGraphNode).where(ControlGraphNode.contract_id.in_(id_list))).scalars():
-        out["cgn"].setdefault(n.contract_id, []).append(n)
-    for e in session.execute(select(ControlGraphEdge).where(ControlGraphEdge.contract_id.in_(id_list))).scalars():
-        out["cge"].setdefault(e.contract_id, []).append(e)
+    timings_ms: dict[str, int] = {}
+    counts: dict[str, int] = {}
+
+    with _time_phase(timings_ms, "controller_values"):
+        cv_rows = 0
+        for cv in session.execute(select(ControllerValue).where(ControllerValue.contract_id.in_(id_list))).scalars():
+            out["controller_values"].setdefault(cv.contract_id, []).append(cv)
+            cv_rows += 1
+        counts["controller_values"] = cv_rows
+    with _time_phase(timings_ms, "effective_functions"):
+        ef_rows = 0
+        for ef in session.execute(
+            select(EffectiveFunction)
+            .where(EffectiveFunction.contract_id.in_(id_list))
+            .options(selectinload(EffectiveFunction.principals))
+        ).scalars():
+            out["ef_rows"].setdefault(ef.contract_id, []).append(ef)
+            ef_rows += 1
+        counts["effective_functions"] = ef_rows
+    with _time_phase(timings_ms, "upgrade_events_count"):
+        for cid, count in session.execute(
+            select(UpgradeEvent.contract_id, func.count(UpgradeEvent.id))
+            .where(UpgradeEvent.contract_id.in_(id_list))
+            .group_by(UpgradeEvent.contract_id)
+        ).all():
+            out["upgrade_events_count"][cid] = count
+        counts["upgrade_events_count"] = len(out["upgrade_events_count"])
+    with _time_phase(timings_ms, "upgrade_events_last"):
+        for cid, last_block, last_ts in session.execute(
+            select(
+                UpgradeEvent.contract_id,
+                func.max(UpgradeEvent.block_number),
+                func.max(UpgradeEvent.timestamp),
+            )
+            .where(UpgradeEvent.contract_id.in_(id_list))
+            .group_by(UpgradeEvent.contract_id)
+        ).all():
+            out["upgrade_events_last"][cid] = {"block": last_block, "timestamp": last_ts}
+        counts["upgrade_events_last"] = len(out["upgrade_events_last"])
+    with _time_phase(timings_ms, "balances"):
+        b_rows = 0
+        for b in session.execute(select(ContractBalance).where(ContractBalance.contract_id.in_(id_list))).scalars():
+            out["balances"].setdefault(b.contract_id, []).append(b)
+            b_rows += 1
+        counts["balances"] = b_rows
+    with _time_phase(timings_ms, "control_graph_nodes"):
+        n_rows = 0
+        for n in session.execute(select(ControlGraphNode).where(ControlGraphNode.contract_id.in_(id_list))).scalars():
+            out["cgn"].setdefault(n.contract_id, []).append(n)
+            n_rows += 1
+        counts["control_graph_nodes"] = n_rows
+    with _time_phase(timings_ms, "control_graph_edges"):
+        e_rows = 0
+        for e in session.execute(select(ControlGraphEdge).where(ControlGraphEdge.contract_id.in_(id_list))).scalars():
+            out["cge"].setdefault(e.contract_id, []).append(e)
+            e_rows += 1
+        counts["control_graph_edges"] = e_rows
+
+    total_ms = sum(timings_ms.values())
+    logger.info(
+        "Prefetched per-contract child tables: contracts=%d total_ms=%d",
+        len(contract_ids),
+        total_ms,
+        extra={
+            "phase": "prefetch_child_tables",
+            "duration_ms": total_ms,
+            "contract_count": len(contract_ids),
+            "timings_ms": timings_ms,
+            "row_counts": counts,
+        },
+    )
     return out
 
 
@@ -991,10 +1053,38 @@ def assemble_company_payload(
 
 
 def build_company_overview(session: Session, name: str) -> dict[str, Any]:
-    protocol_row, jobs = resolve_company_jobs(session, name)
+    timings_ms: dict[str, int] = {}
+    start = time.monotonic()
+
+    with _time_phase(timings_ms, "resolve_jobs"):
+        protocol_row, jobs = resolve_company_jobs(session, name)
     if not jobs:
         raise CompanyNotFound(name)
-    contracts_by_job_id = prefetch_contracts(session, jobs)
-    impl_job_by_addr, contracts_by_job_id = resolve_implementation_contracts(session, jobs, contracts_by_job_id)
-    governance = build_governance_view(session, jobs, contracts_by_job_id, impl_job_by_addr)
-    return assemble_company_payload(session, name, protocol_row, jobs, governance)
+    with _time_phase(timings_ms, "prefetch_contracts"):
+        contracts_by_job_id = prefetch_contracts(session, jobs)
+    with _time_phase(timings_ms, "resolve_implementation_contracts"):
+        impl_job_by_addr, contracts_by_job_id = resolve_implementation_contracts(
+            session, jobs, contracts_by_job_id
+        )
+    with _time_phase(timings_ms, "build_governance_view"):
+        governance = build_governance_view(session, jobs, contracts_by_job_id, impl_job_by_addr)
+    with _time_phase(timings_ms, "assemble_payload"):
+        payload = assemble_company_payload(session, name, protocol_row, jobs, governance)
+
+    total_ms = int((time.monotonic() - start) * 1000)
+    logger.info(
+        "Company overview built: company=%s jobs=%d contracts=%d total_ms=%d",
+        name,
+        len(jobs),
+        len(payload.get("contracts") or []),
+        total_ms,
+        extra={
+            "phase": "build_company_overview",
+            "duration_ms": total_ms,
+            "company": name,
+            "job_count": len(jobs),
+            "contract_count": len(payload.get("contracts") or []),
+            "timings_ms": timings_ms,
+        },
+    )
+    return payload
