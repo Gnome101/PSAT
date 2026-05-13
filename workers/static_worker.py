@@ -799,9 +799,7 @@ class StaticWorker(BaseWorker):
         """
         from sqlalchemy import select as sa_select
 
-        row = session.execute(
-            sa_select(Contract).where(Contract.job_id == job.id).limit(1)
-        ).scalar_one_or_none()
+        row = session.execute(sa_select(Contract).where(Contract.job_id == job.id).limit(1)).scalar_one_or_none()
         if row is not None or not job.address:
             return row
         request = job.request if isinstance(job.request, dict) else {}
