@@ -247,6 +247,43 @@ def _prefetch_child_tables(session: Session, contract_ids: set[int]) -> dict[str
     return out
 
 
+_PRINCIPAL_TYPES = frozenset({"contract", "safe", "timelock", "eoa", "proxy_admin"})
+
+
+def _trim_control_graph(nodes: list[dict[str, Any]], edges: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
+    """Drop mapping-entry leaf nodes (and edges pointing at them) from a
+    contract's local control_graph.
+
+    The frontend walker in ``site/src/surface/layout/controlGraph.js``
+    emits any non-contract ``to`` of an edge from a reachable source as
+    an "indirect principal" in the function inspector. Contracts like
+    ``EtherFiNodesManager`` store hundreds of validator addresses in a
+    mapping; those addresses end up as nodes of ``type:"unknown"`` with
+    labels like ``"deployedEtherFiNodes"``. They are not principals —
+    they are stored EVM data — and they balloon the payload (~900 KB
+    on ether.fi) while filling the inspector with noise.
+
+    A node is dropped iff its type is not a recognised principal AND it
+    never appears as the source of any edge in this contract's local
+    edges list (so the walker can never recurse out of it). All edges
+    targeting a dropped node are dropped with it so the walker never
+    emits a ghost entry.
+    """
+    sources = {(e.get("from") or "").lower() for e in edges}
+    dropped: set[str] = set()
+    kept_nodes: list[dict[str, Any]] = []
+    for n in nodes:
+        addr = (n.get("address") or "").lower()
+        if (n.get("type") in _PRINCIPAL_TYPES) or (addr in sources):
+            kept_nodes.append(n)
+        else:
+            dropped.add(addr)
+    if not dropped:
+        return {"nodes": nodes, "edges": edges}
+    kept_edges = [e for e in edges if (e.get("to") or "").lower() not in dropped]
+    return {"nodes": kept_nodes, "edges": kept_edges}
+
+
 def _has_timelock_delay(details: Any) -> bool:
     if not isinstance(details, dict):
         return False
@@ -552,25 +589,24 @@ def build_governance_view(
             cg_nodes = cgn_by_cid.get(graph_contract.id, [])
             cg_edges = cge_by_cid.get(graph_contract.id, [])
             node_meta = {n.address: _principal_lookup_meta(principal_lookup, n.address, n.details) for n in cg_nodes}
-            entry["control_graph"] = {
-                "nodes": [
-                    {
-                        "address": n.address,
-                        "type": node_meta[n.address].get("resolved_type") or n.resolved_type,
-                        "label": node_meta[n.address].get("label") or n.contract_name or n.label,
-                        "details": node_meta[n.address]["details"],
-                    }
-                    for n in cg_nodes
-                ],
-                "edges": [
-                    {
-                        "from": e.from_node_id.replace("address:", ""),
-                        "to": e.to_node_id.replace("address:", ""),
-                        "relation": e.relation,
-                    }
-                    for e in cg_edges
-                ],
-            }
+            nodes_payload = [
+                {
+                    "address": n.address,
+                    "type": node_meta[n.address].get("resolved_type") or n.resolved_type,
+                    "label": node_meta[n.address].get("label") or n.contract_name or n.label,
+                    "details": node_meta[n.address]["details"],
+                }
+                for n in cg_nodes
+            ]
+            edges_payload = [
+                {
+                    "from": e.from_node_id.replace("address:", ""),
+                    "to": e.to_node_id.replace("address:", ""),
+                    "relation": e.relation,
+                }
+                for e in cg_edges
+            ]
+            entry["control_graph"] = _trim_control_graph(nodes_payload, edges_payload)
         contracts.append(entry)
 
         if owner:
