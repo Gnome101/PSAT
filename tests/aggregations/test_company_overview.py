@@ -16,10 +16,19 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from db.models import Contract, Job, JobStage, JobStatus, Protocol  # noqa: E402
+from db.models import (  # noqa: E402
+    Contract,
+    EffectiveFunction,
+    FunctionPrincipal,
+    Job,
+    JobStage,
+    JobStatus,
+    Protocol,
+)
 from services.aggregations.company_overview import (  # noqa: E402
     CompanyNotFound,
     build_company_overview,
+    build_functions_for_protocol,
     prefetch_contracts,
     resolve_company_jobs,
     resolve_implementation_contracts,
@@ -210,6 +219,133 @@ def test_build_company_overview_end_to_end_protocol_path(db_session):
 def test_build_company_overview_raises_when_unknown(db_session):
     with pytest.raises(CompanyNotFound):
         build_company_overview(db_session, f"missing-{uuid.uuid4().hex[:8]}")
+
+
+def test_build_company_overview_omits_functions_field(db_session):
+    """``functions`` no longer ships in the main payload — it's served by
+    ``/api/company/{name}/functions`` and fetched lazily by the frontend.
+    """
+    p = _add_protocol(db_session, f"e2e-nofn-{uuid.uuid4().hex[:8]}")
+    addr = _addr("nofn1")
+    job = _add_job(db_session, address=addr, protocol_id=p.id, name="Vault")
+    c = _add_contract(db_session, address=addr, job=job, protocol_id=p.id, contract_name="Vault")
+    # Seed an EF row so the lightweight projection has something to walk.
+    db_session.add(
+        EffectiveFunction(
+            contract_id=c.id,
+            function_name="pause",
+            selector="0xabcdef01",
+            abi_signature="pause()",
+            effect_labels=["pause_toggle"],
+            effect_targets=[],
+            action_summary="pause",
+            authority_public=False,
+            authority_roles=[],
+        )
+    )
+    db_session.commit()
+
+    payload = build_company_overview(db_session, p.name)
+    entry = next(c for c in payload["contracts"] if c["address"] == addr)
+    assert "functions" not in entry
+    # value_effects / capabilities should still derive from the lightweight
+    # ef_effects projection — pause_toggle → "pause" capability.
+    assert "pause" in entry["capabilities"]
+
+
+def test_build_functions_for_protocol_returns_keyed_function_list(db_session):
+    """``build_functions_for_protocol`` returns ``{address: [function_entries]}``
+    using the same shape that previously lived on each contract entry.
+    """
+    p = _add_protocol(db_session, f"functions-{uuid.uuid4().hex[:8]}")
+    addr = _addr("fn1")
+    job = _add_job(db_session, address=addr, protocol_id=p.id, name="Vault")
+    contract = _add_contract(db_session, address=addr, job=job, protocol_id=p.id, contract_name="Vault")
+    ef = EffectiveFunction(
+        contract_id=contract.id,
+        function_name="transfer",
+        selector="0xa9059cbb",
+        abi_signature="transfer(address,uint256)",
+        effect_labels=["asset_send"],
+        effect_targets=[],
+        action_summary="transfer assets",
+        authority_public=True,
+        authority_roles=[],
+    )
+    db_session.add(ef)
+    db_session.flush()
+    db_session.add(
+        FunctionPrincipal(
+            function_id=ef.id,
+            address=_addr("safe1"),
+            resolved_type="safe",
+            origin="role 0",
+            principal_type="authority_role",
+            details={"owners": [_addr("o1"), _addr("o2")], "threshold": 2},
+        )
+    )
+    db_session.commit()
+
+    out = build_functions_for_protocol(db_session, p.name)
+    assert addr in out
+    entries = out[addr]
+    assert len(entries) == 1
+    entry = entries[0]
+    assert entry["function"] == "transfer(address,uint256)"
+    assert entry["selector"] == "0xa9059cbb"
+    assert entry["effect_labels"] == ["asset_send"]
+    assert entry["authority_public"] is True
+    # The FP row was principal_type=authority_role, so it should bucket
+    # under authority_roles rather than direct_owner.
+    assert entry["authority_roles"], "authority_roles should be populated"
+    assert entry["direct_owner"] is None
+
+
+def test_build_functions_for_protocol_unknown_company_raises(db_session):
+    with pytest.raises(CompanyNotFound):
+        build_functions_for_protocol(db_session, f"missing-{uuid.uuid4().hex[:8]}")
+
+
+def test_build_functions_for_protocol_proxy_uses_impl(db_session):
+    """Proxy entries inherit functions from the impl contract's EF rows."""
+    p = _add_protocol(db_session, f"functions-proxy-{uuid.uuid4().hex[:8]}")
+    proxy_addr = _addr("pxfn")
+    impl_addr = _addr("imfn")
+
+    proxy_job = _add_job(db_session, address=proxy_addr, protocol_id=p.id, is_proxy=True)
+    impl_job = _add_job(db_session, address=impl_addr, protocol_id=p.id)
+    _add_contract(
+        db_session,
+        address=proxy_addr,
+        job=proxy_job,
+        protocol_id=p.id,
+        is_proxy=True,
+        implementation=impl_addr,
+        contract_name="ERC1967Proxy",
+    )
+    impl_contract = _add_contract(
+        db_session, address=impl_addr, job=impl_job, protocol_id=p.id, contract_name="VaultImpl"
+    )
+    db_session.add(
+        EffectiveFunction(
+            contract_id=impl_contract.id,
+            function_name="upgradeTo",
+            selector="0x3659cfe6",
+            abi_signature="upgradeTo(address)",
+            effect_labels=["implementation_update"],
+            effect_targets=[],
+            action_summary="upgrade",
+            authority_public=False,
+            authority_roles=[],
+        )
+    )
+    db_session.commit()
+
+    out = build_functions_for_protocol(db_session, p.name)
+    # Function is keyed to the proxy's address (what the user sees), not
+    # the impl's address.
+    assert proxy_addr in out
+    assert any(entry["function"] == "upgradeTo(address)" for entry in out[proxy_addr])
 
 
 def test_build_company_overview_proxy_uses_impl_name(db_session):

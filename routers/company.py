@@ -11,7 +11,11 @@ from sqlalchemy import select
 
 from db.models import AuditContractCoverage, AuditReport, Contract, Protocol
 from services.aggregations import CompanyNotFound, build_company_overview
-from services.aggregations.company_overview import all_addresses_for_protocol, resolve_company_jobs
+from services.aggregations.company_overview import (
+    all_addresses_for_protocol,
+    build_functions_for_protocol,
+    resolve_company_jobs,
+)
 from services.audits.serializers import _audit_brief, _audit_report_to_dict
 
 from . import deps
@@ -86,6 +90,36 @@ def company_addresses(company_name: str, response: Response) -> dict[str, Any]:
         address_count=len(addresses),
     )
     return {"all_addresses": addresses}
+
+
+@router.get("/api/company/{company_name}/functions")
+def company_functions(company_name: str, response: Response) -> dict[str, Any]:
+    """Per-contract function entries for a protocol, keyed by address.
+
+    Split out of the main ``/api/company/{name}`` payload — the
+    ``EffectiveFunction`` table accounts for ~2.13 MB of payload and
+    120-290ms of TTFB on ether.fi, neither of which the Surface canvas
+    needs to render. ``ProtocolSurface`` fetches this in parallel with
+    the main payload and populates the function inspector when it
+    arrives.
+    """
+    response.headers["Cache-Control"] = "private, max-age=15, stale-while-revalidate=60"
+    started = time.monotonic()
+    with deps.SessionLocal() as session:
+        try:
+            functions_by_address = build_functions_for_protocol(session, company_name)
+        except CompanyNotFound:
+            _log_endpoint("/api/company/{name}/functions", company=company_name, started=started, outcome="not_found")
+            raise HTTPException(status_code=404, detail="Company not found")
+    _log_endpoint(
+        "/api/company/{name}/functions",
+        company=company_name,
+        started=started,
+        outcome="success",
+        contract_count=len(functions_by_address),
+        function_count=sum(len(v) for v in functions_by_address.values()),
+    )
+    return {"functions": functions_by_address}
 
 
 @router.get("/api/company/{company_name}/audits")

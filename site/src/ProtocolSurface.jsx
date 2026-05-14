@@ -27,19 +27,28 @@ import { SurfaceMonitoringPanel } from "./surface/sidebar/monitoring/SurfaceMoni
 import { SearchModesBar } from "./surface/sidebar/search/SearchModesBar.jsx";
 import { SearchNavigator } from "./surface/sidebar/search/SearchNavigator.jsx";
 
-export default function ProtocolSurface({ companyName, initialData = null, initialCoverage = null, embedded = false }) {
-  // initialData lets a parent (CompanyOverview) hand us the
-  // /api/company/{name} payload it already fetched, so we don't fire a
-  // second 1-3 MB request on mount. We still pull functions out of it
-  // (they're embedded on each contract entry).
+export default function ProtocolSurface({
+  companyName,
+  initialData = null,
+  initialCoverage = null,
+  initialFunctions = null,
+  embedded = false,
+}) {
+  // initialData / initialFunctions let a parent (CompanyOverview) hand
+  // us the /api/company/{name} payload and /functions map it already
+  // fetched, so we don't fire duplicate requests on mount. Fixtures
+  // (vitest, e2e) still embed functions on each contract entry, so
+  // fall back to those when neither prop is provided.
   const [companyData, setCompanyData] = useState(initialData);
   const initialFunctionData = useMemo(() => {
+    if (initialFunctions && typeof initialFunctions === "object") return initialFunctions;
     if (!initialData?.contracts) return {};
     return Object.fromEntries(
       initialData.contracts.filter((c) => c.address).map((c) => [c.address, c.functions || []])
     );
-  }, [initialData]);
+  }, [initialData, initialFunctions]);
   const [functionData, setFunctionData] = useState(initialFunctionData);
+  const [functionsLoading, setFunctionsLoading] = useState(false);
   const [selectedGuard, setSelectedGuard] = useState(null);
   const [selectedMachine, setSelectedMachine] = useState(null);
   const [selectedPrincipal, setSelectedPrincipal] = useState(null);
@@ -189,51 +198,91 @@ export default function ProtocolSurface({ companyName, initialData = null, initi
 
   useEffect(() => {
     if (!companyName) return undefined;
-    // Skip the fetch when the parent already handed us the payload —
-    // the embedded surface in CompanyOverview reuses its parent's data,
-    // which previously caused a duplicate 1-3 MB request.
-    if (initialData) {
-      setCompanyData(initialData);
-      setError(null);
-      setSelectedGuard(null);
-      setRadarExampleSelection(null);
-      return undefined;
-    }
+    setError(null);
+    setSelectedGuard(null);
+    setRadarExampleSelection(null);
     let cancelled = false;
 
-    async function load() {
-      try {
-        setError(null);
-        setSelectedGuard(null);
-        setRadarExampleSelection(null);
-        const companyResponse = await fetch(`/api/company/${encodeURIComponent(companyName)}`);
-        if (!companyResponse.ok) throw new Error("Failed to load company overview");
-        const companyPayload = await companyResponse.json();
-        if (cancelled) return;
-        setCompanyData(companyPayload);
+    const haveCompanyData = Boolean(initialData);
+    // Fixtures (vitest, e2e) still embed functions on each contract,
+    // so detect that and skip the /functions fetch in that case.
+    const initialFixtureFunctions =
+      !initialFunctions &&
+      Array.isArray(initialData?.contracts) &&
+      initialData.contracts.some((c) => Array.isArray(c.functions));
+    const haveFunctions = Boolean(initialFunctions) || initialFixtureFunctions;
 
-        // Functions are now included in the company response — no separate artifact fetches needed
-        const permissionEntries = companyPayload.contracts
-          .filter((c) => c.address)
-          .map((c) => [c.address, c.functions || []]);
+    if (haveCompanyData) setCompanyData(initialData);
 
-        if (cancelled) return;
-        setFunctionData(Object.fromEntries(permissionEntries));
-      } catch (err) {
-        if (!cancelled) setError(err.message || "Failed to load surface");
-      }
+    // Fire both fetches in parallel — /api/company and /functions are
+    // independent. /functions is the heavy one (was 120-290 ms + 2.13 MB
+    // of payload inside the main endpoint); doing it alongside keeps the
+    // canvas TTI down without waiting on the function inspector data.
+    if (!haveCompanyData) {
+      fetch(`/api/company/${encodeURIComponent(companyName)}`)
+        .then((r) => {
+          if (!r.ok) throw new Error("Failed to load company overview");
+          return r.json();
+        })
+        .then((d) => {
+          if (cancelled) return;
+          setCompanyData(d);
+          // Older / mocked /api/company responses still embed functions
+          // on contract entries (e2e fixtures, legacy backend). Use them
+          // when present so the /functions fetch's failure is harmless.
+          const embedded = (d?.contracts || []).filter(
+            (c) => c.address && Array.isArray(c.functions),
+          );
+          if (embedded.length > 0) {
+            setFunctionData((prev) => {
+              if (prev && Object.keys(prev).length > 0) return prev;
+              return Object.fromEntries(embedded.map((c) => [c.address, c.functions]));
+            });
+          }
+        })
+        .catch((err) => { if (!cancelled) setError(err.message || "Failed to load surface"); });
     }
 
-    load();
+    if (!haveFunctions) {
+      setFunctionsLoading(true);
+      fetch(`/api/company/${encodeURIComponent(companyName)}/functions`)
+        .then((r) => (r.ok ? r.json() : null))
+        .then((d) => {
+          if (cancelled) return;
+          const incoming = d && typeof d === "object" && d.functions;
+          if (incoming && Object.keys(incoming).length > 0) {
+            setFunctionData(incoming);
+          }
+          setFunctionsLoading(false);
+        })
+        .catch(() => { if (!cancelled) setFunctionsLoading(false); });
+    }
+
     return () => {
       cancelled = true;
     };
-  }, [companyName, initialData]);
+  }, [companyName, initialData, initialFunctions]);
 
   const allMachines = useMemo(
-    () => (companyData ? buildMachines(companyData, functionData) : []),
-    [companyData, functionData]
+    () => (companyData ? buildMachines(companyData, functionData, { functionsLoading }) : []),
+    [companyData, functionData, functionsLoading]
   );
+
+  // computeProtocolScore (used by DetailEmptyState) iterates
+  // contract.functions for its action axes. Functions live on a
+  // separate endpoint now, so splice them back onto each contract for
+  // the score-only consumer. The buildMachines call above already
+  // consumes the keyed map directly.
+  const companyDataWithFunctions = useMemo(() => {
+    if (!companyData) return null;
+    if (!functionData || Object.keys(functionData).length === 0) return companyData;
+    return {
+      ...companyData,
+      contracts: (companyData.contracts || []).map((c) =>
+        c.address && functionData[c.address] ? { ...c, functions: functionData[c.address] } : c
+      ),
+    };
+  }, [companyData, functionData]);
 
   const machines = useMemo(
     () => allMachines.filter((m) => enabledRoles.has(m.role || "utility")),
@@ -705,7 +754,7 @@ export default function ProtocolSurface({ companyName, initialData = null, initi
           {sidebarMode === "detail" && !selectedPrincipal && (!selectedMachine || radarExampleSelection) && (
             <DetailEmptyState
               companyName={companyName}
-              companyData={companyData}
+              companyData={companyDataWithFunctions}
               coverageData={coverageData}
               onExampleClick={handleRadarExampleClick}
             />
