@@ -269,7 +269,7 @@ export function buildGraphLayout(machines, fundFlows, principals) {
       targetHandle: handles.targetHandle,
       type: "smoothstep",
       style: { stroke: isValue ? "#6a9e94" : "#475569", strokeWidth: isValue ? 1.5 : 1 },
-      animated: true,
+      animated: false,
       data: { capabilities: (flow.capabilities || []).slice(0, 3), flowType: flow.type },
     });
   }
