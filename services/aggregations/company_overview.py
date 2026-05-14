@@ -24,6 +24,7 @@ Stages (each returns plain Python data, not ORM rows that pin a session):
 from __future__ import annotations
 
 import logging
+import os
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import contextmanager
@@ -222,7 +223,19 @@ def resolve_implementation_contracts(
     return impl_job_by_addr, contracts_by_job_id
 
 
-_PREFETCH_MAX_WORKERS = 4
+# Read the pool sizing from the same env vars db.models reads, rather than
+# importing the (private) constants. The fan-out cap derives from
+# pool_size + max_overflow so prod (start_workers.sh tightens to 2+3=5) and
+# dev (5+10=15) both stay below ~half the pool: one in-flight /api/company
+# never claims more than ~half the engine's connections, leaving room for
+# /functions, /audit_coverage, etc. on the same worker process. The hard
+# ceiling of 4 caps perf returns since beyond that the SQL planner and the
+# DB CPU become the bottleneck, not concurrency.
+#   prod (pool=5):  (5 - 1) // 2 = 2 workers + 1 request session = 3/5
+#   dev  (pool=15): min(4, (15-1)//2 = 7) = 4 workers + 1 = 5/15
+_DB_POOL_SIZE = int(os.environ.get("PSAT_DB_POOL_SIZE", "5"))
+_DB_MAX_OVERFLOW = int(os.environ.get("PSAT_DB_MAX_OVERFLOW", "10"))
+_PREFETCH_MAX_WORKERS = max(1, min(4, (_DB_POOL_SIZE + _DB_MAX_OVERFLOW - 1) // 2))
 
 
 def _prefetch_child_tables(
@@ -253,10 +266,11 @@ def _prefetch_child_tables(
     ``ThreadPoolExecutor`` — sync SQLAlchemy releases the GIL inside the
     DB driver so threads give genuine wall-time parallelism. Each task
     opens its own ``Session`` on the same engine because Session is not
-    thread-safe; ``max_workers=4`` keeps a single request from claiming
-    more than 5 of the engine pool's 15 connections (5 + 10 overflow).
-    ``max_workers=1`` collapses to in-order execution and is what the
-    parity test uses to validate the parallel merge.
+    thread-safe; ``max_workers`` is derived from the engine pool size so
+    a single request never claims more than ~half the pool (see the
+    ``_PREFETCH_MAX_WORKERS`` comment above for the math). Tests pass
+    ``max_workers=1`` to validate the sequential path against the
+    parallel merge.
     """
     out: dict[str, dict[int, Any]] = {
         "controller_values": {},
