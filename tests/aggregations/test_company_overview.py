@@ -20,6 +20,7 @@ from sqlalchemy import select  # noqa: E402
 
 from db.models import (  # noqa: E402
     Contract,
+    ContractBalance,
     ControlGraphEdge,
     ControlGraphNode,
     ControllerValue,
@@ -29,10 +30,12 @@ from db.models import (  # noqa: E402
     JobStage,
     JobStatus,
     Protocol,
+    UpgradeEvent,
 )
 from services.aggregations.company_overview import (  # noqa: E402
     CompanyNotFound,
     _build_principal_lookup,
+    _prefetch_child_tables,
     _principal_lookup_meta,
     _trim_control_graph,
     build_company_overview,
@@ -575,3 +578,235 @@ def test_trim_control_graph_sql_parity(db_session):
     assert external_addr in {e["to"].lower() for e in actual_cg["edges"]}, (
         "edge whose target is outside this contract's CGN must survive"
     )
+
+
+def _normalize_prefetch(result: dict) -> dict:
+    """Reduce ``_prefetch_child_tables`` output to a hashable, order-independent
+    structure so equality comparison is robust to per-session row order.
+
+    ORM rows are reduced to tuples of the columns the downstream pipeline
+    actually reads; lists are sorted so we test as multisets, not sequences.
+    """
+
+    def cv_key(cv):
+        return (cv.controller_id, cv.value, cv.resolved_type, cv.source, cv.block_number)
+
+    def bal_key(b):
+        return (
+            b.token_address,
+            b.token_symbol,
+            b.raw_balance,
+            b.decimals,
+            float(b.usd_value) if b.usd_value is not None else None,
+            float(b.price_usd) if b.price_usd is not None else None,
+        )
+
+    def cgn_key(n):
+        return (
+            n.address,
+            n.resolved_type,
+            n.contract_name,
+            n.label,
+            tuple(sorted((n.details or {}).items())) if isinstance(n.details, dict) else n.details,
+        )
+
+    def cge_key(e):
+        return (e.from_node_id, e.to_node_id, e.relation)
+
+    return {
+        "controller_values": {cid: sorted(cv_key(r) for r in rows) for cid, rows in result["controller_values"].items()},
+        "ef_effects": {cid: sorted(tuple(lbls) for lbls in rows) for cid, rows in result["ef_effects"].items()},
+        "fp_governance_rows": {
+            cid: sorted((d["address"], d["resolved_type"], repr(d["details"])) for d in rows)
+            for cid, rows in result["fp_governance_rows"].items()
+        },
+        "upgrade_events_count": dict(result["upgrade_events_count"]),
+        "upgrade_events_last": dict(result["upgrade_events_last"]),
+        "balances": {cid: sorted(bal_key(b) for b in rows) for cid, rows in result["balances"].items()},
+        "cgn": {cid: sorted(cgn_key(n) for n in rows) for cid, rows in result["cgn"].items()},
+        "cge": {cid: sorted(cge_key(e) for e in rows) for cid, rows in result["cge"].items()},
+    }
+
+
+def test_prefetch_child_tables_parallel_sequential_parity(db_session):
+    """``_prefetch_child_tables`` returns byte-identical output between the
+    parallel fan-out (default ``max_workers=4``) and the sequential path
+    (``max_workers=1``).
+
+    Seeds one row of every child-table type across two contracts so every
+    key in the returned dict has something to merge — the test fails if a
+    parallel-only path corrupts the merge, drops rows, or attaches a
+    session-local row to the wrong contract_id bucket.
+    """
+    p = _add_protocol(db_session, f"parity-par-{uuid.uuid4().hex[:8]}")
+    addr_a = _addr("pa")
+    addr_b = _addr("pb")
+    job_a = _add_job(db_session, address=addr_a, protocol_id=p.id, name="ContractA")
+    job_b = _add_job(db_session, address=addr_b, protocol_id=p.id, name="ContractB")
+    contract_a = _add_contract(db_session, address=addr_a, job=job_a, protocol_id=p.id, contract_name="ContractA")
+    contract_b = _add_contract(db_session, address=addr_b, job=job_b, protocol_id=p.id, contract_name="ContractB")
+
+    safe_addr = _addr("psafe").lower()
+    tl_addr = _addr("ptl").lower()
+    cv_principal = _addr("pcv").lower()
+    ef_principal = _addr("pfp").lower()
+    leaf_drop = _addr("pdrop").lower()
+    leaf_src = _addr("psrc").lower()
+
+    # Contract A: every child-table type populated.
+    db_session.add(
+        ControllerValue(
+            contract_id=contract_a.id,
+            controller_id="owner",
+            value=cv_principal,
+            resolved_type="safe",
+            source="onchain",
+            block_number=100,
+        )
+    )
+    db_session.add(
+        ControllerValue(
+            contract_id=contract_a.id,
+            controller_id="admin",
+            value=tl_addr,
+            resolved_type="timelock",
+            source=None,
+            block_number=101,
+        )
+    )
+    db_session.add(
+        ControlGraphNode(contract_id=contract_a.id, address=safe_addr, resolved_type="safe", label="A safe")
+    )
+    db_session.add(
+        ControlGraphNode(contract_id=contract_a.id, address=tl_addr, resolved_type="timelock")
+    )
+    db_session.add(
+        ControlGraphNode(contract_id=contract_a.id, address=leaf_drop, resolved_type="unknown")
+    )
+    db_session.add(
+        ControlGraphNode(contract_id=contract_a.id, address=leaf_src, resolved_type="unknown")
+    )
+    db_session.add(
+        ControlGraphEdge(
+            contract_id=contract_a.id,
+            from_node_id=f"address:{leaf_src}",
+            to_node_id=f"address:{safe_addr}",
+            relation="ref",
+        )
+    )
+    db_session.add(
+        ControlGraphEdge(
+            contract_id=contract_a.id,
+            from_node_id=f"address:{safe_addr}",
+            to_node_id=f"address:{leaf_drop}",
+            relation="ref",
+        )
+    )
+    db_session.add(
+        ContractBalance(
+            contract_id=contract_a.id,
+            token_address=None,
+            token_symbol="ETH",
+            token_name="Ether",
+            decimals=18,
+            raw_balance="1000000000000000000",
+            usd_value=2500.00,
+            price_usd=2500.00,
+        )
+    )
+    ef_a = EffectiveFunction(
+        contract_id=contract_a.id,
+        function_name="pause",
+        selector="0x8456cb59",
+        abi_signature="pause()",
+        effect_labels=["pause_toggle"],
+        effect_targets=[],
+        action_summary="pause",
+        authority_public=False,
+        authority_roles=[],
+    )
+    db_session.add(ef_a)
+    db_session.flush()
+    db_session.add(
+        FunctionPrincipal(
+            function_id=ef_a.id,
+            address=ef_principal,
+            resolved_type="safe",
+            origin="role 0",
+            principal_type="authority_role",
+            details={"threshold": 2},
+        )
+    )
+    db_session.add(
+        UpgradeEvent(
+            contract_id=contract_a.id,
+            proxy_address=addr_a,
+            new_impl=_addr("pimpl"),
+            block_number=12345,
+            timestamp=datetime(2024, 6, 1, tzinfo=timezone.utc),
+        )
+    )
+    db_session.add(
+        UpgradeEvent(
+            contract_id=contract_a.id,
+            proxy_address=addr_a,
+            new_impl=_addr("pimpl2"),
+            block_number=22345,
+            timestamp=datetime(2025, 1, 1, tzinfo=timezone.utc),
+        )
+    )
+
+    # Contract B: a subset, plus a row whose only purpose is to validate
+    # that each contract_id bucket stays separate across threads.
+    db_session.add(
+        ControllerValue(
+            contract_id=contract_b.id,
+            controller_id="owner",
+            value=safe_addr,
+            resolved_type="safe",
+        )
+    )
+    db_session.add(
+        ContractBalance(
+            contract_id=contract_b.id,
+            token_address=_addr("ptok"),
+            token_symbol="USDC",
+            decimals=6,
+            raw_balance="50000000",
+            usd_value=50.00,
+            price_usd=1.00,
+        )
+    )
+    ef_b = EffectiveFunction(
+        contract_id=contract_b.id,
+        function_name="transfer",
+        selector="0xa9059cbb",
+        abi_signature="transfer(address,uint256)",
+        effect_labels=["asset_send"],
+        effect_targets=[],
+        action_summary="transfer",
+        authority_public=True,
+        authority_roles=[],
+    )
+    db_session.add(ef_b)
+    db_session.commit()
+
+    contract_ids = {contract_a.id, contract_b.id}
+    parallel = _prefetch_child_tables(db_session, contract_ids, max_workers=4)
+    sequential = _prefetch_child_tables(db_session, contract_ids, max_workers=1)
+
+    assert _normalize_prefetch(parallel) == _normalize_prefetch(sequential), (
+        "parallel fan-out diverged from the sequential reference"
+    )
+
+    # Sanity: every dict key has content from the seed so the equality
+    # check above wasn't trivially {} == {}.
+    norm = _normalize_prefetch(parallel)
+    assert norm["controller_values"][contract_a.id], "controller_values missing for contract A"
+    assert norm["balances"][contract_a.id], "balances missing for contract A"
+    assert norm["cgn"][contract_a.id], "cgn missing for contract A"
+    assert norm["cge"][contract_a.id], "cge missing for contract A"
+    assert norm["ef_effects"][contract_a.id], "ef_effects missing for contract A"
+    assert norm["fp_governance_rows"][contract_a.id], "fp_governance_rows missing for contract A"
+    assert norm["upgrade_events_count"][contract_a.id] == 2
+    assert norm["upgrade_events_last"][contract_a.id]["block"] == 22345

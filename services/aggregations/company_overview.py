@@ -25,9 +25,10 @@ from __future__ import annotations
 
 import logging
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from typing import Any, Iterator
+from typing import Any, Callable, Iterator
 
 from sqlalchemy import and_, exists, func, or_, select
 from sqlalchemy.orm import Session, aliased, selectinload
@@ -221,7 +222,15 @@ def resolve_implementation_contracts(
     return impl_job_by_addr, contracts_by_job_id
 
 
-def _prefetch_child_tables(session: Session, contract_ids: set[int]) -> dict[str, dict[int, Any]]:
+_PREFETCH_MAX_WORKERS = 4
+
+
+def _prefetch_child_tables(
+    session: Session,
+    contract_ids: set[int],
+    *,
+    max_workers: int = _PREFETCH_MAX_WORKERS,
+) -> dict[str, dict[int, Any]]:
     """Pre-load every per-contract child row used downstream.
 
     The full ``EffectiveFunction`` rows (and their FunctionPrincipal
@@ -237,6 +246,17 @@ def _prefetch_child_tables(session: Session, contract_ids: set[int]) -> dict[str
       ``contract_id``. Drives the third-pass principal backfill in
       ``_build_flows_and_principals`` (function-only principals like the
       EtherFiTimelock Safe).
+
+    ``controller_values`` runs first on the request session because the
+    ``cv_principal_addrs_lc`` set it produces is needed in the CGN/CGE
+    keep-predicate. The remaining stages fan out over a per-request
+    ``ThreadPoolExecutor`` — sync SQLAlchemy releases the GIL inside the
+    DB driver so threads give genuine wall-time parallelism. Each task
+    opens its own ``Session`` on the same engine because Session is not
+    thread-safe; ``max_workers=4`` keeps a single request from claiming
+    more than 5 of the engine pool's 15 connections (5 + 10 overflow).
+    ``max_workers=1`` collapses to in-order execution and is what the
+    parity test uses to validate the parallel merge.
     """
     out: dict[str, dict[int, Any]] = {
         "controller_values": {},
@@ -261,67 +281,6 @@ def _prefetch_child_tables(session: Session, contract_ids: set[int]) -> dict[str
             out["controller_values"].setdefault(cv.contract_id, []).append(cv)
             cv_rows += 1
         counts["controller_values"] = cv_rows
-    with _time_phase(timings_ms, "ef_effects"):
-        ef_rows = 0
-        for cid, labels in session.execute(
-            select(EffectiveFunction.contract_id, EffectiveFunction.effect_labels).where(
-                EffectiveFunction.contract_id.in_(id_list)
-            )
-        ).all():
-            out["ef_effects"].setdefault(cid, []).append(list(labels or []))
-            ef_rows += 1
-        counts["ef_effects"] = ef_rows
-    with _time_phase(timings_ms, "fp_governance_rows"):
-        fp_rows = 0
-        for row in session.execute(
-            select(
-                EffectiveFunction.contract_id,
-                FunctionPrincipal.address,
-                FunctionPrincipal.resolved_type,
-                FunctionPrincipal.details,
-            )
-            .join(FunctionPrincipal, FunctionPrincipal.function_id == EffectiveFunction.id)
-            .where(
-                EffectiveFunction.contract_id.in_(id_list),
-                FunctionPrincipal.resolved_type.in_(("safe", "timelock", "eoa", "proxy_admin")),
-            )
-        ).all():
-            cid, address, resolved_type, details = row
-            out["fp_governance_rows"].setdefault(cid, []).append(
-                {
-                    "address": address,
-                    "resolved_type": resolved_type,
-                    "details": details,
-                }
-            )
-            fp_rows += 1
-        counts["fp_governance_rows"] = fp_rows
-    with _time_phase(timings_ms, "upgrade_events_count"):
-        for cid, count in session.execute(
-            select(UpgradeEvent.contract_id, func.count(UpgradeEvent.id))
-            .where(UpgradeEvent.contract_id.in_(id_list))
-            .group_by(UpgradeEvent.contract_id)
-        ).all():
-            out["upgrade_events_count"][cid] = count
-        counts["upgrade_events_count"] = len(out["upgrade_events_count"])
-    with _time_phase(timings_ms, "upgrade_events_last"):
-        for cid, last_block, last_ts in session.execute(
-            select(
-                UpgradeEvent.contract_id,
-                func.max(UpgradeEvent.block_number),
-                func.max(UpgradeEvent.timestamp),
-            )
-            .where(UpgradeEvent.contract_id.in_(id_list))
-            .group_by(UpgradeEvent.contract_id)
-        ).all():
-            out["upgrade_events_last"][cid] = {"block": last_block, "timestamp": last_ts}
-        counts["upgrade_events_last"] = len(out["upgrade_events_last"])
-    with _time_phase(timings_ms, "balances"):
-        b_rows = 0
-        for b in session.execute(select(ContractBalance).where(ContractBalance.contract_id.in_(id_list))).scalars():
-            out["balances"].setdefault(b.contract_id, []).append(b)
-            b_rows += 1
-        counts["balances"] = b_rows
 
     # The control_graph queries push the _trim_control_graph rule into the
     # WHERE clause. Without the prefilter, ether.fi loads ~7.1 K CGN + ~8.5 K
@@ -406,18 +365,91 @@ def _prefetch_child_tables(session: Session, contract_ids: set[int]) -> dict[str
             clauses.append(func.lower(node_ref.address).in_(list(cv_principal_addrs_lc)))
         return or_(*clauses)
 
-    with _time_phase(timings_ms, "control_graph_nodes"):
-        n_rows = 0
-        for n in session.execute(
+    def _ef_effects(s: Session) -> tuple[dict[int, list[list[str]]], int]:
+        local: dict[int, list[list[str]]] = {}
+        rows = 0
+        for cid, labels in s.execute(
+            select(EffectiveFunction.contract_id, EffectiveFunction.effect_labels).where(
+                EffectiveFunction.contract_id.in_(id_list)
+            )
+        ).all():
+            local.setdefault(cid, []).append(list(labels or []))
+            rows += 1
+        return local, rows
+
+    def _fp_governance(s: Session) -> tuple[dict[int, list[dict[str, Any]]], int]:
+        local: dict[int, list[dict[str, Any]]] = {}
+        rows = 0
+        for row in s.execute(
+            select(
+                EffectiveFunction.contract_id,
+                FunctionPrincipal.address,
+                FunctionPrincipal.resolved_type,
+                FunctionPrincipal.details,
+            )
+            .join(FunctionPrincipal, FunctionPrincipal.function_id == EffectiveFunction.id)
+            .where(
+                EffectiveFunction.contract_id.in_(id_list),
+                FunctionPrincipal.resolved_type.in_(("safe", "timelock", "eoa", "proxy_admin")),
+            )
+        ).all():
+            cid, address, resolved_type, details = row
+            local.setdefault(cid, []).append(
+                {
+                    "address": address,
+                    "resolved_type": resolved_type,
+                    "details": details,
+                }
+            )
+            rows += 1
+        return local, rows
+
+    def _upgrade_count(s: Session) -> tuple[dict[int, int], int]:
+        local: dict[int, int] = {}
+        for cid, count in s.execute(
+            select(UpgradeEvent.contract_id, func.count(UpgradeEvent.id))
+            .where(UpgradeEvent.contract_id.in_(id_list))
+            .group_by(UpgradeEvent.contract_id)
+        ).all():
+            local[cid] = count
+        return local, len(local)
+
+    def _upgrade_last(s: Session) -> tuple[dict[int, dict[str, Any]], int]:
+        local: dict[int, dict[str, Any]] = {}
+        for cid, last_block, last_ts in s.execute(
+            select(
+                UpgradeEvent.contract_id,
+                func.max(UpgradeEvent.block_number),
+                func.max(UpgradeEvent.timestamp),
+            )
+            .where(UpgradeEvent.contract_id.in_(id_list))
+            .group_by(UpgradeEvent.contract_id)
+        ).all():
+            local[cid] = {"block": last_block, "timestamp": last_ts}
+        return local, len(local)
+
+    def _balances(s: Session) -> tuple[dict[int, list[Any]], int]:
+        local: dict[int, list[Any]] = {}
+        rows = 0
+        for b in s.execute(select(ContractBalance).where(ContractBalance.contract_id.in_(id_list))).scalars():
+            local.setdefault(b.contract_id, []).append(b)
+            rows += 1
+        return local, rows
+
+    def _cgn(s: Session) -> tuple[dict[int, list[ControlGraphNode]], int]:
+        local: dict[int, list[ControlGraphNode]] = {}
+        rows = 0
+        for n in s.execute(
             select(ControlGraphNode).where(
                 ControlGraphNode.contract_id.in_(id_list),
                 _node_keep_predicate(ControlGraphNode),
             )
         ).scalars():
-            out["cgn"].setdefault(n.contract_id, []).append(n)
-            n_rows += 1
-        counts["control_graph_nodes"] = n_rows
-    with _time_phase(timings_ms, "control_graph_edges"):
+            local.setdefault(n.contract_id, []).append(n)
+            rows += 1
+        return local, rows
+
+    def _cge(s: Session) -> tuple[dict[int, list[ControlGraphEdge]], int]:
         # Drop an edge iff there exists a CGN row at its target address in
         # the same contract that the keep-clause would not retain — i.e., a
         # Python-trim-dropped node. Targets outside this contract's CGN are
@@ -430,23 +462,58 @@ def _prefetch_child_tables(session: Session, contract_ids: set[int]) -> dict[str
                 ~_node_keep_predicate(cge_target_cgn),
             )
         )
-
-        e_rows = 0
-        for e in session.execute(
+        local: dict[int, list[ControlGraphEdge]] = {}
+        rows = 0
+        for e in s.execute(
             select(ControlGraphEdge).where(ControlGraphEdge.contract_id.in_(id_list), keep_edge_clause)
         ).scalars():
-            out["cge"].setdefault(e.contract_id, []).append(e)
-            e_rows += 1
-        counts["control_graph_edges"] = e_rows
+            local.setdefault(e.contract_id, []).append(e)
+            rows += 1
+        return local, rows
+
+    # (timing_key, out_key, runner). Order matters under bounded max_workers:
+    # the slowest stage gets submitted first so it lands on an idle worker
+    # immediately and runs alongside the queue of shorter stages.
+    parallel_stages: list[tuple[str, str, Callable[[Session], tuple[Any, int]]]] = [
+        ("control_graph_edges", "cge", _cge),
+        ("control_graph_nodes", "cgn", _cgn),
+        ("balances", "balances", _balances),
+        ("ef_effects", "ef_effects", _ef_effects),
+        ("fp_governance_rows", "fp_governance_rows", _fp_governance),
+        ("upgrade_events_count", "upgrade_events_count", _upgrade_count),
+        ("upgrade_events_last", "upgrade_events_last", _upgrade_last),
+    ]
+
+    engine = session.get_bind()
+
+    def _run_stage(
+        timing_key: str, out_key: str, runner: Callable[[Session], tuple[Any, int]]
+    ) -> tuple[str, str, Any, int, int]:
+        start = time.monotonic()
+        with Session(bind=engine, expire_on_commit=False) as s:
+            data, rows = runner(s)
+        return timing_key, out_key, data, rows, int((time.monotonic() - start) * 1000)
+
+    parallel_wall_start = time.monotonic()
+    with ThreadPoolExecutor(max_workers=max(1, max_workers)) as ex:
+        futures = [ex.submit(_run_stage, tk, ok, fn) for tk, ok, fn in parallel_stages]
+        for fut in as_completed(futures):
+            timing_key, out_key, data, rows, ms = fut.result()
+            out[out_key] = data
+            timings_ms[timing_key] = ms
+            counts[timing_key] = rows
+    parallel_wall_ms = int((time.monotonic() - parallel_wall_start) * 1000)
 
     total_ms = sum(timings_ms.values())
     logger.info(
-        "Prefetched per-contract child tables: contracts=%d total_ms=%d",
+        "Prefetched per-contract child tables: contracts=%d total_ms=%d parallel_wall_ms=%d",
         len(contract_ids),
         total_ms,
+        parallel_wall_ms,
         extra={
             "phase": "prefetch_child_tables",
             "duration_ms": total_ms,
+            "parallel_wall_ms": parallel_wall_ms,
             "contract_count": len(contract_ids),
             "timings_ms": timings_ms,
             "row_counts": counts,
