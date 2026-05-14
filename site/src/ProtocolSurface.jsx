@@ -243,7 +243,18 @@ export default function ProtocolSurface({
         .catch((err) => { if (!cancelled) setError(err.message || "Failed to load surface"); });
     }
 
-    if (!haveFunctions) {
+    if (haveFunctions) {
+      // initialFunctions (or fixture-embedded functions) supplied — clear
+      // any prior loading state so machines aren't gated unnecessarily.
+      setFunctionsLoading(false);
+    } else if (embedded) {
+      // CompanyOverview already fires /functions for the embedded surface
+      // and threads the result back via initialFunctions; firing again
+      // here doubled the network + DB cost per page-load. Wait for the
+      // prop instead and surface functionsLoading=true so buildMachines
+      // keeps analyzed contracts visible during the gap.
+      setFunctionsLoading(true);
+    } else {
       setFunctionsLoading(true);
       fetch(`/api/company/${encodeURIComponent(companyName)}/functions`)
         .then((r) => (r.ok ? r.json() : null))
