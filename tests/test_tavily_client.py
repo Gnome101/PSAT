@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import json
 import sys
+import time
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -14,6 +16,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from utils.tavily import (
     TavilyError,
     _build_payload,
+    _cache_key,
     error_from_exception,
     normalize_error,
     search,
@@ -362,3 +365,254 @@ class TestSearch:
             search("  hello world  ", max_results=3)
             posted_payload = mock_post.call_args[1]["json"]
             assert posted_payload["query"] == "hello world"
+
+
+# ---------------------------------------------------------------------------
+# 12. cache layer (PSAT_TAVILY_CACHE)
+# ---------------------------------------------------------------------------
+
+
+class TestCacheKey:
+    """The cache key must drop api_key and react to every other request field."""
+
+    def _key_for(self, **overrides):
+        base = {
+            "api_key": "secret",
+            "query": "etherfi",
+            "max_results": 10,
+            "topic": "general",
+            "search_depth": "advanced",
+            "include_raw_content": False,
+            "include_usage": True,
+        }
+        base.update(overrides)
+        return _cache_key(base)
+
+    def test_api_key_excluded(self):
+        assert self._key_for(api_key="A") == self._key_for(api_key="B")
+
+    def test_query_drives_key(self):
+        assert self._key_for(query="x") != self._key_for(query="y")
+
+    def test_max_results_drives_key(self):
+        assert self._key_for(max_results=5) != self._key_for(max_results=10)
+
+    def test_search_depth_drives_key(self):
+        assert self._key_for(search_depth="basic") != self._key_for(search_depth="advanced")
+
+    def test_include_raw_content_drives_key(self):
+        assert self._key_for(include_raw_content=True) != self._key_for(include_raw_content=False)
+
+    def test_stable_across_dict_ordering(self):
+        # sort_keys=True in _cache_key guards against insertion-order drift.
+        k1 = _cache_key({"a": 1, "b": 2, "api_key": "x"})
+        k2 = _cache_key({"b": 2, "a": 1, "api_key": "y"})
+        assert k1 == k2
+
+
+class TestCacheBehavior:
+    """search() consults the cache only when PSAT_TAVILY_CACHE is set."""
+
+    @patch("utils.tavily.load_dotenv")
+    def test_disabled_skips_storage(self, _mock_dotenv, monkeypatch):
+        monkeypatch.setenv("TAVILY_API_KEY", "test-key")
+        monkeypatch.delenv("PSAT_TAVILY_CACHE", raising=False)
+        resp = _mock_response(json_data={"results": [{"title": "A"}]})
+
+        storage_client = MagicMock()
+        with (
+            patch("db.storage.get_storage_client", return_value=storage_client),
+            patch("utils.tavily.requests.post", return_value=resp) as mock_post,
+        ):
+            result = search("q", max_results=3)
+
+        assert result == [{"title": "A"}]
+        mock_post.assert_called_once()
+        # No env var → cache helpers must not touch storage at all.
+        storage_client.get.assert_not_called()
+        storage_client.put.assert_not_called()
+
+    @patch("utils.tavily.load_dotenv")
+    def test_hit_skips_network(self, _mock_dotenv, monkeypatch):
+        monkeypatch.setenv("TAVILY_API_KEY", "test-key")
+        monkeypatch.setenv("PSAT_TAVILY_CACHE", "1")
+
+        envelope = json.dumps(
+            {
+                "schema_version": 1,
+                "cached_at": time.time(),
+                "results": [{"title": "from-cache", "url": "https://x"}],
+            }
+        ).encode("utf-8")
+
+        storage_client = MagicMock()
+        storage_client.get.return_value = envelope
+
+        with (
+            patch("db.storage.get_storage_client", return_value=storage_client),
+            patch("utils.tavily.requests.post") as mock_post,
+        ):
+            result = search("q", max_results=3)
+
+        assert result == [{"title": "from-cache", "url": "https://x"}]
+        # Cache hit → no HTTP, no cache write.
+        mock_post.assert_not_called()
+        storage_client.put.assert_not_called()
+
+    @patch("utils.tavily.load_dotenv")
+    def test_miss_writes_envelope(self, _mock_dotenv, monkeypatch):
+        from db.storage import StorageKeyMissing
+
+        monkeypatch.setenv("TAVILY_API_KEY", "test-key")
+        monkeypatch.setenv("PSAT_TAVILY_CACHE", "1")
+
+        storage_client = MagicMock()
+        storage_client.get.side_effect = StorageKeyMissing("k")
+        resp = _mock_response(json_data={"results": [{"title": "fresh"}]})
+
+        with (
+            patch("db.storage.get_storage_client", return_value=storage_client),
+            patch("utils.tavily.requests.post", return_value=resp),
+        ):
+            result = search("q", max_results=3)
+
+        assert result == [{"title": "fresh"}]
+        storage_client.put.assert_called_once()
+        put_call = storage_client.put.call_args
+        key, body = put_call.args[0], put_call.args[1]
+        assert key.startswith("tavily-cache/") and key.endswith(".json")
+        envelope = json.loads(body)
+        assert envelope["schema_version"] == 1
+        assert envelope["results"] == [{"title": "fresh"}]
+        assert isinstance(envelope["cached_at"], (int, float))
+
+    @patch("utils.tavily.load_dotenv")
+    def test_empty_results_not_cached(self, _mock_dotenv, monkeypatch):
+        from db.storage import StorageKeyMissing
+
+        monkeypatch.setenv("TAVILY_API_KEY", "test-key")
+        monkeypatch.setenv("PSAT_TAVILY_CACHE", "1")
+
+        storage_client = MagicMock()
+        storage_client.get.side_effect = StorageKeyMissing("k")
+        resp = _mock_response(json_data={"results": []})
+
+        with (
+            patch("db.storage.get_storage_client", return_value=storage_client),
+            patch("utils.tavily.requests.post", return_value=resp),
+        ):
+            result = search("q", max_results=3)
+
+        assert result == []
+        # A flaky empty response would poison the cache for 30 days; the write
+        # path bails before that happens.
+        storage_client.put.assert_not_called()
+
+    @patch("utils.tavily.load_dotenv")
+    def test_expired_envelope_refetches(self, _mock_dotenv, monkeypatch):
+        monkeypatch.setenv("TAVILY_API_KEY", "test-key")
+        monkeypatch.setenv("PSAT_TAVILY_CACHE", "1")
+
+        stale = json.dumps(
+            {
+                "schema_version": 1,
+                "cached_at": time.time() - (40 * 24 * 60 * 60),  # 40 days old
+                "results": [{"title": "stale"}],
+            }
+        ).encode("utf-8")
+
+        storage_client = MagicMock()
+        storage_client.get.return_value = stale
+        resp = _mock_response(json_data={"results": [{"title": "fresh"}]})
+
+        with (
+            patch("db.storage.get_storage_client", return_value=storage_client),
+            patch("utils.tavily.requests.post", return_value=resp) as mock_post,
+        ):
+            result = search("q", max_results=3)
+
+        assert result == [{"title": "fresh"}]
+        mock_post.assert_called_once()
+        storage_client.put.assert_called_once()
+
+    @patch("utils.tavily.load_dotenv")
+    def test_schema_mismatch_refetches(self, _mock_dotenv, monkeypatch):
+        monkeypatch.setenv("TAVILY_API_KEY", "test-key")
+        monkeypatch.setenv("PSAT_TAVILY_CACHE", "1")
+
+        wrong = json.dumps(
+            {
+                "schema_version": 99,
+                "cached_at": time.time(),
+                "results": [{"title": "v99"}],
+            }
+        ).encode("utf-8")
+
+        storage_client = MagicMock()
+        storage_client.get.return_value = wrong
+        resp = _mock_response(json_data={"results": [{"title": "fresh"}]})
+
+        with (
+            patch("db.storage.get_storage_client", return_value=storage_client),
+            patch("utils.tavily.requests.post", return_value=resp) as mock_post,
+        ):
+            result = search("q", max_results=3)
+
+        assert result == [{"title": "fresh"}]
+        mock_post.assert_called_once()
+
+    @patch("utils.tavily.load_dotenv")
+    def test_no_storage_client_falls_through(self, _mock_dotenv, monkeypatch):
+        monkeypatch.setenv("TAVILY_API_KEY", "test-key")
+        monkeypatch.setenv("PSAT_TAVILY_CACHE", "1")
+        resp = _mock_response(json_data={"results": [{"title": "A"}]})
+
+        with (
+            patch("db.storage.get_storage_client", return_value=None),
+            patch("utils.tavily.requests.post", return_value=resp) as mock_post,
+        ):
+            result = search("q", max_results=3)
+
+        assert result == [{"title": "A"}]
+        mock_post.assert_called_once()
+
+    @patch("utils.tavily.load_dotenv")
+    def test_cache_write_failure_does_not_break_search(self, _mock_dotenv, monkeypatch):
+        from db.storage import StorageKeyMissing, StorageUnavailable
+
+        monkeypatch.setenv("TAVILY_API_KEY", "test-key")
+        monkeypatch.setenv("PSAT_TAVILY_CACHE", "1")
+
+        storage_client = MagicMock()
+        storage_client.get.side_effect = StorageKeyMissing("k")
+        storage_client.put.side_effect = StorageUnavailable("bucket down")
+        resp = _mock_response(json_data={"results": [{"title": "A"}]})
+
+        with (
+            patch("db.storage.get_storage_client", return_value=storage_client),
+            patch("utils.tavily.requests.post", return_value=resp),
+        ):
+            # Bucket flake on write must not surface to the caller.
+            result = search("q", max_results=3)
+
+        assert result == [{"title": "A"}]
+
+    @patch("utils.tavily.load_dotenv")
+    def test_cache_read_failure_falls_through(self, _mock_dotenv, monkeypatch):
+        from db.storage import StorageUnavailable
+
+        monkeypatch.setenv("TAVILY_API_KEY", "test-key")
+        monkeypatch.setenv("PSAT_TAVILY_CACHE", "1")
+
+        storage_client = MagicMock()
+        storage_client.get.side_effect = StorageUnavailable("read flake")
+        resp = _mock_response(json_data={"results": [{"title": "A"}]})
+
+        with (
+            patch("db.storage.get_storage_client", return_value=storage_client),
+            patch("utils.tavily.requests.post", return_value=resp) as mock_post,
+        ):
+            result = search("q", max_results=3)
+
+        assert result == [{"title": "A"}]
+        mock_post.assert_called_once()
