@@ -614,7 +614,9 @@ def _normalize_prefetch(result: dict) -> dict:
         return (e.from_node_id, e.to_node_id, e.relation)
 
     return {
-        "controller_values": {cid: sorted(cv_key(r) for r in rows) for cid, rows in result["controller_values"].items()},
+        "controller_values": {
+            cid: sorted(cv_key(r) for r in rows) for cid, rows in result["controller_values"].items()
+        },
         "ef_effects": {cid: sorted(tuple(lbls) for lbls in rows) for cid, rows in result["ef_effects"].items()},
         "fp_governance_rows": {
             cid: sorted((d["address"], d["resolved_type"], repr(d["details"])) for d in rows)
@@ -674,18 +676,10 @@ def test_prefetch_child_tables_parallel_sequential_parity(db_session):
             block_number=101,
         )
     )
-    db_session.add(
-        ControlGraphNode(contract_id=contract_a.id, address=safe_addr, resolved_type="safe", label="A safe")
-    )
-    db_session.add(
-        ControlGraphNode(contract_id=contract_a.id, address=tl_addr, resolved_type="timelock")
-    )
-    db_session.add(
-        ControlGraphNode(contract_id=contract_a.id, address=leaf_drop, resolved_type="unknown")
-    )
-    db_session.add(
-        ControlGraphNode(contract_id=contract_a.id, address=leaf_src, resolved_type="unknown")
-    )
+    db_session.add(ControlGraphNode(contract_id=contract_a.id, address=safe_addr, resolved_type="safe", label="A safe"))
+    db_session.add(ControlGraphNode(contract_id=contract_a.id, address=tl_addr, resolved_type="timelock"))
+    db_session.add(ControlGraphNode(contract_id=contract_a.id, address=leaf_drop, resolved_type="unknown"))
+    db_session.add(ControlGraphNode(contract_id=contract_a.id, address=leaf_src, resolved_type="unknown"))
     db_session.add(
         ControlGraphEdge(
             contract_id=contract_a.id,
