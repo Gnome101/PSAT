@@ -29,8 +29,8 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Any, Iterator
 
-from sqlalchemy import func, select
-from sqlalchemy.orm import Session, selectinload
+from sqlalchemy import and_, exists, func, or_, select
+from sqlalchemy.orm import Session, aliased, selectinload
 
 from db.models import (
     Contract,
@@ -322,15 +322,119 @@ def _prefetch_child_tables(session: Session, contract_ids: set[int]) -> dict[str
             out["balances"].setdefault(b.contract_id, []).append(b)
             b_rows += 1
         counts["balances"] = b_rows
+
+    # The control_graph queries push the _trim_control_graph rule into the
+    # WHERE clause. Without the prefilter, ether.fi loads ~7.1 K CGN + ~8.5 K
+    # CGE rows just to drop ~78% / ~66% of them at serialization time. The
+    # filter must be a strict superset of the Python trim because the trim
+    # uses the *post-lookup* node type, so addresses whose CGN.resolved_type
+    # is non-principal but whose principal_lookup entry upgrades them
+    # (analyzed contracts, CV principals, cross-contract CGN principals,
+    # timelock-delay details) must still be loaded. _trim_control_graph is
+    # kept as a final no-op-on-the-happy-path pass that handles the cases
+    # where SQL keeps more than Python would (cross-contract edge sources,
+    # JSONB delay keys with non-positive values).
+    cv_principal_addrs_lc: set[str] = set()
+    for cv_list in out["controller_values"].values():
+        for cv in cv_list:
+            value = cv.value
+            if not value or not value.startswith("0x"):
+                continue
+            details_dict = cv.details if isinstance(cv.details, dict) else {}
+            if _principal_lookup_type(cv.resolved_type, details_dict):
+                cv_principal_addrs_lc.add(value.lower())
+
+    contract_addr_subq = (
+        select(func.lower(Contract.address))
+        .where(Contract.id.in_(id_list), Contract.address.is_not(None))
+        .scalar_subquery()
+    )
+    edge_source_addr_subq = (
+        select(func.lower(func.replace(ControlGraphEdge.from_node_id, "address:", "")))
+        .where(ControlGraphEdge.contract_id.in_(id_list))
+        .distinct()
+        .scalar_subquery()
+    )
+    # Distinct aliases for the two roles the CGN table plays inside the
+    # control_graph queries:
+    #   * ``cgn_principal_lookup`` — the inner subquery that returns every
+    #     address with a principal-typed or timelock-delay CGN row anywhere
+    #     in the batch. Drives the cross-contract lookup upgrade case.
+    #   * ``cge_target_cgn`` — the correlated CGN reference inside the CGE
+    #     NOT EXISTS, joined to the edge's target.
+    # Sharing one alias caused inner subquery references to shadow the outer
+    # correlated reference inside the CGE query, which Postgres tolerates
+    # but reads as a footgun.
+    cgn_principal_lookup = aliased(ControlGraphNode, name="cgn_principal_lookup")
+    cge_target_cgn = aliased(ControlGraphNode, name="cge_target_cgn")
+    cgn_principal_addr_subq = (
+        select(func.lower(cgn_principal_lookup.address))
+        .where(
+            cgn_principal_lookup.contract_id.in_(id_list),
+            or_(
+                cgn_principal_lookup.resolved_type.in_(_PRINCIPAL_TYPES_SQL),
+                and_(
+                    cgn_principal_lookup.details.is_not(None),
+                    or_(
+                        cgn_principal_lookup.details.has_key("delay"),
+                        cgn_principal_lookup.details.has_key("delay_seconds"),
+                        cgn_principal_lookup.details.has_key("min_delay"),
+                    ),
+                ),
+            ),
+        )
+        .distinct()
+        .scalar_subquery()
+    )
+
+    def _node_keep_predicate(node_ref: Any) -> Any:
+        clauses = [
+            node_ref.resolved_type.in_(_PRINCIPAL_TYPES_SQL),
+            func.lower(node_ref.address).in_(contract_addr_subq),
+            func.lower(node_ref.address).in_(cgn_principal_addr_subq),
+            func.lower(node_ref.address).in_(edge_source_addr_subq),
+            and_(
+                node_ref.details.is_not(None),
+                or_(
+                    node_ref.details.has_key("delay"),
+                    node_ref.details.has_key("delay_seconds"),
+                    node_ref.details.has_key("min_delay"),
+                ),
+            ),
+        ]
+        if cv_principal_addrs_lc:
+            clauses.append(func.lower(node_ref.address).in_(list(cv_principal_addrs_lc)))
+        return or_(*clauses)
+
     with _time_phase(timings_ms, "control_graph_nodes"):
         n_rows = 0
-        for n in session.execute(select(ControlGraphNode).where(ControlGraphNode.contract_id.in_(id_list))).scalars():
+        for n in session.execute(
+            select(ControlGraphNode).where(
+                ControlGraphNode.contract_id.in_(id_list),
+                _node_keep_predicate(ControlGraphNode),
+            )
+        ).scalars():
             out["cgn"].setdefault(n.contract_id, []).append(n)
             n_rows += 1
         counts["control_graph_nodes"] = n_rows
     with _time_phase(timings_ms, "control_graph_edges"):
+        # Drop an edge iff there exists a CGN row at its target address in
+        # the same contract that the keep-clause would not retain — i.e., a
+        # Python-trim-dropped node. Targets outside this contract's CGN are
+        # always kept (no CGN row means no dropped row).
+        keep_edge_clause = ~exists().where(
+            and_(
+                cge_target_cgn.contract_id == ControlGraphEdge.contract_id,
+                func.lower(cge_target_cgn.address)
+                == func.lower(func.replace(ControlGraphEdge.to_node_id, "address:", "")),
+                ~_node_keep_predicate(cge_target_cgn),
+            )
+        )
+
         e_rows = 0
-        for e in session.execute(select(ControlGraphEdge).where(ControlGraphEdge.contract_id.in_(id_list))).scalars():
+        for e in session.execute(
+            select(ControlGraphEdge).where(ControlGraphEdge.contract_id.in_(id_list), keep_edge_clause)
+        ).scalars():
             out["cge"].setdefault(e.contract_id, []).append(e)
             e_rows += 1
         counts["control_graph_edges"] = e_rows
@@ -352,6 +456,7 @@ def _prefetch_child_tables(session: Session, contract_ids: set[int]) -> dict[str
 
 
 _PRINCIPAL_TYPES = frozenset({"contract", "safe", "timelock", "eoa", "proxy_admin"})
+_PRINCIPAL_TYPES_SQL = ("contract", "safe", "timelock", "eoa", "proxy_admin")
 
 
 def _trim_control_graph(nodes: list[dict[str, Any]], edges: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:

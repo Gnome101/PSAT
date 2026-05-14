@@ -16,8 +16,13 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
+from sqlalchemy import select  # noqa: E402
+
 from db.models import (  # noqa: E402
     Contract,
+    ControlGraphEdge,
+    ControlGraphNode,
+    ControllerValue,
     EffectiveFunction,
     FunctionPrincipal,
     Job,
@@ -27,6 +32,9 @@ from db.models import (  # noqa: E402
 )
 from services.aggregations.company_overview import (  # noqa: E402
     CompanyNotFound,
+    _build_principal_lookup,
+    _principal_lookup_meta,
+    _trim_control_graph,
     build_company_overview,
     build_functions_for_protocol,
     prefetch_contracts,
@@ -375,3 +383,195 @@ def test_build_company_overview_proxy_uses_impl_name(db_session):
     assert proxy_entry["implementation"] == impl_addr
     # Inherited name from the impl, not the generic proxy name
     assert proxy_entry["name"] == "VaultImpl"
+
+
+def _reference_trim_for_contract(
+    session,
+    contract_id: int,
+    contracts_by_job_id: dict,
+    cv_by_cid_full: dict,
+    cgn_by_cid_full: dict,
+) -> dict:
+    """Replicate the pre-SQL-trim path: load every CGN/CGE row for ``contract_id``
+    (unfiltered), build the same nodes_payload/edges_payload the production
+    serializer would emit, then apply ``_trim_control_graph``.
+
+    Used as the reference output the SQL-prefiltered path must match.
+    """
+    all_cgn = (
+        session.execute(select(ControlGraphNode).where(ControlGraphNode.contract_id == contract_id)).scalars().all()
+    )
+    all_cge = (
+        session.execute(select(ControlGraphEdge).where(ControlGraphEdge.contract_id == contract_id)).scalars().all()
+    )
+    lookup = _build_principal_lookup(contracts_by_job_id, cv_by_cid_full, cgn_by_cid_full)
+    node_meta = {n.address: _principal_lookup_meta(lookup, n.address, n.details) for n in all_cgn}
+    nodes_payload = [
+        {
+            "address": n.address,
+            "type": node_meta[n.address].get("resolved_type") or n.resolved_type,
+            "label": node_meta[n.address].get("label") or n.contract_name or n.label,
+            "details": node_meta[n.address]["details"],
+        }
+        for n in all_cgn
+    ]
+    edges_payload = [
+        {
+            "from": e.from_node_id.replace("address:", ""),
+            "to": e.to_node_id.replace("address:", ""),
+            "relation": e.relation,
+        }
+        for e in all_cge
+    ]
+    return _trim_control_graph(nodes_payload, edges_payload)
+
+
+def test_trim_control_graph_sql_parity(db_session):
+    """SQL-prefiltered control_graph queries return the same (nodes, edges)
+    set as the pre-refactor "load everything, trim in Python" path.
+
+    The seed covers every override case the principal_lookup can apply:
+      - principal-typed CGN row (direct keep)
+      - non-principal CGN row that is the FROM of an edge (edge-source keep)
+      - non-principal CGN whose address is one of the analyzed contracts
+        (lookup upgrades to "contract")
+      - non-principal CGN whose address has a principal-typed CGN row on
+        another contract in the batch (lookup cross-contract upgrade)
+      - non-principal CGN whose address appears in a ControllerValue with
+        a principal resolved_type (lookup CV upgrade)
+      - non-principal CGN with ``details.delay`` set (lookup timelock-delay)
+      - non-principal CGN with no inbound nor outbound edges (drop case)
+      - edge whose target is dropped (edge drop)
+      - edge whose target is not in the contract's CGN at all (edge keep)
+    """
+    p = _add_protocol(db_session, f"trim-parity-{uuid.uuid4().hex[:8]}")
+    addr_a = _addr("ca")
+    addr_b = _addr("cb")
+    job_a = _add_job(db_session, address=addr_a, protocol_id=p.id, name="ContractA")
+    job_b = _add_job(db_session, address=addr_b, protocol_id=p.id, name="ContractB")
+    contract_a = _add_contract(db_session, address=addr_a, job=job_a, protocol_id=p.id, contract_name="ContractA")
+    contract_b = _add_contract(db_session, address=addr_b, job=job_b, protocol_id=p.id, contract_name="ContractB")
+
+    safe_addr = _addr("safe").lower()
+    tl_addr = _addr("tl").lower()
+    eoa_addr = _addr("eoa").lower()
+    leaf_drop = _addr("drop").lower()
+    leaf_src = _addr("src").lower()
+    delay_addr = _addr("dly").lower()
+    cv_safe = _addr("cvs").lower()
+    cross_safe = _addr("xsafe").lower()
+    external_addr = _addr("ext").lower()
+
+    # Contract A's CGN — mix of kept and dropped cases.
+    db_session.add(ControlGraphNode(contract_id=contract_a.id, address=safe_addr, resolved_type="safe"))
+    db_session.add(ControlGraphNode(contract_id=contract_a.id, address=tl_addr, resolved_type="timelock"))
+    db_session.add(ControlGraphNode(contract_id=contract_a.id, address=eoa_addr, resolved_type="eoa"))
+    db_session.add(ControlGraphNode(contract_id=contract_a.id, address=leaf_drop, resolved_type="unknown"))
+    db_session.add(ControlGraphNode(contract_id=contract_a.id, address=leaf_src, resolved_type="unknown"))
+    db_session.add(
+        ControlGraphNode(
+            contract_id=contract_a.id, address=delay_addr, resolved_type="unknown", details={"delay": 3600}
+        )
+    )
+    db_session.add(ControlGraphNode(contract_id=contract_a.id, address=cv_safe, resolved_type="unknown"))
+    # Cross-contract reference: addr_b is an analyzed contract → lookup upgrade.
+    db_session.add(ControlGraphNode(contract_id=contract_a.id, address=addr_b.lower(), resolved_type="unknown"))
+    # cross_safe appears as "safe" on contract_b but "unknown" on contract_a.
+    db_session.add(ControlGraphNode(contract_id=contract_a.id, address=cross_safe, resolved_type="unknown"))
+
+    # Contract B's CGN — seeds the cross-contract upgrade for cross_safe.
+    db_session.add(ControlGraphNode(contract_id=contract_b.id, address=cross_safe, resolved_type="safe"))
+
+    # Edges in contract A.
+    db_session.add(
+        ControlGraphEdge(
+            contract_id=contract_a.id,
+            from_node_id=f"address:{leaf_src}",
+            to_node_id=f"address:{safe_addr}",
+            relation="ref",
+        )
+    )
+    # Edge to leaf_drop — should be dropped along with the node.
+    db_session.add(
+        ControlGraphEdge(
+            contract_id=contract_a.id,
+            from_node_id=f"address:{safe_addr}",
+            to_node_id=f"address:{leaf_drop}",
+            relation="ref",
+        )
+    )
+    db_session.add(
+        ControlGraphEdge(
+            contract_id=contract_a.id,
+            from_node_id=f"address:{tl_addr}",
+            to_node_id=f"address:{safe_addr}",
+            relation="controls",
+        )
+    )
+    # Edge to external_addr — target not in contract A's CGN, kept.
+    db_session.add(
+        ControlGraphEdge(
+            contract_id=contract_a.id,
+            from_node_id=f"address:{safe_addr}",
+            to_node_id=f"address:{external_addr}",
+            relation="ext",
+        )
+    )
+
+    # ControllerValue: cv_safe → resolved_type "safe" → lookup upgrade for cv_safe CGN row.
+    db_session.add(
+        ControllerValue(contract_id=contract_a.id, controller_id="role", value=cv_safe, resolved_type="safe")
+    )
+    db_session.commit()
+
+    payload = build_company_overview(db_session, p.name)
+    actual_entry = next(c for c in payload["contracts"] if c["address"] == addr_a)
+    actual_cg = actual_entry["control_graph"]
+
+    contracts_by_job_id = {job_a.id: contract_a, job_b.id: contract_b}
+    cv_full = {
+        contract_a.id: list(
+            db_session.execute(select(ControllerValue).where(ControllerValue.contract_id == contract_a.id)).scalars()
+        ),
+        contract_b.id: list(
+            db_session.execute(select(ControllerValue).where(ControllerValue.contract_id == contract_b.id)).scalars()
+        ),
+    }
+    cgn_full = {
+        contract_a.id: list(
+            db_session.execute(select(ControlGraphNode).where(ControlGraphNode.contract_id == contract_a.id)).scalars()
+        ),
+        contract_b.id: list(
+            db_session.execute(select(ControlGraphNode).where(ControlGraphNode.contract_id == contract_b.id)).scalars()
+        ),
+    }
+    reference = _reference_trim_for_contract(db_session, contract_a.id, contracts_by_job_id, cv_full, cgn_full)
+
+    actual_nodes = {n["address"].lower() for n in actual_cg["nodes"]}
+    reference_nodes = {n["address"].lower() for n in reference["nodes"]}
+    assert actual_nodes == reference_nodes, (
+        f"SQL-prefiltered nodes diverge from Python-trim reference.\n"
+        f"  only in actual: {actual_nodes - reference_nodes}\n"
+        f"  only in reference: {reference_nodes - actual_nodes}"
+    )
+
+    actual_edges = {(e["from"].lower(), e["to"].lower(), e["relation"]) for e in actual_cg["edges"]}
+    reference_edges = {(e["from"].lower(), e["to"].lower(), e["relation"]) for e in reference["edges"]}
+    assert actual_edges == reference_edges, (
+        f"SQL-prefiltered edges diverge from Python-trim reference.\n"
+        f"  only in actual: {actual_edges - reference_edges}\n"
+        f"  only in reference: {reference_edges - actual_edges}"
+    )
+
+    # Spot-check the override branches explicitly so a future regression that
+    # silently drops the analyzed-contract address (the largest override class
+    # in production) doesn't get masked by a parallel reference change.
+    assert addr_b.lower() in actual_nodes, "analyzed-contract address must survive (lookup upgrade)"
+    assert cv_safe in actual_nodes, "CV-principal address must survive (lookup upgrade)"
+    assert cross_safe in actual_nodes, "cross-contract principal address must survive (lookup upgrade)"
+    assert delay_addr in actual_nodes, "details.delay address must survive (lookup timelock-delay)"
+    assert leaf_src in actual_nodes, "non-principal but edge-source address must survive"
+    assert leaf_drop not in actual_nodes, "true leaf must be dropped"
+    assert external_addr in {e["to"].lower() for e in actual_cg["edges"]}, (
+        "edge whose target is outside this contract's CGN must survive"
+    )
