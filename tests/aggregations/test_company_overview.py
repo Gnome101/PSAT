@@ -16,10 +16,30 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from db.models import Contract, Job, JobStage, JobStatus, Protocol  # noqa: E402
+from sqlalchemy import select  # noqa: E402
+
+from db.models import (  # noqa: E402
+    Contract,
+    ContractBalance,
+    ControlGraphEdge,
+    ControlGraphNode,
+    ControllerValue,
+    EffectiveFunction,
+    FunctionPrincipal,
+    Job,
+    JobStage,
+    JobStatus,
+    Protocol,
+    UpgradeEvent,
+)
 from services.aggregations.company_overview import (  # noqa: E402
     CompanyNotFound,
+    _build_principal_lookup,
+    _prefetch_child_tables,
+    _principal_lookup_meta,
+    _trim_control_graph,
     build_company_overview,
+    build_functions_for_protocol,
     prefetch_contracts,
     resolve_company_jobs,
     resolve_implementation_contracts,
@@ -202,13 +222,141 @@ def test_build_company_overview_end_to_end_protocol_path(db_session):
     assert payload["contract_count"] == 1
     addrs = {c["address"] for c in payload["contracts"]}
     assert addr in addrs
-    # all_addresses includes every Contract row for the protocol
-    assert any(a["address"] == addr for a in payload["all_addresses"])
+    # The full inventory moved to /api/company/{name}/addresses; the main
+    # payload only carries the count.
+    assert payload["all_addresses_count"] == 1
 
 
 def test_build_company_overview_raises_when_unknown(db_session):
     with pytest.raises(CompanyNotFound):
         build_company_overview(db_session, f"missing-{uuid.uuid4().hex[:8]}")
+
+
+def test_build_company_overview_omits_functions_field(db_session):
+    """``functions`` no longer ships in the main payload — it's served by
+    ``/api/company/{name}/functions`` and fetched lazily by the frontend.
+    """
+    p = _add_protocol(db_session, f"e2e-nofn-{uuid.uuid4().hex[:8]}")
+    addr = _addr("nofn1")
+    job = _add_job(db_session, address=addr, protocol_id=p.id, name="Vault")
+    c = _add_contract(db_session, address=addr, job=job, protocol_id=p.id, contract_name="Vault")
+    # Seed an EF row so the lightweight projection has something to walk.
+    db_session.add(
+        EffectiveFunction(
+            contract_id=c.id,
+            function_name="pause",
+            selector="0xabcdef01",
+            abi_signature="pause()",
+            effect_labels=["pause_toggle"],
+            effect_targets=[],
+            action_summary="pause",
+            authority_public=False,
+            authority_roles=[],
+        )
+    )
+    db_session.commit()
+
+    payload = build_company_overview(db_session, p.name)
+    entry = next(c for c in payload["contracts"] if c["address"] == addr)
+    assert "functions" not in entry
+    # value_effects / capabilities should still derive from the lightweight
+    # ef_effects projection — pause_toggle → "pause" capability.
+    assert "pause" in entry["capabilities"]
+
+
+def test_build_functions_for_protocol_returns_keyed_function_list(db_session):
+    """``build_functions_for_protocol`` returns ``{address: [function_entries]}``
+    using the same shape that previously lived on each contract entry.
+    """
+    p = _add_protocol(db_session, f"functions-{uuid.uuid4().hex[:8]}")
+    addr = _addr("fn1")
+    job = _add_job(db_session, address=addr, protocol_id=p.id, name="Vault")
+    contract = _add_contract(db_session, address=addr, job=job, protocol_id=p.id, contract_name="Vault")
+    ef = EffectiveFunction(
+        contract_id=contract.id,
+        function_name="transfer",
+        selector="0xa9059cbb",
+        abi_signature="transfer(address,uint256)",
+        effect_labels=["asset_send"],
+        effect_targets=[],
+        action_summary="transfer assets",
+        authority_public=True,
+        authority_roles=[],
+    )
+    db_session.add(ef)
+    db_session.flush()
+    db_session.add(
+        FunctionPrincipal(
+            function_id=ef.id,
+            address=_addr("safe1"),
+            resolved_type="safe",
+            origin="role 0",
+            principal_type="authority_role",
+            details={"owners": [_addr("o1"), _addr("o2")], "threshold": 2},
+        )
+    )
+    db_session.commit()
+
+    out = build_functions_for_protocol(db_session, p.name)
+    assert addr in out
+    entries = out[addr]
+    assert len(entries) == 1
+    entry = entries[0]
+    assert entry["function"] == "transfer(address,uint256)"
+    assert entry["selector"] == "0xa9059cbb"
+    assert entry["effect_labels"] == ["asset_send"]
+    assert entry["authority_public"] is True
+    # The FP row was principal_type=authority_role, so it should bucket
+    # under authority_roles rather than direct_owner.
+    assert entry["authority_roles"], "authority_roles should be populated"
+    assert entry["direct_owner"] is None
+
+
+def test_build_functions_for_protocol_unknown_company_raises(db_session):
+    with pytest.raises(CompanyNotFound):
+        build_functions_for_protocol(db_session, f"missing-{uuid.uuid4().hex[:8]}")
+
+
+def test_build_functions_for_protocol_proxy_uses_impl(db_session):
+    """Proxy entries inherit functions from the impl contract's EF rows."""
+    p = _add_protocol(db_session, f"functions-proxy-{uuid.uuid4().hex[:8]}")
+    proxy_addr = _addr("pxfn")
+    impl_addr = _addr("imfn")
+
+    proxy_job = _add_job(db_session, address=proxy_addr, protocol_id=p.id, is_proxy=True)
+    impl_job = _add_job(db_session, address=impl_addr, protocol_id=p.id)
+    _add_contract(
+        db_session,
+        address=proxy_addr,
+        job=proxy_job,
+        protocol_id=p.id,
+        is_proxy=True,
+        implementation=impl_addr,
+        contract_name="ERC1967Proxy",
+    )
+    impl_contract = _add_contract(
+        db_session, address=impl_addr, job=impl_job, protocol_id=p.id, contract_name="VaultImpl"
+    )
+    db_session.add(
+        EffectiveFunction(
+            contract_id=impl_contract.id,
+            function_name="upgradeTo",
+            selector="0x3659cfe6",
+            abi_signature="upgradeTo(address)",
+            effect_labels=["implementation_update"],
+            effect_targets=[],
+            action_summary="upgrade",
+            authority_public=False,
+            authority_roles=[],
+        )
+    )
+    db_session.commit()
+
+    out = build_functions_for_protocol(db_session, p.name)
+    # Function is keyed to the proxy's address (what the user sees), not
+    # the impl's address.
+    assert proxy_addr in out
+    assert any(entry["function"] == "upgradeTo(address)" for entry in out[proxy_addr])
 
 
 def test_build_company_overview_proxy_uses_impl_name(db_session):
@@ -238,3 +386,421 @@ def test_build_company_overview_proxy_uses_impl_name(db_session):
     assert proxy_entry["implementation"] == impl_addr
     # Inherited name from the impl, not the generic proxy name
     assert proxy_entry["name"] == "VaultImpl"
+
+
+def _reference_trim_for_contract(
+    session,
+    contract_id: int,
+    contracts_by_job_id: dict,
+    cv_by_cid_full: dict,
+    cgn_by_cid_full: dict,
+) -> dict:
+    """Replicate the pre-SQL-trim path: load every CGN/CGE row for ``contract_id``
+    (unfiltered), build the same nodes_payload/edges_payload the production
+    serializer would emit, then apply ``_trim_control_graph``.
+
+    Used as the reference output the SQL-prefiltered path must match.
+    """
+    all_cgn = (
+        session.execute(select(ControlGraphNode).where(ControlGraphNode.contract_id == contract_id)).scalars().all()
+    )
+    all_cge = (
+        session.execute(select(ControlGraphEdge).where(ControlGraphEdge.contract_id == contract_id)).scalars().all()
+    )
+    lookup = _build_principal_lookup(contracts_by_job_id, cv_by_cid_full, cgn_by_cid_full)
+    node_meta = {n.address: _principal_lookup_meta(lookup, n.address, n.details) for n in all_cgn}
+    nodes_payload = [
+        {
+            "address": n.address,
+            "type": node_meta[n.address].get("resolved_type") or n.resolved_type,
+            "label": node_meta[n.address].get("label") or n.contract_name or n.label,
+            "details": node_meta[n.address]["details"],
+        }
+        for n in all_cgn
+    ]
+    edges_payload = [
+        {
+            "from": e.from_node_id.replace("address:", ""),
+            "to": e.to_node_id.replace("address:", ""),
+            "relation": e.relation,
+        }
+        for e in all_cge
+    ]
+    return _trim_control_graph(nodes_payload, edges_payload)
+
+
+def test_trim_control_graph_sql_parity(db_session):
+    """SQL-prefiltered control_graph queries return the same (nodes, edges)
+    set as the pre-refactor "load everything, trim in Python" path.
+
+    The seed covers every override case the principal_lookup can apply:
+      - principal-typed CGN row (direct keep)
+      - non-principal CGN row that is the FROM of an edge (edge-source keep)
+      - non-principal CGN whose address is one of the analyzed contracts
+        (lookup upgrades to "contract")
+      - non-principal CGN whose address has a principal-typed CGN row on
+        another contract in the batch (lookup cross-contract upgrade)
+      - non-principal CGN whose address appears in a ControllerValue with
+        a principal resolved_type (lookup CV upgrade)
+      - non-principal CGN with ``details.delay`` set (lookup timelock-delay)
+      - non-principal CGN with no inbound nor outbound edges (drop case)
+      - edge whose target is dropped (edge drop)
+      - edge whose target is not in the contract's CGN at all (edge keep)
+    """
+    p = _add_protocol(db_session, f"trim-parity-{uuid.uuid4().hex[:8]}")
+    addr_a = _addr("ca")
+    addr_b = _addr("cb")
+    job_a = _add_job(db_session, address=addr_a, protocol_id=p.id, name="ContractA")
+    job_b = _add_job(db_session, address=addr_b, protocol_id=p.id, name="ContractB")
+    contract_a = _add_contract(db_session, address=addr_a, job=job_a, protocol_id=p.id, contract_name="ContractA")
+    contract_b = _add_contract(db_session, address=addr_b, job=job_b, protocol_id=p.id, contract_name="ContractB")
+
+    safe_addr = _addr("safe").lower()
+    tl_addr = _addr("tl").lower()
+    eoa_addr = _addr("eoa").lower()
+    leaf_drop = _addr("drop").lower()
+    leaf_src = _addr("src").lower()
+    delay_addr = _addr("dly").lower()
+    cv_safe = _addr("cvs").lower()
+    cross_safe = _addr("xsafe").lower()
+    external_addr = _addr("ext").lower()
+
+    # Contract A's CGN — mix of kept and dropped cases.
+    db_session.add(ControlGraphNode(contract_id=contract_a.id, address=safe_addr, resolved_type="safe"))
+    db_session.add(ControlGraphNode(contract_id=contract_a.id, address=tl_addr, resolved_type="timelock"))
+    db_session.add(ControlGraphNode(contract_id=contract_a.id, address=eoa_addr, resolved_type="eoa"))
+    db_session.add(ControlGraphNode(contract_id=contract_a.id, address=leaf_drop, resolved_type="unknown"))
+    db_session.add(ControlGraphNode(contract_id=contract_a.id, address=leaf_src, resolved_type="unknown"))
+    db_session.add(
+        ControlGraphNode(
+            contract_id=contract_a.id, address=delay_addr, resolved_type="unknown", details={"delay": 3600}
+        )
+    )
+    db_session.add(ControlGraphNode(contract_id=contract_a.id, address=cv_safe, resolved_type="unknown"))
+    # Cross-contract reference: addr_b is an analyzed contract → lookup upgrade.
+    db_session.add(ControlGraphNode(contract_id=contract_a.id, address=addr_b.lower(), resolved_type="unknown"))
+    # cross_safe appears as "safe" on contract_b but "unknown" on contract_a.
+    db_session.add(ControlGraphNode(contract_id=contract_a.id, address=cross_safe, resolved_type="unknown"))
+
+    # Contract B's CGN — seeds the cross-contract upgrade for cross_safe.
+    db_session.add(ControlGraphNode(contract_id=contract_b.id, address=cross_safe, resolved_type="safe"))
+
+    # Edges in contract A.
+    db_session.add(
+        ControlGraphEdge(
+            contract_id=contract_a.id,
+            from_node_id=f"address:{leaf_src}",
+            to_node_id=f"address:{safe_addr}",
+            relation="ref",
+        )
+    )
+    # Edge to leaf_drop — should be dropped along with the node.
+    db_session.add(
+        ControlGraphEdge(
+            contract_id=contract_a.id,
+            from_node_id=f"address:{safe_addr}",
+            to_node_id=f"address:{leaf_drop}",
+            relation="ref",
+        )
+    )
+    db_session.add(
+        ControlGraphEdge(
+            contract_id=contract_a.id,
+            from_node_id=f"address:{tl_addr}",
+            to_node_id=f"address:{safe_addr}",
+            relation="controls",
+        )
+    )
+    # Edge to external_addr — target not in contract A's CGN, kept.
+    db_session.add(
+        ControlGraphEdge(
+            contract_id=contract_a.id,
+            from_node_id=f"address:{safe_addr}",
+            to_node_id=f"address:{external_addr}",
+            relation="ext",
+        )
+    )
+
+    # ControllerValue: cv_safe → resolved_type "safe" → lookup upgrade for cv_safe CGN row.
+    db_session.add(
+        ControllerValue(contract_id=contract_a.id, controller_id="role", value=cv_safe, resolved_type="safe")
+    )
+    db_session.commit()
+
+    payload = build_company_overview(db_session, p.name)
+    actual_entry = next(c for c in payload["contracts"] if c["address"] == addr_a)
+    actual_cg = actual_entry["control_graph"]
+
+    contracts_by_job_id = {job_a.id: contract_a, job_b.id: contract_b}
+    cv_full = {
+        contract_a.id: list(
+            db_session.execute(select(ControllerValue).where(ControllerValue.contract_id == contract_a.id)).scalars()
+        ),
+        contract_b.id: list(
+            db_session.execute(select(ControllerValue).where(ControllerValue.contract_id == contract_b.id)).scalars()
+        ),
+    }
+    cgn_full = {
+        contract_a.id: list(
+            db_session.execute(select(ControlGraphNode).where(ControlGraphNode.contract_id == contract_a.id)).scalars()
+        ),
+        contract_b.id: list(
+            db_session.execute(select(ControlGraphNode).where(ControlGraphNode.contract_id == contract_b.id)).scalars()
+        ),
+    }
+    reference = _reference_trim_for_contract(db_session, contract_a.id, contracts_by_job_id, cv_full, cgn_full)
+
+    actual_nodes = {n["address"].lower() for n in actual_cg["nodes"]}
+    reference_nodes = {n["address"].lower() for n in reference["nodes"]}
+    assert actual_nodes == reference_nodes, (
+        f"SQL-prefiltered nodes diverge from Python-trim reference.\n"
+        f"  only in actual: {actual_nodes - reference_nodes}\n"
+        f"  only in reference: {reference_nodes - actual_nodes}"
+    )
+
+    actual_edges = {(e["from"].lower(), e["to"].lower(), e["relation"]) for e in actual_cg["edges"]}
+    reference_edges = {(e["from"].lower(), e["to"].lower(), e["relation"]) for e in reference["edges"]}
+    assert actual_edges == reference_edges, (
+        f"SQL-prefiltered edges diverge from Python-trim reference.\n"
+        f"  only in actual: {actual_edges - reference_edges}\n"
+        f"  only in reference: {reference_edges - actual_edges}"
+    )
+
+    # Spot-check the override branches explicitly so a future regression that
+    # silently drops the analyzed-contract address (the largest override class
+    # in production) doesn't get masked by a parallel reference change.
+    assert addr_b.lower() in actual_nodes, "analyzed-contract address must survive (lookup upgrade)"
+    assert cv_safe in actual_nodes, "CV-principal address must survive (lookup upgrade)"
+    assert cross_safe in actual_nodes, "cross-contract principal address must survive (lookup upgrade)"
+    assert delay_addr in actual_nodes, "details.delay address must survive (lookup timelock-delay)"
+    assert leaf_src in actual_nodes, "non-principal but edge-source address must survive"
+    assert leaf_drop not in actual_nodes, "true leaf must be dropped"
+    assert external_addr in {e["to"].lower() for e in actual_cg["edges"]}, (
+        "edge whose target is outside this contract's CGN must survive"
+    )
+
+
+def _normalize_prefetch(result: dict) -> dict:
+    """Reduce ``_prefetch_child_tables`` output to a hashable, order-independent
+    structure so equality comparison is robust to per-session row order.
+
+    ORM rows are reduced to tuples of the columns the downstream pipeline
+    actually reads; lists are sorted so we test as multisets, not sequences.
+    """
+
+    def cv_key(cv):
+        return (cv.controller_id, cv.value, cv.resolved_type, cv.source, cv.block_number)
+
+    def bal_key(b):
+        return (
+            b.token_address,
+            b.token_symbol,
+            b.raw_balance,
+            b.decimals,
+            float(b.usd_value) if b.usd_value is not None else None,
+            float(b.price_usd) if b.price_usd is not None else None,
+        )
+
+    def cgn_key(n):
+        return (
+            n.address,
+            n.resolved_type,
+            n.contract_name,
+            n.label,
+            tuple(sorted((n.details or {}).items())) if isinstance(n.details, dict) else n.details,
+        )
+
+    def cge_key(e):
+        return (e.from_node_id, e.to_node_id, e.relation)
+
+    return {
+        "controller_values": {
+            cid: sorted(cv_key(r) for r in rows) for cid, rows in result["controller_values"].items()
+        },
+        "ef_effects": {cid: sorted(tuple(lbls) for lbls in rows) for cid, rows in result["ef_effects"].items()},
+        "fp_governance_rows": {
+            cid: sorted((d["address"], d["resolved_type"], repr(d["details"])) for d in rows)
+            for cid, rows in result["fp_governance_rows"].items()
+        },
+        "upgrade_events_count": dict(result["upgrade_events_count"]),
+        "upgrade_events_last": dict(result["upgrade_events_last"]),
+        "balances": {cid: sorted(bal_key(b) for b in rows) for cid, rows in result["balances"].items()},
+        "cgn": {cid: sorted(cgn_key(n) for n in rows) for cid, rows in result["cgn"].items()},
+        "cge": {cid: sorted(cge_key(e) for e in rows) for cid, rows in result["cge"].items()},
+    }
+
+
+def test_prefetch_child_tables_parallel_sequential_parity(db_session):
+    """``_prefetch_child_tables`` returns byte-identical output between the
+    parallel fan-out (default ``max_workers=4``) and the sequential path
+    (``max_workers=1``).
+
+    Seeds one row of every child-table type across two contracts so every
+    key in the returned dict has something to merge — the test fails if a
+    parallel-only path corrupts the merge, drops rows, or attaches a
+    session-local row to the wrong contract_id bucket.
+    """
+    p = _add_protocol(db_session, f"parity-par-{uuid.uuid4().hex[:8]}")
+    addr_a = _addr("pa")
+    addr_b = _addr("pb")
+    job_a = _add_job(db_session, address=addr_a, protocol_id=p.id, name="ContractA")
+    job_b = _add_job(db_session, address=addr_b, protocol_id=p.id, name="ContractB")
+    contract_a = _add_contract(db_session, address=addr_a, job=job_a, protocol_id=p.id, contract_name="ContractA")
+    contract_b = _add_contract(db_session, address=addr_b, job=job_b, protocol_id=p.id, contract_name="ContractB")
+
+    safe_addr = _addr("psafe").lower()
+    tl_addr = _addr("ptl").lower()
+    cv_principal = _addr("pcv").lower()
+    ef_principal = _addr("pfp").lower()
+    leaf_drop = _addr("pdrop").lower()
+    leaf_src = _addr("psrc").lower()
+
+    # Contract A: every child-table type populated.
+    db_session.add(
+        ControllerValue(
+            contract_id=contract_a.id,
+            controller_id="owner",
+            value=cv_principal,
+            resolved_type="safe",
+            source="onchain",
+            block_number=100,
+        )
+    )
+    db_session.add(
+        ControllerValue(
+            contract_id=contract_a.id,
+            controller_id="admin",
+            value=tl_addr,
+            resolved_type="timelock",
+            source=None,
+            block_number=101,
+        )
+    )
+    db_session.add(ControlGraphNode(contract_id=contract_a.id, address=safe_addr, resolved_type="safe", label="A safe"))
+    db_session.add(ControlGraphNode(contract_id=contract_a.id, address=tl_addr, resolved_type="timelock"))
+    db_session.add(ControlGraphNode(contract_id=contract_a.id, address=leaf_drop, resolved_type="unknown"))
+    db_session.add(ControlGraphNode(contract_id=contract_a.id, address=leaf_src, resolved_type="unknown"))
+    db_session.add(
+        ControlGraphEdge(
+            contract_id=contract_a.id,
+            from_node_id=f"address:{leaf_src}",
+            to_node_id=f"address:{safe_addr}",
+            relation="ref",
+        )
+    )
+    db_session.add(
+        ControlGraphEdge(
+            contract_id=contract_a.id,
+            from_node_id=f"address:{safe_addr}",
+            to_node_id=f"address:{leaf_drop}",
+            relation="ref",
+        )
+    )
+    db_session.add(
+        ContractBalance(
+            contract_id=contract_a.id,
+            token_address=None,
+            token_symbol="ETH",
+            token_name="Ether",
+            decimals=18,
+            raw_balance="1000000000000000000",
+            usd_value=2500.00,
+            price_usd=2500.00,
+        )
+    )
+    ef_a = EffectiveFunction(
+        contract_id=contract_a.id,
+        function_name="pause",
+        selector="0x8456cb59",
+        abi_signature="pause()",
+        effect_labels=["pause_toggle"],
+        effect_targets=[],
+        action_summary="pause",
+        authority_public=False,
+        authority_roles=[],
+    )
+    db_session.add(ef_a)
+    db_session.flush()
+    db_session.add(
+        FunctionPrincipal(
+            function_id=ef_a.id,
+            address=ef_principal,
+            resolved_type="safe",
+            origin="role 0",
+            principal_type="authority_role",
+            details={"threshold": 2},
+        )
+    )
+    db_session.add(
+        UpgradeEvent(
+            contract_id=contract_a.id,
+            proxy_address=addr_a,
+            new_impl=_addr("pimpl"),
+            block_number=12345,
+            timestamp=datetime(2024, 6, 1, tzinfo=timezone.utc),
+        )
+    )
+    db_session.add(
+        UpgradeEvent(
+            contract_id=contract_a.id,
+            proxy_address=addr_a,
+            new_impl=_addr("pimpl2"),
+            block_number=22345,
+            timestamp=datetime(2025, 1, 1, tzinfo=timezone.utc),
+        )
+    )
+
+    # Contract B: a subset, plus a row whose only purpose is to validate
+    # that each contract_id bucket stays separate across threads.
+    db_session.add(
+        ControllerValue(
+            contract_id=contract_b.id,
+            controller_id="owner",
+            value=safe_addr,
+            resolved_type="safe",
+        )
+    )
+    db_session.add(
+        ContractBalance(
+            contract_id=contract_b.id,
+            token_address=_addr("ptok"),
+            token_symbol="USDC",
+            decimals=6,
+            raw_balance="50000000",
+            usd_value=50.00,
+            price_usd=1.00,
+        )
+    )
+    ef_b = EffectiveFunction(
+        contract_id=contract_b.id,
+        function_name="transfer",
+        selector="0xa9059cbb",
+        abi_signature="transfer(address,uint256)",
+        effect_labels=["asset_send"],
+        effect_targets=[],
+        action_summary="transfer",
+        authority_public=True,
+        authority_roles=[],
+    )
+    db_session.add(ef_b)
+    db_session.commit()
+
+    contract_ids = {contract_a.id, contract_b.id}
+    parallel = _prefetch_child_tables(db_session, contract_ids, max_workers=4)
+    sequential = _prefetch_child_tables(db_session, contract_ids, max_workers=1)
+
+    assert _normalize_prefetch(parallel) == _normalize_prefetch(sequential), (
+        "parallel fan-out diverged from the sequential reference"
+    )
+
+    # Sanity: every dict key has content from the seed so the equality
+    # check above wasn't trivially {} == {}.
+    norm = _normalize_prefetch(parallel)
+    assert norm["controller_values"][contract_a.id], "controller_values missing for contract A"
+    assert norm["balances"][contract_a.id], "balances missing for contract A"
+    assert norm["cgn"][contract_a.id], "cgn missing for contract A"
+    assert norm["cge"][contract_a.id], "cge missing for contract A"
+    assert norm["ef_effects"][contract_a.id], "ef_effects missing for contract A"
+    assert norm["fp_governance_rows"][contract_a.id], "fp_governance_rows missing for contract A"
+    assert norm["upgrade_events_count"][contract_a.id] == 2
+    assert norm["upgrade_events_last"][contract_a.id]["block"] == 22345

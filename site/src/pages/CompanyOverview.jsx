@@ -15,6 +15,7 @@ export default function CompanyOverview({ companyName, onSelectContract, onNavig
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
   const [auditCoverage, setAuditCoverage] = useState(null);
+  const [functionData, setFunctionData] = useState(null);
   const [addressesModalOpen, setAddressesModalOpen] = useState(false);
   const [auditsAdminOpen, setAuditsAdminOpen] = useState(false);
 
@@ -30,6 +31,13 @@ export default function CompanyOverview({ companyName, onSelectContract, onNavig
     api(`/api/company/${encodeURIComponent(companyName)}/audit_coverage`)
       .then((c) => { if (!cancelled) setAuditCoverage(c); })
       .catch(() => { /* audits optional — keep the page usable */ });
+    // Functions moved out of /api/company so the main payload could
+    // drop from ~3.3 MB to ~1.2 MB. Fetched in parallel and threaded
+    // through to ProtocolSurface as initialFunctions so the embedded
+    // surface doesn't have to re-fetch.
+    api(`/api/company/${encodeURIComponent(companyName)}/functions`)
+      .then((d) => { if (!cancelled) setFunctionData(d?.functions || {}); })
+      .catch(() => { /* function inspector falls back to empty data */ });
     return () => { cancelled = true; };
   }, [companyName]);
 
@@ -39,7 +47,9 @@ export default function CompanyOverview({ companyName, onSelectContract, onNavig
   const { contracts, ownership_hierarchy: hierarchy } = data;
 
   // The score uses the full company payload: function-level authority,
-  // principal details, upgrade state, and audit coverage.
+  // principal details, upgrade state, and audit coverage. Functions
+  // live on a separate endpoint now, so splice them back onto each
+  // contract for the scorer.
   const coverageByAddr = (() => {
     const map = {};
     for (const row of auditCoverage?.coverage || []) {
@@ -48,7 +58,15 @@ export default function CompanyOverview({ companyName, onSelectContract, onNavig
     return map;
   })();
 
-  const { axes, composite, grade } = computeProtocolScore(data, auditCoverage);
+  const dataForScore = functionData
+    ? {
+        ...data,
+        contracts: contracts.map((c) =>
+          c.address && functionData[c.address] ? { ...c, functions: functionData[c.address] } : c
+        ),
+      }
+    : data;
+  const { axes, composite, grade } = computeProtocolScore(dataForScore, auditCoverage);
   const coveredContracts = Object.values(coverageByAddr).filter((r) => bytecodeVerifiedAudits(r.audits).length > 0).length;
 
   const proxyCount = contracts.filter((c) => c.is_proxy).length;
@@ -160,7 +178,7 @@ export default function CompanyOverview({ companyName, onSelectContract, onNavig
               </svg>
               <span>Addresses</span>
               <span className="company-surface-action-count">
-                {data.all_addresses?.length ?? contracts.length}
+                {data.all_addresses_count ?? contracts.length}
               </span>
             </button>
             <button
@@ -195,12 +213,18 @@ export default function CompanyOverview({ companyName, onSelectContract, onNavig
           </div>
         </div>
         <div className="company-surface-embed">
-          {/* Pass the already-fetched companyData so the embedded surface
-              skips its own /api/company fetch — that response can be
-              1-3 MB and was previously requested twice in parallel on
-              every overview page-load. */}
+          {/* Pass the already-fetched companyData + auditCoverage so the
+              embedded surface skips its own /api/company and
+              /audit_coverage fetches — both were previously fired a
+              second time on every overview page-load. */}
           <Suspense fallback={<LoadingFallback label="Loading control surface..." />}>
-            <ProtocolSurface companyName={companyName} initialData={data} embedded />
+            <ProtocolSurface
+              companyName={companyName}
+              initialData={data}
+              initialCoverage={auditCoverage}
+              initialFunctions={functionData}
+              embedded
+            />
           </Suspense>
         </div>
       </section>

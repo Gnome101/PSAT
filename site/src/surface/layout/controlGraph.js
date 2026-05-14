@@ -3,13 +3,20 @@
 
 import { isRoleIdAddress } from "../format.js";
 
+// buildMachines + guardSummary both call this once per function (~2× per fn).
+// Cache by companyData identity so the index is built once per
+// /api/company response; WeakMap entries die with the payload.
+const indexCache = new WeakMap();
+
 // Build a minimal nodeInfo + edge lookup over the per-contract control graphs
 // so we can surface *indirect* upstream governance context without flattening
 // function-level direct callers into it.
 export function buildControlGraphIndex(companyData) {
+  if (!companyData) return { controllerOf: new Map(), nodeInfo: new Map() };
+  const cached = indexCache.get(companyData);
+  if (cached) return cached;
   const controllerOf = new Map(); // from-address → [{to, relation}]
   const nodeInfo = new Map();
-  if (!companyData) return { controllerOf, nodeInfo };
   for (const contract of companyData.contracts || []) {
     const cg = contract.control_graph;
     if (!cg) continue;
@@ -30,7 +37,9 @@ export function buildControlGraphIndex(companyData) {
       }
     }
   }
-  return { controllerOf, nodeInfo };
+  const index = { controllerOf, nodeInfo };
+  indexCache.set(companyData, index);
+  return index;
 }
 
 // Direct callers = exactly what effective_permissions emits for the function:

@@ -1856,8 +1856,14 @@ def test_company_overview_with_proxy_and_effects(db_session, api_client):
         assert "delegatecall" in c["capabilities"]
         assert c["upgrade_count"] == 1
         assert c["has_timelock"] is True
-        assert len(c["functions"]) == 1
-        fn = c["functions"][0]
+        # Functions moved to /api/company/{name}/functions to shrink the
+        # main payload; the entry itself no longer carries them.
+        assert "functions" not in c
+        functions_body = api_client.get("/api/company/myproj_proxy_test/functions").json()
+        assert proxy_addr in functions_body["functions"]
+        fn_entries = functions_body["functions"][proxy_addr]
+        assert len(fn_entries) == 1
+        fn = fn_entries[0]
         assert fn["direct_owner"]["address"] == ("0x" + "1" * 40)
         assert fn["authority_roles"] and fn["authority_roles"][0]["role"] == 1
         assert any(p["address"] == "0x" + "3" * 40 for ctrl in fn["controllers"] for p in ctrl["principals"])

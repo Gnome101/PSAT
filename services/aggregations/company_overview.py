@@ -18,25 +18,30 @@ Stages (each returns plain Python data, not ORM rows that pin a session):
    tables to produce the contract entries, ownership hierarchy,
    non-contract principals, and inter-contract fund-flow edges.
 5. ``assemble_company_payload`` — adds the protocol-wide views
-   (all_addresses, latest TVL, audit reports) and shapes the final dict.
+   (all_addresses, latest TVL) and shapes the final dict.
 """
 
 from __future__ import annotations
 
+import logging
+import os
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from contextlib import contextmanager
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Callable, Iterator
 
-from sqlalchemy import func, select
-from sqlalchemy.orm import Session, selectinload
+from sqlalchemy import and_, exists, func, or_, select
+from sqlalchemy.orm import Session, aliased, selectinload
 
 from db.models import (
-    AuditReport,
     Contract,
     ContractBalance,
     ControlGraphEdge,
     ControlGraphNode,
     ControllerValue,
     EffectiveFunction,
+    FunctionPrincipal,
     Job,
     JobStatus,
     Protocol,
@@ -44,6 +49,24 @@ from db.models import (
     UpgradeEvent,
 )
 from services.governance.principals import _build_company_function_entry
+
+logger = logging.getLogger("services.aggregations.company_overview")
+
+
+@contextmanager
+def _time_phase(timings_ms: dict[str, int], name: str) -> Iterator[None]:
+    """Record the elapsed ms of the wrapped block into ``timings_ms[name]``.
+
+    Mirrors the ``_phase`` helper in
+    ``services.static.contract_analysis_pipeline.core``; the bundled-timing
+    style (single log line per request with every stage as a field) keeps
+    log volume bounded and groups well in Loki.
+    """
+    start = time.monotonic()
+    try:
+        yield
+    finally:
+        timings_ms[name] = int((time.monotonic() - start) * 1000)
 
 
 class CompanyNotFound(Exception):
@@ -200,11 +223,59 @@ def resolve_implementation_contracts(
     return impl_job_by_addr, contracts_by_job_id
 
 
-def _prefetch_child_tables(session: Session, contract_ids: set[int]) -> dict[str, dict[int, Any]]:
-    """Pre-load every per-contract child row used downstream."""
+# Read the pool sizing from the same env vars db.models reads, rather than
+# importing the (private) constants. The fan-out cap derives from
+# pool_size + max_overflow so prod (start_workers.sh tightens to 2+3=5) and
+# dev (5+10=15) both stay below ~half the pool: one in-flight /api/company
+# never claims more than ~half the engine's connections, leaving room for
+# /functions, /audit_coverage, etc. on the same worker process. The hard
+# ceiling of 4 caps perf returns since beyond that the SQL planner and the
+# DB CPU become the bottleneck, not concurrency.
+#   prod (pool=5):  (5 - 1) // 2 = 2 workers + 1 request session = 3/5
+#   dev  (pool=15): min(4, (15-1)//2 = 7) = 4 workers + 1 = 5/15
+_DB_POOL_SIZE = int(os.environ.get("PSAT_DB_POOL_SIZE", "5"))
+_DB_MAX_OVERFLOW = int(os.environ.get("PSAT_DB_MAX_OVERFLOW", "10"))
+_PREFETCH_MAX_WORKERS = max(1, min(4, (_DB_POOL_SIZE + _DB_MAX_OVERFLOW - 1) // 2))
+
+
+def _prefetch_child_tables(
+    session: Session,
+    contract_ids: set[int],
+    *,
+    max_workers: int = _PREFETCH_MAX_WORKERS,
+) -> dict[str, dict[int, Any]]:
+    """Pre-load every per-contract child row used downstream.
+
+    The full ``EffectiveFunction`` rows (and their FunctionPrincipal
+    children) are no longer loaded on this path — they're served by
+    ``/api/company/{name}/functions`` and fetched lazily by the frontend.
+    Two narrow projections replace the heavy row+selectinload pair:
+
+    * ``ef_effects`` — ``{contract_id: list[list[str]]}`` of per-function
+      ``effect_labels`` arrays. Drives the contract entry's
+      ``value_effects`` / ``capabilities`` / ``role`` fields.
+    * ``fp_governance_rows`` — non-contract principals (safe/timelock/
+      eoa/proxy_admin) from ``function_principals``, joined back to
+      ``contract_id``. Drives the third-pass principal backfill in
+      ``_build_flows_and_principals`` (function-only principals like the
+      EtherFiTimelock Safe).
+
+    ``controller_values`` runs first on the request session because the
+    ``cv_principal_addrs_lc`` set it produces is needed in the CGN/CGE
+    keep-predicate. The remaining stages fan out over a per-request
+    ``ThreadPoolExecutor`` — sync SQLAlchemy releases the GIL inside the
+    DB driver so threads give genuine wall-time parallelism. Each task
+    opens its own ``Session`` on the same engine because Session is not
+    thread-safe; ``max_workers`` is derived from the engine pool size so
+    a single request never claims more than ~half the pool (see the
+    ``_PREFETCH_MAX_WORKERS`` comment above for the math). Tests pass
+    ``max_workers=1`` to validate the sequential path against the
+    parallel merge.
+    """
     out: dict[str, dict[int, Any]] = {
         "controller_values": {},
-        "ef_rows": {},
+        "ef_effects": {},
+        "fp_governance_rows": {},
         "upgrade_events_count": {},
         "upgrade_events_last": {},
         "balances": {},
@@ -215,37 +286,292 @@ def _prefetch_child_tables(session: Session, contract_ids: set[int]) -> dict[str
         return out
 
     id_list = list(contract_ids)
-    for cv in session.execute(select(ControllerValue).where(ControllerValue.contract_id.in_(id_list))).scalars():
-        out["controller_values"].setdefault(cv.contract_id, []).append(cv)
-    for ef in session.execute(
-        select(EffectiveFunction)
-        .where(EffectiveFunction.contract_id.in_(id_list))
-        .options(selectinload(EffectiveFunction.principals))
-    ).scalars():
-        out["ef_rows"].setdefault(ef.contract_id, []).append(ef)
-    for cid, count in session.execute(
-        select(UpgradeEvent.contract_id, func.count(UpgradeEvent.id))
-        .where(UpgradeEvent.contract_id.in_(id_list))
-        .group_by(UpgradeEvent.contract_id)
-    ).all():
-        out["upgrade_events_count"][cid] = count
-    for cid, last_block, last_ts in session.execute(
-        select(
-            UpgradeEvent.contract_id,
-            func.max(UpgradeEvent.block_number),
-            func.max(UpgradeEvent.timestamp),
+    timings_ms: dict[str, int] = {}
+    counts: dict[str, int] = {}
+
+    with _time_phase(timings_ms, "controller_values"):
+        cv_rows = 0
+        for cv in session.execute(select(ControllerValue).where(ControllerValue.contract_id.in_(id_list))).scalars():
+            out["controller_values"].setdefault(cv.contract_id, []).append(cv)
+            cv_rows += 1
+        counts["controller_values"] = cv_rows
+
+    # The control_graph queries push the _trim_control_graph rule into the
+    # WHERE clause. Without the prefilter, ether.fi loads ~7.1 K CGN + ~8.5 K
+    # CGE rows just to drop ~78% / ~66% of them at serialization time. The
+    # filter must be a strict superset of the Python trim because the trim
+    # uses the *post-lookup* node type, so addresses whose CGN.resolved_type
+    # is non-principal but whose principal_lookup entry upgrades them
+    # (analyzed contracts, CV principals, cross-contract CGN principals,
+    # timelock-delay details) must still be loaded. _trim_control_graph is
+    # kept as a final no-op-on-the-happy-path pass that handles the cases
+    # where SQL keeps more than Python would (cross-contract edge sources,
+    # JSONB delay keys with non-positive values).
+    cv_principal_addrs_lc: set[str] = set()
+    for cv_list in out["controller_values"].values():
+        for cv in cv_list:
+            value = cv.value
+            if not value or not value.startswith("0x"):
+                continue
+            details_dict = cv.details if isinstance(cv.details, dict) else {}
+            if _principal_lookup_type(cv.resolved_type, details_dict):
+                cv_principal_addrs_lc.add(value.lower())
+
+    contract_addr_subq = (
+        select(func.lower(Contract.address))
+        .where(Contract.id.in_(id_list), Contract.address.is_not(None))
+        .scalar_subquery()
+    )
+    edge_source_addr_subq = (
+        select(func.lower(func.replace(ControlGraphEdge.from_node_id, "address:", "")))
+        .where(ControlGraphEdge.contract_id.in_(id_list))
+        .distinct()
+        .scalar_subquery()
+    )
+    # Distinct aliases for the two roles the CGN table plays inside the
+    # control_graph queries:
+    #   * ``cgn_principal_lookup`` — the inner subquery that returns every
+    #     address with a principal-typed or timelock-delay CGN row anywhere
+    #     in the batch. Drives the cross-contract lookup upgrade case.
+    #   * ``cge_target_cgn`` — the correlated CGN reference inside the CGE
+    #     NOT EXISTS, joined to the edge's target.
+    # Sharing one alias caused inner subquery references to shadow the outer
+    # correlated reference inside the CGE query, which Postgres tolerates
+    # but reads as a footgun.
+    cgn_principal_lookup = aliased(ControlGraphNode, name="cgn_principal_lookup")
+    cge_target_cgn = aliased(ControlGraphNode, name="cge_target_cgn")
+    cgn_principal_addr_subq = (
+        select(func.lower(cgn_principal_lookup.address))
+        .where(
+            cgn_principal_lookup.contract_id.in_(id_list),
+            or_(
+                cgn_principal_lookup.resolved_type.in_(_PRINCIPAL_TYPES_SQL),
+                and_(
+                    cgn_principal_lookup.details.is_not(None),
+                    or_(
+                        cgn_principal_lookup.details.has_key("delay"),
+                        cgn_principal_lookup.details.has_key("delay_seconds"),
+                        cgn_principal_lookup.details.has_key("min_delay"),
+                    ),
+                ),
+            ),
         )
-        .where(UpgradeEvent.contract_id.in_(id_list))
-        .group_by(UpgradeEvent.contract_id)
-    ).all():
-        out["upgrade_events_last"][cid] = {"block": last_block, "timestamp": last_ts}
-    for b in session.execute(select(ContractBalance).where(ContractBalance.contract_id.in_(id_list))).scalars():
-        out["balances"].setdefault(b.contract_id, []).append(b)
-    for n in session.execute(select(ControlGraphNode).where(ControlGraphNode.contract_id.in_(id_list))).scalars():
-        out["cgn"].setdefault(n.contract_id, []).append(n)
-    for e in session.execute(select(ControlGraphEdge).where(ControlGraphEdge.contract_id.in_(id_list))).scalars():
-        out["cge"].setdefault(e.contract_id, []).append(e)
+        .distinct()
+        .scalar_subquery()
+    )
+
+    def _node_keep_predicate(node_ref: Any) -> Any:
+        clauses = [
+            node_ref.resolved_type.in_(_PRINCIPAL_TYPES_SQL),
+            func.lower(node_ref.address).in_(contract_addr_subq),
+            func.lower(node_ref.address).in_(cgn_principal_addr_subq),
+            func.lower(node_ref.address).in_(edge_source_addr_subq),
+            and_(
+                node_ref.details.is_not(None),
+                or_(
+                    node_ref.details.has_key("delay"),
+                    node_ref.details.has_key("delay_seconds"),
+                    node_ref.details.has_key("min_delay"),
+                ),
+            ),
+        ]
+        if cv_principal_addrs_lc:
+            clauses.append(func.lower(node_ref.address).in_(list(cv_principal_addrs_lc)))
+        return or_(*clauses)
+
+    def _ef_effects(s: Session) -> tuple[dict[int, list[list[str]]], int]:
+        local: dict[int, list[list[str]]] = {}
+        rows = 0
+        for cid, labels in s.execute(
+            select(EffectiveFunction.contract_id, EffectiveFunction.effect_labels).where(
+                EffectiveFunction.contract_id.in_(id_list)
+            )
+        ).all():
+            local.setdefault(cid, []).append(list(labels or []))
+            rows += 1
+        return local, rows
+
+    def _fp_governance(s: Session) -> tuple[dict[int, list[dict[str, Any]]], int]:
+        local: dict[int, list[dict[str, Any]]] = {}
+        rows = 0
+        for row in s.execute(
+            select(
+                EffectiveFunction.contract_id,
+                FunctionPrincipal.address,
+                FunctionPrincipal.resolved_type,
+                FunctionPrincipal.details,
+            )
+            .join(FunctionPrincipal, FunctionPrincipal.function_id == EffectiveFunction.id)
+            .where(
+                EffectiveFunction.contract_id.in_(id_list),
+                FunctionPrincipal.resolved_type.in_(("safe", "timelock", "eoa", "proxy_admin")),
+            )
+        ).all():
+            cid, address, resolved_type, details = row
+            local.setdefault(cid, []).append(
+                {
+                    "address": address,
+                    "resolved_type": resolved_type,
+                    "details": details,
+                }
+            )
+            rows += 1
+        return local, rows
+
+    def _upgrade_count(s: Session) -> tuple[dict[int, int], int]:
+        local: dict[int, int] = {}
+        for cid, count in s.execute(
+            select(UpgradeEvent.contract_id, func.count(UpgradeEvent.id))
+            .where(UpgradeEvent.contract_id.in_(id_list))
+            .group_by(UpgradeEvent.contract_id)
+        ).all():
+            local[cid] = count
+        return local, len(local)
+
+    def _upgrade_last(s: Session) -> tuple[dict[int, dict[str, Any]], int]:
+        local: dict[int, dict[str, Any]] = {}
+        for cid, last_block, last_ts in s.execute(
+            select(
+                UpgradeEvent.contract_id,
+                func.max(UpgradeEvent.block_number),
+                func.max(UpgradeEvent.timestamp),
+            )
+            .where(UpgradeEvent.contract_id.in_(id_list))
+            .group_by(UpgradeEvent.contract_id)
+        ).all():
+            local[cid] = {"block": last_block, "timestamp": last_ts}
+        return local, len(local)
+
+    def _balances(s: Session) -> tuple[dict[int, list[Any]], int]:
+        local: dict[int, list[Any]] = {}
+        rows = 0
+        for b in s.execute(select(ContractBalance).where(ContractBalance.contract_id.in_(id_list))).scalars():
+            local.setdefault(b.contract_id, []).append(b)
+            rows += 1
+        return local, rows
+
+    def _cgn(s: Session) -> tuple[dict[int, list[ControlGraphNode]], int]:
+        local: dict[int, list[ControlGraphNode]] = {}
+        rows = 0
+        for n in s.execute(
+            select(ControlGraphNode).where(
+                ControlGraphNode.contract_id.in_(id_list),
+                _node_keep_predicate(ControlGraphNode),
+            )
+        ).scalars():
+            local.setdefault(n.contract_id, []).append(n)
+            rows += 1
+        return local, rows
+
+    def _cge(s: Session) -> tuple[dict[int, list[ControlGraphEdge]], int]:
+        # Drop an edge iff there exists a CGN row at its target address in
+        # the same contract that the keep-clause would not retain — i.e., a
+        # Python-trim-dropped node. Targets outside this contract's CGN are
+        # always kept (no CGN row means no dropped row).
+        keep_edge_clause = ~exists().where(
+            and_(
+                cge_target_cgn.contract_id == ControlGraphEdge.contract_id,
+                func.lower(cge_target_cgn.address)
+                == func.lower(func.replace(ControlGraphEdge.to_node_id, "address:", "")),
+                ~_node_keep_predicate(cge_target_cgn),
+            )
+        )
+        local: dict[int, list[ControlGraphEdge]] = {}
+        rows = 0
+        for e in s.execute(
+            select(ControlGraphEdge).where(ControlGraphEdge.contract_id.in_(id_list), keep_edge_clause)
+        ).scalars():
+            local.setdefault(e.contract_id, []).append(e)
+            rows += 1
+        return local, rows
+
+    # (timing_key, out_key, runner). Order matters under bounded max_workers:
+    # the slowest stage gets submitted first so it lands on an idle worker
+    # immediately and runs alongside the queue of shorter stages.
+    parallel_stages: list[tuple[str, str, Callable[[Session], tuple[Any, int]]]] = [
+        ("control_graph_edges", "cge", _cge),
+        ("control_graph_nodes", "cgn", _cgn),
+        ("balances", "balances", _balances),
+        ("ef_effects", "ef_effects", _ef_effects),
+        ("fp_governance_rows", "fp_governance_rows", _fp_governance),
+        ("upgrade_events_count", "upgrade_events_count", _upgrade_count),
+        ("upgrade_events_last", "upgrade_events_last", _upgrade_last),
+    ]
+
+    engine = session.get_bind()
+
+    def _run_stage(
+        timing_key: str, out_key: str, runner: Callable[[Session], tuple[Any, int]]
+    ) -> tuple[str, str, Any, int, int]:
+        start = time.monotonic()
+        with Session(bind=engine, expire_on_commit=False) as s:
+            data, rows = runner(s)
+        return timing_key, out_key, data, rows, int((time.monotonic() - start) * 1000)
+
+    parallel_wall_start = time.monotonic()
+    with ThreadPoolExecutor(max_workers=max(1, max_workers)) as ex:
+        futures = [ex.submit(_run_stage, tk, ok, fn) for tk, ok, fn in parallel_stages]
+        for fut in as_completed(futures):
+            timing_key, out_key, data, rows, ms = fut.result()
+            out[out_key] = data
+            timings_ms[timing_key] = ms
+            counts[timing_key] = rows
+    parallel_wall_ms = int((time.monotonic() - parallel_wall_start) * 1000)
+
+    total_ms = sum(timings_ms.values())
+    logger.info(
+        "Prefetched per-contract child tables: contracts=%d total_ms=%d parallel_wall_ms=%d",
+        len(contract_ids),
+        total_ms,
+        parallel_wall_ms,
+        extra={
+            "phase": "prefetch_child_tables",
+            "duration_ms": total_ms,
+            "parallel_wall_ms": parallel_wall_ms,
+            "contract_count": len(contract_ids),
+            "timings_ms": timings_ms,
+            "row_counts": counts,
+        },
+    )
     return out
+
+
+_PRINCIPAL_TYPES = frozenset({"contract", "safe", "timelock", "eoa", "proxy_admin"})
+_PRINCIPAL_TYPES_SQL = ("contract", "safe", "timelock", "eoa", "proxy_admin")
+
+
+def _trim_control_graph(nodes: list[dict[str, Any]], edges: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
+    """Drop mapping-entry leaf nodes (and edges pointing at them) from a
+    contract's local control_graph.
+
+    The frontend walker in ``site/src/surface/layout/controlGraph.js``
+    emits any non-contract ``to`` of an edge from a reachable source as
+    an "indirect principal" in the function inspector. Contracts like
+    ``EtherFiNodesManager`` store hundreds of validator addresses in a
+    mapping; those addresses end up as nodes of ``type:"unknown"`` with
+    labels like ``"deployedEtherFiNodes"``. They are not principals —
+    they are stored EVM data — and they balloon the payload (~900 KB
+    on ether.fi) while filling the inspector with noise.
+
+    A node is dropped iff its type is not a recognised principal AND it
+    never appears as the source of any edge in this contract's local
+    edges list (so the walker can never recurse out of it). All edges
+    targeting a dropped node are dropped with it so the walker never
+    emits a ghost entry.
+    """
+    sources = {(e.get("from") or "").lower() for e in edges}
+    dropped: set[str] = set()
+    kept_nodes: list[dict[str, Any]] = []
+    for n in nodes:
+        addr = (n.get("address") or "").lower()
+        if (n.get("type") in _PRINCIPAL_TYPES) or (addr in sources):
+            kept_nodes.append(n)
+        else:
+            dropped.add(addr)
+    if not dropped:
+        return {"nodes": nodes, "edges": edges}
+    kept_edges = [e for e in edges if (e.get("to") or "").lower() not in dropped]
+    return {"nodes": kept_nodes, "edges": kept_edges}
 
 
 def _has_timelock_delay(details: Any) -> bool:
@@ -385,7 +711,8 @@ def build_governance_view(
     relevant_contract_ids: set[int] = {c.id for c in contracts_by_job_id.values() if c is not None}
     children = _prefetch_child_tables(session, relevant_contract_ids)
     controller_values_by_cid: dict[int, list[ControllerValue]] = children["controller_values"]
-    ef_rows_by_cid: dict[int, list[EffectiveFunction]] = children["ef_rows"]
+    ef_effects_by_cid: dict[int, list[list[str]]] = children["ef_effects"]
+    fp_governance_by_cid: dict[int, list[dict[str, Any]]] = children["fp_governance_rows"]
     upgrade_events_count_by_cid: dict[int, int] = children["upgrade_events_count"]
     last_upgrade_by_cid: dict[int, dict[str, Any]] = children["upgrade_events_last"]
     balances_by_cid: dict[int, list[Any]] = children["balances"]
@@ -437,9 +764,9 @@ def build_governance_view(
 
         value_effects: list[str] = []
         all_effects: set[str] = set()
-        ef_rows_for_contract = ef_rows_by_cid.get(ef_contract_id, []) if ef_contract_id else []
-        for ef in ef_rows_for_contract:
-            for label in ef.effect_labels or []:
+        ef_effects_for_contract = ef_effects_by_cid.get(ef_contract_id, []) if ef_contract_id else []
+        for label_list in ef_effects_for_contract:
+            for label in label_list:
                 all_effects.add(label)
                 if label in ("asset_pull", "asset_send", "mint", "burn"):
                     if label not in value_effects:
@@ -493,11 +820,6 @@ def build_governance_view(
         else:
             role = "utility"
 
-        functions_list = [
-            _build_company_function_entry(ef, ef.principals or [], principal_lookup=principal_lookup)
-            for ef in ef_rows_for_contract
-        ]
-
         balance_contract = lookup_contract or contract_row
         balances_list = []
         total_usd = 0.0
@@ -543,7 +865,6 @@ def build_governance_view(
             "is_pausable": is_pausable,
             "has_timelock": has_timelock,
             "capabilities": capabilities,
-            "functions": functions_list,
             "balances": balances_list,
             "total_usd": round(total_usd, 2) if total_usd > 0 else None,
         }
@@ -553,25 +874,24 @@ def build_governance_view(
             cg_nodes = cgn_by_cid.get(graph_contract.id, [])
             cg_edges = cge_by_cid.get(graph_contract.id, [])
             node_meta = {n.address: _principal_lookup_meta(principal_lookup, n.address, n.details) for n in cg_nodes}
-            entry["control_graph"] = {
-                "nodes": [
-                    {
-                        "address": n.address,
-                        "type": node_meta[n.address].get("resolved_type") or n.resolved_type,
-                        "label": node_meta[n.address].get("label") or n.contract_name or n.label,
-                        "details": node_meta[n.address]["details"],
-                    }
-                    for n in cg_nodes
-                ],
-                "edges": [
-                    {
-                        "from": e.from_node_id.replace("address:", ""),
-                        "to": e.to_node_id.replace("address:", ""),
-                        "relation": e.relation,
-                    }
-                    for e in cg_edges
-                ],
-            }
+            nodes_payload = [
+                {
+                    "address": n.address,
+                    "type": node_meta[n.address].get("resolved_type") or n.resolved_type,
+                    "label": node_meta[n.address].get("label") or n.contract_name or n.label,
+                    "details": node_meta[n.address]["details"],
+                }
+                for n in cg_nodes
+            ]
+            edges_payload = [
+                {
+                    "from": e.from_node_id.replace("address:", ""),
+                    "to": e.to_node_id.replace("address:", ""),
+                    "relation": e.relation,
+                }
+                for e in cg_edges
+            ]
+            entry["control_graph"] = _trim_control_graph(nodes_payload, edges_payload)
         contracts.append(entry)
 
         if owner:
@@ -594,7 +914,7 @@ def build_governance_view(
         contracts,
         contracts_by_job_id,
         controller_values_by_cid,
-        ef_rows_by_cid,
+        fp_governance_by_cid,
         cgn_by_cid,
         cge_by_cid,
         principal_lookup,
@@ -642,7 +962,7 @@ def _build_flows_and_principals(
     contracts: list[dict[str, Any]],
     contracts_by_job_id: dict[Any, Contract],
     controller_values_by_cid: dict[int, list[ControllerValue]],
-    ef_rows_by_cid: dict[int, list[EffectiveFunction]],
+    fp_governance_by_cid: dict[int, list[dict[str, Any]]],
     cgn_by_cid: dict[int, list[ControlGraphNode]],
     cge_by_cid: dict[int, list[ControlGraphEdge]],
     principal_lookup: dict[str, dict[str, Any]],
@@ -794,7 +1114,9 @@ def _build_flows_and_principals(
     # their controlling Safe/EOA stored *only* on the per-function
     # principal row — the Safe never gets a top-level ControlGraphNode
     # entry for that contract, so the prior CGN-only pass misses the
-    # Safe→Contract edge entirely. This pass backfills.
+    # Safe→Contract edge entirely. This pass backfills, reading from the
+    # narrow ``fp_governance_rows`` projection (already filtered to
+    # safe/timelock/eoa/proxy_admin) instead of walking full EF rows.
     for c in contracts:
         if not c["address"]:
             continue
@@ -802,9 +1124,8 @@ def _build_flows_and_principals(
         lookup_c = lookup_contract_by_entry.get(target)
         if not lookup_c:
             continue
-        fp_iter = (fp for ef in ef_rows_by_cid.get(lookup_c.id, []) for fp in (ef.principals or []))
-        for fp in fp_iter:
-            pa = (fp.address or "").lower()
+        for fp in fp_governance_by_cid.get(lookup_c.id, []):
+            pa = (fp.get("address") or "").lower()
             if not pa or pa == target:
                 continue
             if pa == "0x0000000000000000000000000000000000000000":
@@ -812,7 +1133,7 @@ def _build_flows_and_principals(
             if pa in owner_of_safe:
                 continue
             lookup_meta = principal_lookup.get(pa, {})
-            resolved_type = fp.resolved_type
+            resolved_type = fp.get("resolved_type")
             if lookup_meta.get("resolved_type") and resolved_type in (None, "", "unknown", "contract"):
                 resolved_type = lookup_meta["resolved_type"]
             if resolved_type not in ("safe", "timelock", "eoa", "proxy_admin"):
@@ -821,8 +1142,9 @@ def _build_flows_and_principals(
                 continue
             if pa not in principal_map:
                 fp_details = dict(lookup_meta.get("details") or {})
-                if isinstance(fp.details, dict):
-                    fp_details.update(fp.details)
+                fp_raw_details = fp.get("details")
+                if isinstance(fp_raw_details, dict):
+                    fp_details.update(fp_raw_details)
                 if resolved_type == "safe":
                     if not fp_details.get("owners"):
                         fp_details["owners"] = safe_owners_map.get(pa, [])
@@ -842,7 +1164,124 @@ def _build_flows_and_principals(
     return fund_flows, list(principal_map.values())
 
 
-def _all_addresses_for_protocol(
+def build_functions_for_protocol(session: Session, name: str) -> dict[str, list[dict[str, Any]]]:
+    """Return ``{address: [function_entries]}`` for every contract in the
+    protocol.
+
+    Split out of ``build_company_overview`` so the heavy
+    ``effective_functions`` query (1469 rows × per-function principal
+    expansion, 120-290ms + 2.13 MB of payload on ether.fi) doesn't block
+    the main /company TTFB and JSON parse. The frontend mounts the
+    Surface canvas off the lighter main payload and fetches this in
+    parallel; the function inspector renders a loading state until it
+    lands.
+    """
+    timings_ms: dict[str, int] = {}
+    start = time.monotonic()
+
+    with _time_phase(timings_ms, "resolve_jobs"):
+        protocol_row, jobs = resolve_company_jobs(session, name)
+    if not jobs:
+        raise CompanyNotFound(name)
+    with _time_phase(timings_ms, "prefetch_contracts"):
+        contracts_by_job_id = prefetch_contracts(session, jobs)
+    with _time_phase(timings_ms, "resolve_implementation_contracts"):
+        impl_job_by_addr, contracts_by_job_id = resolve_implementation_contracts(session, jobs, contracts_by_job_id)
+
+    # Map each job's address to the contract_id whose EF rows it should
+    # show — the impl's row for proxies, the job's own row otherwise.
+    job_addr_to_ef_cid: dict[str, int] = {}
+    for job in jobs:
+        request = job.request if isinstance(job.request, dict) else {}
+        if request.get("proxy_address"):
+            continue
+        if not job.address:
+            continue
+        contract_row = contracts_by_job_id.get(job.id)
+        impl_addr = contract_row.implementation if (contract_row and contract_row.is_proxy) else None
+        impl_job = impl_job_by_addr.get(impl_addr.lower()) if impl_addr else None
+        impl_contract = contracts_by_job_id.get(impl_job.id) if impl_job else None
+        ef_cid = (impl_contract.id if impl_contract else None) or (contract_row.id if contract_row else None)
+        if ef_cid is not None:
+            job_addr_to_ef_cid[job.address] = ef_cid
+
+    relevant_cids = set(job_addr_to_ef_cid.values())
+    ef_rows_by_cid: dict[int, list[EffectiveFunction]] = {}
+    if relevant_cids:
+        with _time_phase(timings_ms, "effective_functions"):
+            ef_row_count = 0
+            for ef in session.execute(
+                select(EffectiveFunction)
+                .where(EffectiveFunction.contract_id.in_(list(relevant_cids)))
+                .options(selectinload(EffectiveFunction.principals))
+            ).scalars():
+                ef_rows_by_cid.setdefault(ef.contract_id, []).append(ef)
+                ef_row_count += 1
+
+    # Reuse the same principal_lookup the main path builds so labels and
+    # resolved_type carry through to per-function principal entries.
+    relevant_contract_ids: set[int] = {c.id for c in contracts_by_job_id.values() if c is not None}
+    controller_values_by_cid: dict[int, list[ControllerValue]] = {}
+    cgn_by_cid: dict[int, list[ControlGraphNode]] = {}
+    if relevant_contract_ids:
+        id_list = list(relevant_contract_ids)
+        with _time_phase(timings_ms, "principal_lookup_inputs"):
+            for cv in session.execute(
+                select(ControllerValue).where(ControllerValue.contract_id.in_(id_list))
+            ).scalars():
+                controller_values_by_cid.setdefault(cv.contract_id, []).append(cv)
+            for n in session.execute(
+                select(ControlGraphNode).where(ControlGraphNode.contract_id.in_(id_list))
+            ).scalars():
+                cgn_by_cid.setdefault(n.contract_id, []).append(n)
+    principal_lookup = _build_principal_lookup(contracts_by_job_id, controller_values_by_cid, cgn_by_cid)
+
+    out: dict[str, list[dict[str, Any]]] = {}
+    with _time_phase(timings_ms, "serialize"):
+        for addr, ef_cid in job_addr_to_ef_cid.items():
+            ef_rows = ef_rows_by_cid.get(ef_cid, [])
+            out[addr] = [
+                _build_company_function_entry(ef, ef.principals or [], principal_lookup=principal_lookup)
+                for ef in ef_rows
+            ]
+
+    total_ms = int((time.monotonic() - start) * 1000)
+    logger.info(
+        "Functions payload built: company=%s contracts=%d functions=%d total_ms=%d",
+        name,
+        len(out),
+        sum(len(v) for v in out.values()),
+        total_ms,
+        extra={
+            "phase": "build_functions_for_protocol",
+            "duration_ms": total_ms,
+            "company": name,
+            "contract_count": len(out),
+            "function_count": sum(len(v) for v in out.values()),
+            "timings_ms": timings_ms,
+        },
+    )
+    return out
+
+
+def _all_addresses_count(session: Session, protocol_row: Protocol | None, jobs: list[Job]) -> int:
+    if protocol_row:
+        return int(
+            session.execute(
+                select(func.count()).select_from(Contract).where(Contract.protocol_id == protocol_row.id)
+            ).scalar_one()
+        )
+    fallback_job_ids = [j.id for j in jobs]
+    if not fallback_job_ids:
+        return 0
+    return int(
+        session.execute(
+            select(func.count()).select_from(Contract).where(Contract.job_id.in_(fallback_job_ids))
+        ).scalar_one()
+    )
+
+
+def all_addresses_for_protocol(
     session: Session, protocol_row: Protocol | None, jobs: list[Job]
 ) -> list[dict[str, Any]]:
     if protocol_row:
@@ -915,31 +1354,6 @@ def _latest_tvl(session: Session, protocol_row: Protocol | None) -> dict[str, An
     }
 
 
-def _audit_reports(session: Session, protocol_row: Protocol | None) -> list[dict[str, Any]]:
-    if protocol_row is None:
-        return []
-    audit_rows = (
-        session.execute(
-            select(AuditReport)
-            .where(AuditReport.protocol_id == protocol_row.id)
-            .order_by(AuditReport.date.desc().nullslast())
-        )
-        .scalars()
-        .all()
-    )
-    return [
-        {
-            "url": ar.url,
-            "pdf_url": ar.pdf_url,
-            "auditor": ar.auditor,
-            "title": ar.title,
-            "date": ar.date,
-            "confidence": float(ar.confidence) if ar.confidence is not None else None,
-        }
-        for ar in audit_rows
-    ]
-
-
 def assemble_company_payload(
     session: Session,
     name: str,
@@ -952,20 +1366,48 @@ def assemble_company_payload(
         "protocol_id": protocol_row.id if protocol_row else None,
         "contract_count": len(governance.contracts),
         "tvl": _latest_tvl(session, protocol_row),
-        "audit_reports": _audit_reports(session, protocol_row),
         "contracts": governance.contracts,
         "principals": governance.principals,
         "ownership_hierarchy": governance.hierarchy,
         "fund_flows": governance.fund_flows,
-        "all_addresses": _all_addresses_for_protocol(session, protocol_row, jobs),
+        # Just the count here — the full inventory (~167 KB for ether.fi) is
+        # served by /api/company/{name}/addresses and fetched lazily by
+        # AddressesModal when the user opens it.
+        "all_addresses_count": _all_addresses_count(session, protocol_row, jobs),
     }
 
 
 def build_company_overview(session: Session, name: str) -> dict[str, Any]:
-    protocol_row, jobs = resolve_company_jobs(session, name)
+    timings_ms: dict[str, int] = {}
+    start = time.monotonic()
+
+    with _time_phase(timings_ms, "resolve_jobs"):
+        protocol_row, jobs = resolve_company_jobs(session, name)
     if not jobs:
         raise CompanyNotFound(name)
-    contracts_by_job_id = prefetch_contracts(session, jobs)
-    impl_job_by_addr, contracts_by_job_id = resolve_implementation_contracts(session, jobs, contracts_by_job_id)
-    governance = build_governance_view(session, jobs, contracts_by_job_id, impl_job_by_addr)
-    return assemble_company_payload(session, name, protocol_row, jobs, governance)
+    with _time_phase(timings_ms, "prefetch_contracts"):
+        contracts_by_job_id = prefetch_contracts(session, jobs)
+    with _time_phase(timings_ms, "resolve_implementation_contracts"):
+        impl_job_by_addr, contracts_by_job_id = resolve_implementation_contracts(session, jobs, contracts_by_job_id)
+    with _time_phase(timings_ms, "build_governance_view"):
+        governance = build_governance_view(session, jobs, contracts_by_job_id, impl_job_by_addr)
+    with _time_phase(timings_ms, "assemble_payload"):
+        payload = assemble_company_payload(session, name, protocol_row, jobs, governance)
+
+    total_ms = int((time.monotonic() - start) * 1000)
+    logger.info(
+        "Company overview built: company=%s jobs=%d contracts=%d total_ms=%d",
+        name,
+        len(jobs),
+        len(payload.get("contracts") or []),
+        total_ms,
+        extra={
+            "phase": "build_company_overview",
+            "duration_ms": total_ms,
+            "company": name,
+            "job_count": len(jobs),
+            "contract_count": len(payload.get("contracts") or []),
+            "timings_ms": timings_ms,
+        },
+    )
+    return payload

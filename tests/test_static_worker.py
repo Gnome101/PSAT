@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import sys
+import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
@@ -8,6 +10,7 @@ from unittest.mock import MagicMock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from tests.conftest import requires_postgres  # noqa: E402
 from workers.static_worker import StaticWorker
 
 
@@ -274,3 +277,65 @@ def test_no_force_uses_global_dedupe(monkeypatch):
     worker._resolve_proxy(session, job, job.address, job.name)
 
     assert created_jobs == [], "global dedupe must reject this impl when prior job exists"
+
+
+@requires_postgres
+def test_load_contract_row_falls_back_to_address_when_job_id_rebound(db_session):
+    """Regression for the live-tests USDC failure (run #25828735277).
+
+    When two jobs target the same ``(address, chain)`` — e.g. USDC
+    discovered concurrently by two protocol cascades — discovery's
+    existing-row branch (``workers/discovery.py:402``) rebinds the
+    Contract row's ``job_id`` to whichever job wrote it last. The earlier
+    job's static lookup keyed on ``Contract.job_id`` then returns ``None``
+    and ``process`` terminates with "Contract row not found for this job".
+
+    ``StaticWorker._load_contract_row`` must locate the orphaned row via
+    its ``(address, chain)`` fallback so the job can still complete.
+    """
+    from db.models import Contract, Job, JobStage, JobStatus
+
+    chain = "ethereum"
+    addr = "0x" + uuid.uuid4().hex[:40]
+    now = datetime.now(timezone.utc)
+
+    job_a = Job(
+        id=uuid.uuid4(),
+        address=addr,
+        status=JobStatus.queued,
+        stage=JobStage.static,
+        request={"address": addr, "chain": chain},
+        created_at=now,
+        updated_at=now,
+    )
+    job_b = Job(
+        id=uuid.uuid4(),
+        address=addr,
+        status=JobStatus.queued,
+        stage=JobStage.static,
+        request={"address": addr, "chain": chain},
+        created_at=now,
+        updated_at=now,
+    )
+    db_session.add_all([job_a, job_b])
+    db_session.commit()
+
+    # Discovery writes the Contract row owned by job_a, then a concurrent
+    # run for the same (address, chain) rebinds it to job_b — the exact
+    # mutation at workers/discovery.py:402.
+    contract = Contract(address=addr, chain=chain, job_id=job_a.id, contract_name="Vault")
+    db_session.add(contract)
+    db_session.commit()
+    contract.job_id = job_b.id
+    db_session.commit()
+
+    # Before the fallback, a job_id-keyed lookup for job_a returns None.
+    # After: the address+chain fallback finds the orphaned row.
+    row_for_a = StaticWorker._load_contract_row(db_session, job_a)
+    assert row_for_a is not None, "address fallback must locate the orphaned Contract row"
+    assert row_for_a.id == contract.id
+
+    # job_b still finds the row via the primary job_id lookup.
+    row_for_b = StaticWorker._load_contract_row(db_session, job_b)
+    assert row_for_b is not None
+    assert row_for_b.id == contract.id

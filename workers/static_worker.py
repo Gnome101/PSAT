@@ -785,17 +785,37 @@ class StaticWorker(BaseWorker):
     stage = JobStage.static
     next_stage = JobStage.resolution
 
-    def process(self, session, job):
+    @staticmethod
+    def _load_contract_row(session, job):
+        """Resolve the Contract row for ``job``, tolerating job_id rebinds.
+
+        Two jobs targeting the same ``(address, chain)`` (e.g. USDC discovered
+        concurrently across protocols) collide on ``uq_contract_address_chain``;
+        ``workers/discovery.py:402`` rebinds the existing row's ``job_id`` to
+        whichever job wrote it last, orphaning the earlier job. A job_id-keyed
+        lookup then returns ``None`` and the worker terminates with "Contract
+        row not found for this job". Match the address+chain fallback already
+        used by ``services.aggregations.company_overview.prefetch_contracts``.
+        """
         from sqlalchemy import select as sa_select
 
+        row = session.execute(sa_select(Contract).where(Contract.job_id == job.id).limit(1)).scalar_one_or_none()
+        if row is not None or not job.address:
+            return row
+        request = job.request if isinstance(job.request, dict) else {}
+        chain = request.get("chain")
+        stmt = sa_select(Contract).where(Contract.address == job.address.lower())
+        if chain is not None:
+            stmt = stmt.where(Contract.chain == chain)
+        return session.execute(stmt.limit(1)).scalar_one_or_none()
+
+    def process(self, session, job):
         sources = get_source_files(session, job.id)
         if not sources:
             raise RuntimeError("No source files found in DB for this job")
 
         # Read from contracts table instead of artifacts
-        contract_row = session.execute(
-            sa_select(Contract).where(Contract.job_id == job.id).limit(1)
-        ).scalar_one_or_none()
+        contract_row = self._load_contract_row(session, job)
         if not contract_row:
             raise RuntimeError("Contract row not found for this job")
 

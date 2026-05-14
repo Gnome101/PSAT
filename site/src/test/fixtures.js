@@ -62,7 +62,7 @@ export const ETHERFI_COMPANY = {
       ],
     },
   ],
-  all_addresses: [],
+  all_addresses_count: 0,
 };
 
 export const COVERAGE_FIXTURE = {
@@ -191,7 +191,7 @@ export const ETHERFI_COMPANY_RICH = {
       ],
     },
   ],
-  all_addresses: [VAULT_ADDR, POOL_ADDR, SAFE_ADDR, TIMELOCK_ADDR, EOA_ADDR],
+  all_addresses_count: 5,
   fund_flows: [
     { from: VAULT_ADDR, to: POOL_ADDR, label: "rebalance", usd: 1000000 },
   ],

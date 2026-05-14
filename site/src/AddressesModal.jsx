@@ -55,7 +55,10 @@ export default function AddressesModal({ companyName, onClose, onSelectContract 
 
   const refresh = useCallback(() => {
     let cancelled = false;
-    api(`/api/company/${encodeURIComponent(companyName)}`)
+    // Pulls just the address inventory (~167 KB for ether.fi). The full
+    // /api/company response (1+ MB) is fetched by CompanyOverview already
+    // and most of it isn't needed here.
+    api(`/api/company/${encodeURIComponent(companyName)}/addresses`)
       .then((d) => { if (!cancelled) setData(d); })
       .catch((e) => { if (!cancelled) setError(e.message); });
     listAddressLabels()

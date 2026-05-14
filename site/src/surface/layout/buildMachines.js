@@ -12,7 +12,7 @@ import {
 import { collectPrincipals } from "./controlGraph.js";
 import { guardSummary } from "./guardSummary.js";
 
-export function buildMachines(companyData, functionData) {
+export function buildMachines(companyData, functionData, { functionsLoading = false } = {}) {
   return companyData.contracts
     .map((contract) => {
       const rawFunctions = (functionData[contract.address] || [])
@@ -58,7 +58,14 @@ export function buildMachines(companyData, functionData) {
         lanes,
       };
     })
-    .filter((machine) => machine.totalFunctions > 0 || machine.is_proxy)
+    .filter((machine) =>
+      machine.totalFunctions > 0
+      || machine.is_proxy
+      // While /functions is in flight, every analyzed contract has
+      // totalFunctions=0 — don't hide them from the canvas in that
+      // window or only proxies render.
+      || (functionsLoading && machine.contract_id != null)
+    )
     .sort((left, right) => {
       if (right.totalFunctions !== left.totalFunctions) return right.totalFunctions - left.totalFunctions;
       return String(left.name || "").localeCompare(String(right.name || ""));
