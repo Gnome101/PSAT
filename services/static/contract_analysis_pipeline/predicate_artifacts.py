@@ -23,6 +23,9 @@ are different from ordinary external entry points).
 
 from __future__ import annotations
 
+import logging
+import os
+import time
 from collections.abc import Callable
 from typing import Any
 
@@ -34,7 +37,37 @@ from .predicates import _helper_engine_cache, build_predicate_tree, build_return
 from .reentrancy_pause import PauseInfo, apply_reentrancy_pause_pass
 from .writer_gate import apply_writer_gate_pass
 
+logger = logging.getLogger(__name__)
+
 SCHEMA_VERSION = "semantic"
+
+
+def _slow_function_threshold_ms() -> int:
+    """Per-function log threshold for the predicate-builder profiler.
+
+    Functions whose ``build_predicate_tree`` + ``build_return_predicate_tree``
+    cost more than this are surfaced as ``predicate_function_slow`` lines
+    so a Loki ``top by (function)`` query identifies the per-contract
+    hot spots without needing the aggregate JSON.
+
+    Env: ``PSAT_PREDICATE_FUNCTION_SLOW_MS`` (default 250).
+    """
+    try:
+        return max(0, int(os.getenv("PSAT_PREDICATE_FUNCTION_SLOW_MS", "250")))
+    except ValueError:
+        return 250
+
+
+def _predicate_summary_threshold_ms() -> int:
+    """Aggregate threshold below which the per-contract predicate summary
+    is suppressed. Cheap contracts don't need a line each.
+
+    Env: ``PSAT_PREDICATE_SUMMARY_MS`` (default 500).
+    """
+    try:
+        return max(0, int(os.getenv("PSAT_PREDICATE_SUMMARY_MS", "500")))
+    except ValueError:
+        return 500
 
 
 def _empty_pause_info() -> PauseInfo:
@@ -71,7 +104,21 @@ def build_predicate_artifacts_with_pause_info(
 ) -> tuple[dict[str, Any], PauseInfo]:
     """Build the predicate artifact and return the structured
     ``PauseInfo`` from ``apply_reentrancy_pause_pass``. The pipeline
-    consumes the pause info to drive ``_detect_pausability``."""
+    consumes the pause info to drive ``_detect_pausability``.
+
+    Emits per-function and per-pass timing logs so the next live run
+    can pinpoint whether the predicate stage's cost is concentrated in
+    a handful of expensive functions or spread evenly across many.
+    Functions slower than ``_slow_function_threshold_ms()`` log their
+    own line; the aggregate summary fires when the whole per-contract
+    cost exceeds ``_predicate_summary_threshold_ms()``.
+    """
+    contract_name = getattr(contract, "name", None)
+    per_function_ms: list[tuple[str, int]] = []
+    slow_threshold_ms = _slow_function_threshold_ms()
+    pass_durations_ms: dict[str, int] = {}
+
+    started = time.monotonic()
     # Scope a per-contract helper-engine cache for the cross-fn
     # build path. Multiple functions on the same contract often share
     # helper guards; this cache makes later cross-fn builds effectively
@@ -80,17 +127,46 @@ def build_predicate_artifacts_with_pause_info(
     try:
         trees: dict[str, PredicateTree] = {}
         check_trees: dict[str, PredicateTree] = {}
-        for fn in getattr(contract, "functions", []) or []:
+        # ``functions_entry_points`` is the deduped surface: for an
+        # overridden virtual function (every OZ AccessControl method on a
+        # contract that inherits it), Slither's ``functions`` returns
+        # *both* the shadowed base ``Function`` object and the override
+        # — same ``full_name``, different ``id`` — and the predicate
+        # builder used to run to completion on both, with only the
+        # last-write-wins write to ``trees[full_name]`` surviving.
+        # On CumulativeMerkleDrop that wasted ~146 s per contract
+        # (grantRole base = 69 s + revokeRole base = 77 s, both
+        # discarded). Entry points are the API surface we report on
+        # anyway, so this is the right iteration target.
+        for fn in getattr(contract, "functions_entry_points", []) or []:
             if not _is_externally_callable(fn):
                 continue
+            fn_started = time.monotonic()
             tree = build_predicate_tree(fn)
             if tree is not None:
                 trees[fn.full_name] = tree
             check_tree = build_return_predicate_tree(fn)
             if check_tree is not None:
                 check_trees[fn.full_name] = check_tree
+            fn_ms = int((time.monotonic() - fn_started) * 1000)
+            per_function_ms.append((fn.full_name, fn_ms))
+            if fn_ms >= slow_threshold_ms:
+                logger.info(
+                    "predicate function %s on %s took %dms",
+                    fn.full_name,
+                    contract_name or "<unknown>",
+                    fn_ms,
+                    extra={
+                        "phase": "predicate_function_slow",
+                        "duration_ms": fn_ms,
+                        "function": fn.full_name,
+                        "contract_name": contract_name,
+                        "profile_kind": "predicate_function_slow",
+                    },
+                )
     finally:
         _helper_engine_cache.reset(cache_token)
+    per_function_total_ms = int((time.monotonic() - started) * 1000)
 
     pause_info = _empty_pause_info()
     # Cross-contract passes mutate trees in place: writer-gate's
@@ -105,19 +181,54 @@ def build_predicate_artifacts_with_pause_info(
         all_trees[key] = tree
         check_tree_keys[sig] = key
     if all_trees:
+        pass_started = time.monotonic()
         apply_writer_gate_pass(contract, all_trees)
+        pass_durations_ms["writer_gate"] = int((time.monotonic() - pass_started) * 1000)
+
+        pass_started = time.monotonic()
         apply_mapping_event_hint_pass(contract, all_trees)
+        pass_durations_ms["mapping_event_hints"] = int((time.monotonic() - pass_started) * 1000)
+
+        pass_started = time.monotonic()
         pause_info = apply_reentrancy_pause_pass(contract, all_trees)
+        pass_durations_ms["reentrancy_pause"] = int((time.monotonic() - pass_started) * 1000)
+
         trees = {sig: all_trees[sig] for sig in trees}
         check_trees = {sig: all_trees[check_tree_keys[sig]] for sig in check_trees}
 
     artifact = {
         "schema_version": SCHEMA_VERSION,
-        "contract_name": getattr(contract, "name", None),
+        "contract_name": contract_name,
         "trees": trees,
     }
     if check_trees:
         artifact["check_trees"] = check_trees
+
+    total_ms = int((time.monotonic() - started) * 1000)
+    if total_ms >= _predicate_summary_threshold_ms():
+        # Top 5 slowest functions so a Loki query can rank "which
+        # functions burn predicate-builder budget" without parsing the
+        # full distribution.
+        top_slow = sorted(per_function_ms, key=lambda kv: kv[1], reverse=True)[:5]
+        logger.info(
+            "predicate summary for %s: total=%dms fns=%d per_fn=%dms passes=%s",
+            contract_name or "<unknown>",
+            total_ms,
+            len(per_function_ms),
+            per_function_total_ms,
+            pass_durations_ms,
+            extra={
+                "phase": "predicate_summary",
+                "duration_ms": total_ms,
+                "per_function_total_ms": per_function_total_ms,
+                "function_count": len(per_function_ms),
+                "pass_durations_ms": pass_durations_ms,
+                "top_slow_functions": [{"function": name, "duration_ms": ms} for name, ms in top_slow],
+                "contract_name": contract_name,
+                "profile_kind": "predicate_summary",
+            },
+        )
+
     return artifact, pause_info
 
 

@@ -117,11 +117,33 @@ class Source:
     def __post_init__(self) -> None:
         if self.kind not in SOURCE_KINDS:
             raise ValueError(f"unknown source kind {self.kind!r}")
+        # The "top" lattice element is a bare sentinel — no metadata
+        # fields. ``is_top`` does an O(1) ``_TOP_SOURCE in set`` check,
+        # which only works if every kind="top" instance hashes/equals
+        # ``_TOP_SOURCE``. Enforce that here so a future caller can't
+        # silently break the optimization by tagging a "top with
+        # metadata".
+        if self.kind == "top" and (
+            self.parameter_index is not None
+            or self.parameter_name is not None
+            or self.state_variable_name is not None
+            or self.callee is not None
+            or self.callee_args_digest is not None
+            or self.callee_signature is not None
+            or self.callee_selector is not None
+            or self.constant_value is not None
+            or self.value_type is not None
+            or self.computed_kind is not None
+            or self.block_context_kind is not None
+            or self.member_path
+        ):
+            raise ValueError("Source(kind='top') must be the bare sentinel — no metadata fields")
 
 
 SourceSet = frozenset[Source]
 EMPTY: SourceSet = frozenset()
-TOP: SourceSet = frozenset({Source(kind="top")})
+_TOP_SOURCE = Source(kind="top")
+TOP: SourceSet = frozenset({_TOP_SOURCE})
 
 
 def _solidity_type_name(value: Any) -> str | None:
@@ -133,7 +155,11 @@ def _solidity_type_name(value: Any) -> str | None:
 
 
 def is_top(s: SourceSet) -> bool:
-    return any(src.kind == "top" for src in s)
+    # O(1) frozenset hash lookup. Equivalence with the prior
+    # ``any(src.kind == "top" for src in s)`` is held by the
+    # ``__post_init__`` invariant above: every kind="top" Source
+    # equals (and hashes as) ``_TOP_SOURCE``.
+    return _TOP_SOURCE in s
 
 
 def union(a: SourceSet, b: SourceSet) -> SourceSet:
@@ -330,17 +356,29 @@ class ProvenanceEngine:
     # ------------------------------------------------------------------
 
     def _iter_nodes(self) -> Iterable[Any]:
-        # Walk the function's own body first.
-        for node in self.function.nodes:
-            yield node
-        # Then walk each modifier's body. Slither doesn't inline
-        # modifiers, so any TMP / Phi defined inside a modifier body
-        # would otherwise be invisible to the engine. We process
-        # modifier nodes in the same SSA name space — Slither uses
-        # distinct names per modifier scope, so no clash.
-        for modifier in getattr(self.function, "modifiers", []) or []:
-            for node in getattr(modifier, "nodes", []) or []:
-                yield node
+        # Function body only — modifier nodes are deliberately excluded.
+        #
+        # Slither shares the modifier's SSA-IR across every caller, so the
+        # entry Phi for a modifier parameter unions ALL call-site
+        # arguments (one per function that uses the modifier). When the
+        # modifier parameter shares a name with the function's parameter
+        # (e.g. ``modifier onlyRole(bytes32 role)`` and
+        # ``function revokeRole(bytes32 role, address account)``), that
+        # Phi pollutes the function's ``role`` provenance with every
+        # other caller's argument — state vars, TMPs of unrelated helpers,
+        # etc. The pollution grows the binding sets unboundedly, so the
+        # per-IR ``_sub_engine_memo`` keyed on ``(callee, bindings)``
+        # never hits across worklist iterations and the engine respawns
+        # the same sub-engines until the 200-iter cap. On CumulativeMerkleDrop
+        # this turned a 0.02 s build into an 18 s one (revokeRole).
+        #
+        # Cross-fn gates that live inside the modifier (the canonical case:
+        # ``onlyRole`` -> ``_checkRole`` -> ``if (!hasRole(...)) revert``)
+        # are still discovered by RevertDetector's recursive scan, and the
+        # predicate builder walks them through ``_build_chain_bindings``
+        # which spawns a fresh ProvenanceEngine for each link with the
+        # call-site bindings — that path is unaffected.
+        yield from self.function.nodes
 
     def _step_node(self, node: Any) -> bool:
         """Apply transfer functions to all IRs in this CFG node.
