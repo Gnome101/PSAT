@@ -540,10 +540,12 @@ class TestDeepResearchCacheBehavior:
         monkeypatch.setattr(exa, "_get_api_key", lambda: "k")
         monkeypatch.setenv("PSAT_EXA_CACHE", "1")
 
-        cached = {"data": {"auditReports": [{"auditor": "ToB", "url": "https://x"}]}, "task_id": "old", "status": "completed"}
-        envelope = json.dumps(
-            {"schema_version": 1, "cached_at": time.time(), "payload": cached}
-        ).encode("utf-8")
+        cached = {
+            "data": {"auditReports": [{"auditor": "ToB", "url": "https://x"}]},
+            "task_id": "old",
+            "status": "completed",
+        }
+        envelope = json.dumps({"schema_version": 1, "cached_at": time.time(), "payload": cached}).encode("utf-8")
 
         storage_client = MagicMock()
         storage_client.get.return_value = envelope
@@ -572,7 +574,9 @@ class TestDeepResearchCacheBehavior:
         storage_client = MagicMock()
         storage_client.get.side_effect = StorageKeyMissing("k")
         post_mock = MagicMock(return_value=_FakeResp(payload={"id": "task-77"}))
-        get_mock = MagicMock(return_value=_FakeResp(payload={"status": "completed", "data": {"auditReports": [{"a": 1}]}}))
+        get_mock = MagicMock(
+            return_value=_FakeResp(payload={"status": "completed", "data": {"auditReports": [{"a": 1}]}})
+        )
 
         with patch("db.storage.get_storage_client", return_value=storage_client):
             monkeypatch.setattr(exa.requests, "post", post_mock)
