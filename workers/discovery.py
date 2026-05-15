@@ -85,6 +85,9 @@ def _sync_audit_reports_to_db(session: Session, protocol_id: int, reports: list[
         )
         session.execute(stmt)
     session.commit()
+    # Core upserts do not synchronize SQLAlchemy's identity map. Keep the
+    # worker/test session consistent for callers that read audit rows next.
+    session.expire_all()
 
 
 class DiscoveryWorker(BaseWorker):
