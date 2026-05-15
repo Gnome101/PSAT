@@ -12,7 +12,7 @@ from __future__ import annotations
 import logging
 from typing import cast
 
-from sqlalchemy import func, select
+from sqlalchemy import func, null, select
 from sqlalchemy.orm import Session
 
 from db.models import Contract, Job, JobStage
@@ -52,6 +52,7 @@ def _sync_audit_reports_to_db(session: Session, protocol_id: int, reports: list[
         url = str(report.get("url") or "").strip()
         if not url or not auditor or not title:
             continue
+        classified_commits = report.get("classified_commits") or None
 
         stmt = pg_insert(AuditReport).values(
             protocol_id=protocol_id,
@@ -66,7 +67,7 @@ def _sync_audit_reports_to_db(session: Session, protocol_id: int, reports: list[
             source_repo=report.get("source_repo"),
             reviewed_commits=report.get("reviewed_commits") or None,
             referenced_repos=report.get("referenced_repos") or None,
-            classified_commits=report.get("classified_commits") or None,
+            classified_commits=classified_commits if classified_commits is not None else null(),
         )
         stmt = stmt.on_conflict_do_update(
             constraint="uq_audit_report_protocol_url",
