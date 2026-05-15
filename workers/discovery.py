@@ -12,7 +12,7 @@ from __future__ import annotations
 import logging
 from typing import cast
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from db.models import Contract, Job, JobStage
@@ -77,10 +77,10 @@ def _sync_audit_reports_to_db(session: Session, protocol_id: int, reports: list[
                 "date": stmt.excluded.date,
                 "confidence": stmt.excluded.confidence,
                 "source_url": stmt.excluded.source_url,
-                "source_repo": stmt.excluded.source_repo,
-                "reviewed_commits": stmt.excluded.reviewed_commits,
-                "referenced_repos": stmt.excluded.referenced_repos,
-                "classified_commits": stmt.excluded.classified_commits,
+                "source_repo": func.coalesce(stmt.excluded.source_repo, AuditReport.source_repo),
+                "reviewed_commits": func.coalesce(stmt.excluded.reviewed_commits, AuditReport.reviewed_commits),
+                "referenced_repos": func.coalesce(stmt.excluded.referenced_repos, AuditReport.referenced_repos),
+                "classified_commits": func.coalesce(stmt.excluded.classified_commits, AuditReport.classified_commits),
             },
         )
         session.execute(stmt)

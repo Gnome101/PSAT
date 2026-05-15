@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 from typing import Any
-from urllib.parse import urljoin, urlparse
+from urllib.parse import unquote, urljoin, urlparse
 
 import requests
 
@@ -68,6 +68,30 @@ def _source_repo(value: Any) -> str | None:
     if re.fullmatch(r"[^/\s]+/[^/\s]+", text):
         return text
     return None
+
+
+def _raw_github_metadata(value: Any) -> dict[str, str]:
+    text = str(value or "").strip()
+    if not text:
+        return {}
+    raw_url = github_blob_to_raw(text) or text
+    parsed = urlparse(raw_url)
+    if (parsed.hostname or "").lower() != "raw.githubusercontent.com":
+        return {}
+    parts = parsed.path.lstrip("/").split("/", 3)
+    if len(parts) != 4:
+        return {}
+    owner, repo, ref, path = parts
+    if not owner or not repo or not ref or not path:
+        return {}
+
+    metadata = {
+        "source_repo": f"{owner}/{repo}",
+        "source_path": unquote(path),
+    }
+    if len(ref) == 40 and (sha := _valid_sha(ref)):
+        metadata["source_commit"] = sha
+    return metadata
 
 
 def _report_key(url: str | None) -> str:
@@ -247,6 +271,15 @@ def enrich_audit_reports(audit_result: dict[str, Any], protocol: str, debug: boo
 
         repos = [repo for repo in [_source_repo(report.get("source_repo"))] if repo]
         repos.extend(_source_repo(repo) or "" for repo in report.get("referenced_repos") or [])
+        for candidate_url in (url, report.get("pdf_url")):
+            github_meta = _raw_github_metadata(candidate_url)
+            if not github_meta:
+                continue
+            if github_meta.get("source_repo"):
+                repos.append(github_meta["source_repo"])
+            for key in ("source_repo", "source_path", "source_commit"):
+                if github_meta.get(key) and not report.get(key):
+                    report[key] = github_meta[key]
         commits = [str(c) for c in report.get("reviewed_commits") or []]
         default_provenance = "ai_returned" if report.get("metadata_provenance") == "ai_returned" else "regex_extracted"
         provenance_by_commit = {(_valid_sha(c) or ""): default_provenance for c in commits}

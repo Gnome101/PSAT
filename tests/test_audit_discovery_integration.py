@@ -629,6 +629,27 @@ def test_sync_upserts_on_duplicate_url(db_session):
     assert rows[0].referenced_repos == ["owner/protocol"]
     assert rows[0].classified_commits == [{"sha": "abc123def456", "label": "reviewed", "provenance": "ai_returned"}]
 
+    r3 = [
+        {
+            "url": "https://ex.com/audit.pdf",  # same URL, poorer rediscovery result
+            "pdf_url": "https://ex.com/audit.pdf",
+            "auditor": "Spearbit",
+            "title": "Rediscovered title",
+            "date": "2024-01-01",
+            "confidence": 0.9,
+            "source_url": "https://ex.com/rediscovered",
+        }
+    ]
+    _sync_audit_reports_to_db(db_session, protocol_id, r3)
+
+    rows = db_session.query(AuditReport).filter_by(protocol_id=protocol_id).all()
+    assert len(rows) == 1
+    assert rows[0].title == "Rediscovered title"
+    assert rows[0].source_repo == "spearbit/portfolio"
+    assert rows[0].reviewed_commits == ["abc123def456"]
+    assert rows[0].referenced_repos == ["owner/protocol"]
+    assert rows[0].classified_commits == [{"sha": "abc123def456", "label": "reviewed", "provenance": "ai_returned"}]
+
 
 # ---------------------------------------------------------------------------
 # Scenario 7: sync drops entries missing required fields

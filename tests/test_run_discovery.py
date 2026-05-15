@@ -281,6 +281,24 @@ def test_enrich_prefers_repo_hosted_dependency_pdf(monkeypatch):
     assert result["reports"][0]["pdf_url"].endswith("/audits/boringvault.pdf")
 
 
+def test_enrich_infers_repo_from_raw_github_pdf(monkeypatch):
+    monkeypatch.setattr(ae, "_fetch_html", lambda url, debug=False: None)
+
+    raw_pdf = (
+        "https://raw.githubusercontent.com/etherfi-protocol/smart-contracts/"
+        "master/audits/2026.01.29%20-%20Certora%20-%20Reaudit.pdf"
+    )
+    result = {"reports": [{"url": raw_pdf, "auditor": "Certora", "title": "Reaudit"}]}
+
+    ae.enrich_audit_reports(result, "etherfi")
+
+    report = result["reports"][0]
+    assert report["pdf_url"] == raw_pdf
+    assert report["source_repo"] == "etherfi-protocol/smart-contracts"
+    assert report["referenced_repos"] == ["etherfi-protocol/smart-contracts"]
+    assert report["source_path"] == "audits/2026.01.29 - Certora - Reaudit.pdf"
+
+
 # ---------------------------------------------------------------------------
 # _needs_dependency_pass
 # ---------------------------------------------------------------------------
