@@ -16,8 +16,11 @@ is agnostic to the backend.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 import os
+import time
 from pathlib import Path
 from typing import Any
 
@@ -32,6 +35,89 @@ EXA_RESEARCH_GET_URL = "https://api.exa.ai/research/v0/tasks/{task_id}"
 REQUEST_TIMEOUT_SECONDS = 30
 DEEP_RESEARCH_POLL_INTERVAL_SECONDS = 5
 DEEP_RESEARCH_MAX_POLL_SECONDS = 600
+
+# When ``PSAT_EXA_CACHE`` is set, search() and deep_research() look up the
+# request in the artifact-storage bucket before hitting Exa. Misses fall through
+# to a live call whose response is persisted; later identical requests in any
+# environment sharing the bucket skip Exa entirely. Bump _CACHE_SCHEMA when
+# changing the envelope or canonical request shape to bulk-invalidate.
+_CACHE_KEY_PREFIX = "exa-cache"
+_CACHE_SCHEMA = 1
+_CACHE_TTL_SECONDS = 30 * 24 * 60 * 60  # 30 days
+
+
+def _cache_key(payload: dict[str, Any]) -> str:
+    """Hash the request shape (api_key excluded) into a stable storage key."""
+    canonical = {k: v for k, v in payload.items() if k != "api_key"}
+    canonical["__schema__"] = _CACHE_SCHEMA
+    blob = json.dumps(canonical, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()
+
+
+def _cache_read(key: str) -> Any | None:
+    """Return cached payload if present, fresh, and well-formed; else None.
+
+    Storage failures (missing bucket creds, transport errors, malformed
+    envelope, expired TTL) all degrade to None — the caller falls through
+    to a live API call.
+    """
+    try:
+        from db.storage import StorageKeyMissing, get_storage_client
+    except Exception as exc:
+        logger.debug("exa cache disabled: storage import failed: %s", exc)
+        return None
+    client = get_storage_client()
+    if client is None:
+        return None
+    storage_key = f"{_CACHE_KEY_PREFIX}/{key}.json"
+    try:
+        body = client.get(storage_key)
+    except StorageKeyMissing:
+        return None
+    except Exception as exc:
+        logger.warning("exa cache read failed for %s: %s", key[:12], exc)
+        return None
+    try:
+        envelope = json.loads(body.decode("utf-8"))
+    except (ValueError, UnicodeDecodeError):
+        return None
+    if envelope.get("schema_version") != _CACHE_SCHEMA:
+        return None
+    cached_at = envelope.get("cached_at")
+    if not isinstance(cached_at, (int, float)):
+        return None
+    if time.time() - cached_at > _CACHE_TTL_SECONDS:
+        return None
+    return envelope.get("payload")
+
+
+def _cache_write(key: str, payload: Any) -> None:
+    """Persist payload to the cache. Best-effort: errors are logged, not raised.
+
+    Empty / falsy payloads are skipped to avoid poisoning the cache for 30
+    days when an upstream blip returns nothing.
+    """
+    if not payload:
+        return
+    try:
+        from db.storage import JSON_CONTENT_TYPE, get_storage_client
+    except Exception as exc:
+        logger.debug("exa cache write skipped: storage import failed: %s", exc)
+        return
+    client = get_storage_client()
+    if client is None:
+        return
+    envelope = {
+        "schema_version": _CACHE_SCHEMA,
+        "cached_at": time.time(),
+        "payload": payload,
+    }
+    body = json.dumps(envelope).encode("utf-8")
+    storage_key = f"{_CACHE_KEY_PREFIX}/{key}.json"
+    try:
+        client.put(storage_key, body, content_type=JSON_CONTENT_TYPE)
+    except Exception as exc:
+        logger.warning("exa cache write failed for %s: %s", key[:12], exc)
 
 
 class ExaError(RuntimeError):
@@ -115,6 +201,18 @@ def search(
         # fetch full pages directly when we need their body.
         payload["contents"] = {"text": {"maxCharacters": 300}}
 
+    cache_key: str | None = None
+    if os.environ.get("PSAT_EXA_CACHE"):
+        cache_key = _cache_key({"endpoint": "search", **payload})
+        cached = _cache_read(cache_key)
+        if isinstance(cached, list):
+            logger.info(
+                "exa cache hit: key=%s query=%r",
+                cache_key[:12],
+                clean_query[:80],
+            )
+            return [item for item in cached if isinstance(item, dict)]
+
     headers = {
         "x-api-key": _get_api_key(),
         "Content-Type": "application/json",
@@ -159,6 +257,8 @@ def search(
                 "score": item.get("score"),
             }
         )
+    if cache_key is not None:
+        _cache_write(cache_key, normalized)
     return normalized
 
 
@@ -199,13 +299,24 @@ def deep_research(
     Pass ``schema`` to constrain output; defaults to an audit-report schema
     suitable for this benchmark.
     """
-    import time
-
     api_key = _get_api_key()
     headers = {"x-api-key": api_key, "Content-Type": "application/json"}
 
     create_payload: dict[str, Any] = {"instructions": instructions, "model": model}
     create_payload["output"] = {"schema": schema or _AUDIT_RESEARCH_SCHEMA}
+
+    cache_key: str | None = None
+    if os.environ.get("PSAT_EXA_CACHE"):
+        cache_key = _cache_key({"endpoint": "deep_research", **create_payload})
+        cached = _cache_read(cache_key)
+        if isinstance(cached, dict) and cached.get("data") is not None:
+            logger.info(
+                "exa cache hit: key=%s instructions=%r",
+                cache_key[:12],
+                instructions[:80],
+            )
+            return cached
+
     resp = requests.post(
         EXA_RESEARCH_CREATE_URL,
         json=create_payload,
@@ -244,7 +355,10 @@ def deep_research(
         resp_data = poll.json()
         status = str(resp_data.get("status") or "").lower()
         if status in ("completed", "done", "success"):
-            return {"data": resp_data.get("data") or {}, "task_id": task_id, "status": status}
+            result = {"data": resp_data.get("data") or {}, "task_id": task_id, "status": status}
+            if cache_key is not None and result["data"]:
+                _cache_write(cache_key, result)
+            return result
         if status in ("failed", "error", "cancelled"):
             raise ExaError(
                 normalize_error(
