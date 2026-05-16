@@ -360,7 +360,7 @@ class AuditReport(Base):
     pdf_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     auditor: Mapped[str] = mapped_column(String(255), nullable=False)
     title: Mapped[str] = mapped_column(String(512), nullable=False)
-    date: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    date: Mapped[str | None] = mapped_column(Text, nullable=True)
     confidence: Mapped[float | None] = mapped_column(Numeric(5, 4), nullable=True)
 
     # Text-extraction pipeline state. Populated by workers.audit_text_extraction.

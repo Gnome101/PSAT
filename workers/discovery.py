@@ -200,6 +200,7 @@ class DiscoveryWorker(BaseWorker):
             if audit_count:
                 logger.info("Job %s: found %d audit report(s) for %s", job.id, audit_count, company)
         except Exception as exc:
+            session.rollback()
             record_degraded(
                 phase="audit_discovery",
                 exc=exc,
