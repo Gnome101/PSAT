@@ -568,6 +568,91 @@ def test_audit_coverage_endpoint_uses_coverage_table(
     assert proxy_row["last_audit"]["match_type"] == "impl_era"
 
 
+def test_audit_coverage_endpoint_reuses_verified_dependency_coverage(
+    db_session,
+    storage_bucket,
+    seed_protocol_with_history,
+    api_with_storage,
+):
+    """A contract shared with another protocol inherits only strict verified coverage."""
+    from db.models import AuditContractCoverage, AuditReport, Protocol
+
+    proto = seed_protocol_with_history
+    dep_protocol = Protocol(name=f"lido-dep-{uuid.uuid4().hex[:8]}")
+    db_session.add(dep_protocol)
+    db_session.commit()
+
+    dep_contract = proto["standalone"]
+    dep_audit = AuditReport(
+        protocol_id=dep_protocol.id,
+        url=f"https://example.com/lido-{uuid.uuid4().hex}.pdf",
+        auditor="LidoAuditor",
+        title="Lido Token Review",
+        date="2024-11-01",
+        confidence=1.0,
+        scope_extraction_status="success",
+        scope_extracted_at=datetime.now(timezone.utc),
+        scope_contracts=["Vault"],
+    )
+    noisy_audit = AuditReport(
+        protocol_id=dep_protocol.id,
+        url=f"https://example.com/lido-noisy-{uuid.uuid4().hex}.pdf",
+        auditor="NoisyAuditor",
+        title="Cited Only Review",
+        date="2024-12-01",
+        confidence=1.0,
+        scope_extraction_status="success",
+        scope_extracted_at=datetime.now(timezone.utc),
+        scope_contracts=["Vault"],
+    )
+    db_session.add_all([dep_audit, noisy_audit])
+    db_session.commit()
+
+    db_session.add_all(
+        [
+            AuditContractCoverage(
+                contract_id=dep_contract.id,
+                audit_report_id=dep_audit.id,
+                protocol_id=dep_protocol.id,
+                matched_name="Vault",
+                match_type="reviewed_commit",
+                match_confidence="high",
+                equivalence_status="proven",
+                proof_kind="clean",
+                matched_commit_sha="a" * 40,
+            ),
+            AuditContractCoverage(
+                contract_id=dep_contract.id,
+                audit_report_id=noisy_audit.id,
+                protocol_id=dep_protocol.id,
+                matched_name="Vault",
+                match_type="reviewed_commit",
+                match_confidence="high",
+                equivalence_status="proven",
+                proof_kind="cited_only",
+                matched_commit_sha="b" * 40,
+            ),
+        ]
+    )
+    db_session.commit()
+
+    r = api_with_storage.get(f"/api/company/{proto['protocol_name']}/audit_coverage")
+    assert r.status_code == 200, r.text
+    body = r.json()
+
+    by_name = {c["contract_name"]: c for c in body["coverage"]}
+    vault = by_name["Vault"]
+    assert body["audit_count"] == 0  # inherited coverage is not a local audit report.
+    assert vault["audit_count"] == 1
+    audit = vault["last_audit"]
+    assert audit["auditor"] == "LidoAuditor"
+    assert audit["match_type"] == "reviewed_commit"
+    assert audit["equivalence_status"] == "proven"
+    assert audit["coverage_source"] == "inherited"
+    assert audit["inherited_from_protocol"] == dep_protocol.name
+    assert audit["inherited_contract_address"] == dep_contract.address
+
+
 # ---------------------------------------------------------------------------
 # 4. API — GET /api/contracts/{id}/audit_timeline
 # ---------------------------------------------------------------------------

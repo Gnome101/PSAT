@@ -394,27 +394,34 @@ def _normalize_chain(chain: str | None) -> str:
     return normalized or "ethereum"
 
 
+_AddressRowCache = dict[tuple[int, str, str, bool], Contract | None]
+
+
 def _lookup_contract_by_address_chain(
     session: Session,
     protocol_id: int,
     address: str,
     chain_key: str,
-    row_cache: dict[tuple[int, str, str], Contract | None],
+    row_cache: _AddressRowCache,
+    *,
+    allow_global_fallback: bool = False,
 ) -> Contract | None:
     """Return the best Contract row for ``(protocol, address, chain)``.
 
     Historical data may contain legacy ``chain=NULL`` rows for Ethereum.
     Treat those as Ethereum-compatible, but prefer an explicit
-    ``chain='ethereum'`` row when both exist.
+    ``chain='ethereum'`` row when both exist. Explicit audit scope
+    addresses may fall back to the global row because ``contracts`` is
+    unique by deployed ``(address, chain)``, not by protocol.
     """
-    cache_key = (protocol_id, address, chain_key)
+    cache_key = (protocol_id, address, chain_key, allow_global_fallback)
     if cache_key not in row_cache:
         exact_chain = func.lower(Contract.chain) == chain_key
         if chain_key == "ethereum":
             chain_filter = or_(exact_chain, Contract.chain.is_(None))
         else:
             chain_filter = exact_chain
-        row_cache[cache_key] = (
+        row = (
             session.execute(
                 select(Contract)
                 .where(
@@ -430,6 +437,23 @@ def _lookup_contract_by_address_chain(
             .scalars()
             .first()
         )
+        if row is None and allow_global_fallback:
+            row = (
+                session.execute(
+                    select(Contract)
+                    .where(
+                        func.lower(Contract.address) == address,
+                        chain_filter,
+                    )
+                    .order_by(
+                        case((exact_chain, 0), else_=1).asc(),
+                        Contract.id.asc(),
+                    )
+                )
+                .scalars()
+                .first()
+            )
+        row_cache[cache_key] = row
     return row_cache[cache_key]
 
 
@@ -439,8 +463,9 @@ def _resolve_impl_for_address(
     row: Contract,
     *,
     audit_ts: datetime | None,
-    row_cache: dict[tuple[int, str, str], Contract | None],
+    row_cache: _AddressRowCache,
     proxy_events_cache: dict[int, list[UpgradeEvent]],
+    allow_global_fallback: bool = False,
 ) -> Contract | None:
     """Return the impl Contract row that should carry a coverage insert.
 
@@ -484,7 +509,14 @@ def _resolve_impl_for_address(
                 break
     if not impl_addr:
         return None
-    target = _lookup_contract_by_address_chain(session, protocol_id, impl_addr, chain_key, row_cache)
+    target = _lookup_contract_by_address_chain(
+        session,
+        protocol_id,
+        impl_addr,
+        chain_key,
+        row_cache,
+        allow_global_fallback=allow_global_fallback,
+    )
     if target is None or target.is_proxy:
         return None
     return target
@@ -496,7 +528,7 @@ def _resolve_scope_entry_target(
     entry: dict,
     *,
     audit_ts: datetime | None,
-    row_cache: dict[tuple[int, str, str], Contract | None],
+    row_cache: _AddressRowCache,
     proxy_events_cache: dict[int, list[UpgradeEvent]],
 ) -> Contract | None:
     """Resolve one scope entry to the impl Contract row it actually pins."""
@@ -504,7 +536,14 @@ def _resolve_scope_entry_target(
     if not addr:
         return None
     chain_key = _normalize_chain(entry.get("chain"))
-    row = _lookup_contract_by_address_chain(session, protocol_id, addr, chain_key, row_cache)
+    row = _lookup_contract_by_address_chain(
+        session,
+        protocol_id,
+        addr,
+        chain_key,
+        row_cache,
+        allow_global_fallback=True,
+    )
     if row is None:
         return None
     return _resolve_impl_for_address(
@@ -514,6 +553,7 @@ def _resolve_scope_entry_target(
         audit_ts=audit_ts,
         row_cache=row_cache,
         proxy_events_cache=proxy_events_cache,
+        allow_global_fallback=True,
     )
 
 
@@ -534,7 +574,7 @@ def _address_anchored_matches(
         return by_contract, matched_names
 
     audit_ts = _audit_effective_ts(audit.date)
-    row_cache: dict[tuple[int, str, str], Contract | None] = {}
+    row_cache: _AddressRowCache = {}
     proxy_events_cache: dict[int, list[UpgradeEvent]] = {}
 
     for entry in scope_entries:
@@ -756,7 +796,7 @@ def match_audits_for_contract(session: Session, contract_id: int) -> list[Covera
     )
     windows = _compute_impl_windows_for_contract(session, contract)
     contract_addr_lower = (contract.address or "").lower()
-    row_cache: dict[tuple[int, str, str], Contract | None] = {}
+    row_cache: _AddressRowCache = {}
     proxy_events_cache: dict[int, list[UpgradeEvent]] = {}
 
     # Track per-audit best match so one audit doesn't emit both an
@@ -1300,8 +1340,15 @@ def _persist_coverage_for_audit(session: Session, audit_id: int, matches: list[C
 
 
 def _persist_coverage_for_contract(session: Session, contract_id: int, matches: list[CoverageMatch]) -> int:
-    """Delete-then-insert coverage rows for one contract in a short tx."""
-    session.execute(sql_delete(AuditContractCoverage).where(AuditContractCoverage.contract_id == contract_id))
+    """Delete-then-insert local-protocol coverage rows for one contract."""
+    contract = session.get(Contract, contract_id)
+    if contract is not None and contract.protocol_id is not None:
+        session.execute(
+            sql_delete(AuditContractCoverage).where(
+                AuditContractCoverage.contract_id == contract_id,
+                AuditContractCoverage.protocol_id == contract.protocol_id,
+            )
+        )
     for match in matches:
         session.add(AuditContractCoverage(**_match_to_row_kwargs(match)))
     return len(matches)
@@ -1396,7 +1443,7 @@ def _resolve_pinned_commit(
     if not audit.scope_entries:
         return None
     audit_ts = _audit_effective_ts(audit.date)
-    row_cache: dict[tuple[int, str, str], Contract | None] = {}
+    row_cache: _AddressRowCache = {}
     proxy_events_cache: dict[int, list[UpgradeEvent]] = {}
     for entry in audit.scope_entries:
         if not isinstance(entry, dict):
