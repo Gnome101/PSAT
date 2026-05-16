@@ -13,7 +13,7 @@ import { buildMachines } from "./buildMachines.js";
 import { collectPrincipals } from "./controlGraph.js";
 import { guardSummary } from "./guardSummary.js";
 import { buildSearchResults } from "./search.js";
-import { buildGraphLayout } from "./elkLayout.js";
+import { aggregateEdges, assignGroups, buildGraphLayout } from "./elkLayout.js";
 
 const functionData = Object.fromEntries(
   ETHERFI_COMPANY_RICH.contracts.map((c) => [c.address, c.functions || []]),
@@ -122,7 +122,11 @@ describe("buildSearchResults", () => {
 describe("buildGraphLayout", () => {
   const machines = buildMachines(ETHERFI_COMPANY_RICH, functionData);
 
-  it("returns one node per contract + one per principal, with edges from fund_flows", () => {
+  it("emits a group per principal that uniquely controls at least one contract", () => {
+    // Each principal points at machines[0]. The Safe wins priority and
+    // becomes a 1-child group; the Timelock loses every candidate
+    // child and drops off the canvas entirely (still visible in search
+    // and sidebar via companyData.principals).
     const principals = ETHERFI_COMPANY_RICH.resolved_principals.map((p) => ({
       address: p.address,
       type: p.resolved_type,
@@ -133,10 +137,130 @@ describe("buildGraphLayout", () => {
     const { nodes, edges } = buildGraphLayout(machines, ETHERFI_COMPANY_RICH.fund_flows, principals);
     const contractNodes = nodes.filter((n) => n.type === "contract");
     const principalNodes = nodes.filter((n) => n.type === "principal");
+    const groupNodes = nodes.filter((n) => n.type === "group");
     expect(contractNodes.length).toBe(machines.length);
-    expect(principalNodes.length).toBe(principals.length);
-    // Vault → Pool fund flow generates one edge between two contracts the
-    // builder also placed nodes for.
-    expect(edges.some((e) => e.id.startsWith("flow-"))).toBe(true);
+    // No standalone principal rendering anymore.
+    expect(principalNodes.length).toBe(0);
+    expect(groupNodes).toHaveLength(1);
+    expect(groupNodes[0].id.toLowerCase()).toBe(RICH_ADDRESSES.SAFE.toLowerCase());
+    // Vault → Pool fund flow (contract→contract) survives the
+    // principal-source filter and becomes an aggregated cross-group
+    // edge from the Safe group to the ungrouped Pool.
+    expect(edges.some((e) => e.id.startsWith("agg-"))).toBe(true);
+  });
+
+  it("collapses every principal→child edge into containment", () => {
+    // Same fixture, but the Safe now controls both contracts — exactly
+    // the fanout the grouping is meant to collapse. The Timelock still
+    // only controls one but loses priority to the Safe.
+    const principals = ETHERFI_COMPANY_RICH.resolved_principals.map((p) => ({
+      address: p.address,
+      type: p.resolved_type,
+      label: p.display_name,
+      details: p.details,
+      controls: p.resolved_type === "safe" ? machines.map((m) => m.address) : [machines[0].address],
+    }));
+    const { nodes, edges, groupChildren, contractToGroup } = buildGraphLayout(
+      machines,
+      ETHERFI_COMPANY_RICH.fund_flows,
+      principals,
+    );
+    const groupNodes = nodes.filter((n) => n.type === "group");
+    expect(groupNodes).toHaveLength(1);
+    expect(groupNodes[0].id.toLowerCase()).toBe(RICH_ADDRESSES.SAFE.toLowerCase());
+    const childContracts = nodes.filter((n) => n.type === "contract" && n.parentId);
+    expect(childContracts).toHaveLength(2);
+    for (const c of childContracts) {
+      expect(c.parentId.toLowerCase()).toBe(RICH_ADDRESSES.SAFE.toLowerCase());
+      expect(c.extent).toBe("parent");
+    }
+    // The Timelock loses every candidate child to the Safe and
+    // disappears from the canvas entirely.
+    expect(nodes.filter((n) => n.type === "principal").length).toBe(0);
+    expect(groupChildren.size).toBe(1);
+    expect(contractToGroup.size).toBe(2);
+    // No edge in the final list originates from any non-contract
+    // principal — that's the spiderweb fix.
+    const principalAddrs = new Set(
+      principals.map((p) => p.address?.toLowerCase()),
+    );
+    const principalEdges = edges.filter((e) => principalAddrs.has(e.source?.toLowerCase()));
+    expect(principalEdges).toHaveLength(0);
+  });
+
+  it("picks the highest-priority principal when several control the same contracts", () => {
+    // Safe + Timelock both control both contracts. Safe wins per
+    // PRINCIPAL_PRIORITY; the Timelock's group dissolves because it has
+    // no remaining children.
+    const principals = ETHERFI_COMPANY_RICH.resolved_principals.map((p) => ({
+      address: p.address,
+      type: p.resolved_type,
+      label: p.display_name,
+      details: p.details,
+      controls: machines.map((m) => m.address),
+    }));
+    const { groupChildren, contractToGroup } = assignGroups(machines, principals);
+    expect(groupChildren.size).toBe(1);
+    expect([...groupChildren.keys()][0]).toBe(RICH_ADDRESSES.SAFE.toLowerCase());
+    for (const m of machines) {
+      expect(contractToGroup.get(m.address.toLowerCase())).toBe(
+        RICH_ADDRESSES.SAFE.toLowerCase(),
+      );
+    }
+  });
+});
+
+describe("aggregateEdges", () => {
+  const machines = buildMachines(ETHERFI_COMPANY_RICH, functionData);
+  const safeAddr = RICH_ADDRESSES.SAFE.toLowerCase();
+
+  it("collapses multiple cross-group edges into one bundle with a count", () => {
+    const rawEdges = [
+      { id: "e1", source: machines[0].address, target: "0xexternal1", data: {} },
+      { id: "e2", source: machines[1].address, target: "0xexternal1", data: {} },
+      { id: "e3", source: machines[0].address, target: "0xexternal1", data: {} },
+    ];
+    // Both fixture contracts share the Safe as their group.
+    const contractToGroup = new Map([
+      [machines[0].address.toLowerCase(), safeAddr],
+      [machines[1].address.toLowerCase(), safeAddr],
+    ]);
+    const principals = [{ address: RICH_ADDRESSES.SAFE, type: "safe", controls: [] }];
+    const aggregated = aggregateEdges(rawEdges, contractToGroup, principals, machines);
+    expect(aggregated).toHaveLength(1);
+    expect(aggregated[0].source.toLowerCase()).toBe(safeAddr);
+    expect(aggregated[0].target).toBe("0xexternal1");
+    expect(aggregated[0].label).toBe("3");
+    expect(aggregated[0].data.count).toBe(3);
+    expect(aggregated[0].data.aggregated).toBe(true);
+    expect(aggregated[0].data.samples).toHaveLength(3);
+  });
+
+  it("drops intra-group edges (both endpoints resolve to the same group)", () => {
+    const rawEdges = [
+      { id: "e1", source: machines[0].address, target: machines[1].address, data: {} },
+    ];
+    const contractToGroup = new Map([
+      [machines[0].address.toLowerCase(), safeAddr],
+      [machines[1].address.toLowerCase(), safeAddr],
+    ]);
+    const principals = [{ address: RICH_ADDRESSES.SAFE, type: "safe", controls: [] }];
+    const aggregated = aggregateEdges(rawEdges, contractToGroup, principals, machines);
+    expect(aggregated).toHaveLength(0);
+  });
+
+  it("leaves a single cross-group edge unlabeled", () => {
+    const rawEdges = [
+      { id: "e1", source: machines[0].address, target: "0xexternal", data: {} },
+    ];
+    const contractToGroup = new Map([
+      [machines[0].address.toLowerCase(), safeAddr],
+    ]);
+    const principals = [{ address: RICH_ADDRESSES.SAFE, type: "safe", controls: [] }];
+    const aggregated = aggregateEdges(rawEdges, contractToGroup, principals, machines);
+    expect(aggregated).toHaveLength(1);
+    expect(aggregated[0].label).toBe("");
+    expect(aggregated[0].data.aggregated).toBe(false);
+    expect(aggregated[0].data.count).toBe(1);
   });
 });

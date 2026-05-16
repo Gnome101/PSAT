@@ -11,10 +11,11 @@ import {
 import { elkLayout } from "../layout/elkLayout.js";
 import { ContractNode } from "./ContractNode.jsx";
 import { FocusOnNode } from "./FocusOnNode.jsx";
+import { GroupNode } from "./GroupNode.jsx";
 import { PrincipalNode } from "./PrincipalNode.jsx";
 import { PrincipalTourNav } from "./PrincipalTourNav.jsx";
 
-const nodeTypes = { contract: ContractNode, principal: PrincipalNode };
+const nodeTypes = { contract: ContractNode, principal: PrincipalNode, group: GroupNode };
 
 export function SurfaceCanvas({ machines, fundFlows, principals, selectedAddress, focusAddress, focusedAddress, highlightedAddresses, onSelectMachine, onSelectPrincipal, principalTour, onTourGo, onTourBack }) {
   const [initNodes, setInitNodes] = useState([]);
@@ -38,15 +39,33 @@ export function SurfaceCanvas({ machines, fundFlows, principals, selectedAddress
   useEffect(() => {
     if (!initNodes.length) return;
     const sel = selectedAddress?.toLowerCase();
-    // Find all nodes connected to the selected node
+    // Find all nodes connected to the selected node. Owner-grouping
+    // moves the principal→contract relationship from an edge into the
+    // parent/child hierarchy — so the parent group of the selected
+    // node AND every child of a selected group both count as
+    // "connected" even though no edge exists between them.
     const connectedNodes = new Set();
     if (sel) {
       connectedNodes.add(sel);
+      // Aggregated edges carry the underlying sample list in
+      // data.samples; walk those instead of the bundle endpoints so
+      // clicking a child contract still lights up the actual contracts
+      // it touches, not just the parent groups.
       for (const e of initEdges) {
-        const src = e.source?.toLowerCase();
-        const tgt = e.target?.toLowerCase();
-        if (src === sel) connectedNodes.add(tgt);
-        if (tgt === sel) connectedNodes.add(src);
+        const samples = e.data?.samples;
+        const pairs = samples && samples.length > 0
+          ? samples.map((s) => [s.from?.toLowerCase(), s.to?.toLowerCase()])
+          : [[e.source?.toLowerCase(), e.target?.toLowerCase()]];
+        for (const [src, tgt] of pairs) {
+          if (src === sel) connectedNodes.add(tgt);
+          if (tgt === sel) connectedNodes.add(src);
+        }
+      }
+      for (const n of initNodes) {
+        const nid = n.id?.toLowerCase();
+        const pid = n.parentId?.toLowerCase();
+        if (pid === sel) connectedNodes.add(nid);
+        if (nid === sel && pid) connectedNodes.add(pid);
       }
     }
 
@@ -63,11 +82,15 @@ export function SurfaceCanvas({ machines, fundFlows, principals, selectedAddress
         const inAudit = hiActive && highlightedAddresses.has(nid);
         const dimmed = hiActive ? !inAudit : (sel && !connectedNodes.has(nid));
         const focused = foc && nid === foc;
+        // Merge — don't replace — n.style. Group containers carry
+        // ELK-computed width/height in n.style and we'd otherwise blow
+        // them away each time selection changes.
+        const baseStyle = n.style || {};
         const style = dimmed
-          ? { opacity: 0.2 }
+          ? { ...baseStyle, opacity: 0.2 }
           : inAudit
-          ? { boxShadow: "0 0 0 2px #22c55e, 0 0 12px rgba(34,197,94,0.55)", borderRadius: 6 }
-          : {};
+          ? { ...baseStyle, boxShadow: "0 0 0 2px #22c55e, 0 0 12px rgba(34,197,94,0.55)", borderRadius: 6 }
+          : baseStyle;
         return {
           ...n,
           style,
@@ -75,9 +98,12 @@ export function SurfaceCanvas({ machines, fundFlows, principals, selectedAddress
             ...n.data,
             selected: n.id === selectedAddress,
             focused,
-            // Dispatch by node kind: contract nodes carry .machine, principal
-            // nodes carry .principal. This lets a click on a Safe/Timelock/EOA
-            // node open its detail panel instead of doing nothing.
+            // Dispatch by node kind: contract nodes carry .machine,
+            // principal AND group nodes both carry .principal. A click on
+            // a group's header (the only pointer-events-active region)
+            // opens the principal detail just like a standalone
+            // PrincipalNode click, so users get the same drill-in either
+            // way.
             onSelect: n.data.principal
               ? () => onSelectPrincipal && onSelectPrincipal(n.data.principal)
               : () => onSelectMachine(n.data.machine),
@@ -90,19 +116,28 @@ export function SurfaceCanvas({ machines, fundFlows, principals, selectedAddress
       initEdges.map((e) => {
         const src = e.source?.toLowerCase();
         const tgt = e.target?.toLowerCase();
-        // When audit highlight is active, fade edges that touch a
-        // non-covered endpoint so the covered subgraph reads clearly.
+        // Aggregated bundles already terminate at group endpoints, so
+        // the simple endpoint check matches even when the underlying
+        // sample edges have different addresses.
         const edgeInAudit = hiActive && highlightedAddresses.has(src) && highlightedAddresses.has(tgt);
         const related = hiActive ? edgeInAudit : (!sel || src === sel || tgt === sel);
-        const showLabel = sel && related;
         const caps = e.data?.capabilities || [];
-        const labelText = showLabel ? (caps.join(", ") || e.data?.flowType || "") : "";
+        // Default label is whatever buildGraphLayout assigned (the
+        // bundle count for aggregated edges). On selection we replace
+        // that with the per-flow capability summary so the user gets
+        // the detail when they're focused on one node.
+        const defaultLabel = e.label || "";
+        const labelText = (sel && related)
+          ? (caps.join(", ") || e.data?.flowType || defaultLabel)
+          : defaultLabel;
         return {
           ...e,
           label: labelText,
-          labelStyle: { fill: "#94a3b8", fontSize: 9 },
-          labelBgStyle: labelText ? { fill: "#0f1218", fillOpacity: 0.85 } : undefined,
-          labelBgPadding: labelText ? [4, 6] : undefined,
+          labelStyle: e.labelStyle || { fill: "#94a3b8", fontSize: 9 },
+          labelBgStyle: labelText
+            ? (e.labelBgStyle || { fill: "#0f1218", fillOpacity: 0.85 })
+            : undefined,
+          labelBgPadding: labelText ? (e.labelBgPadding || [4, 6]) : undefined,
           style: {
             ...e.style,
             opacity: related ? 1 : 0.08,

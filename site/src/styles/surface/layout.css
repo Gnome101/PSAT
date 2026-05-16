@@ -1991,3 +1991,97 @@
   flex-shrink: 0;
 }
 
+/* Owner-group container — a labeled box that holds every contract a
+   single principal (Safe/Timelock/EOA/proxy admin) owns. Replaces the
+   N principal→child edges that used to fan out across the canvas. The
+   container body is pointer-events:none so clicks fall through to the
+   contract children inside; only the header is interactive. */
+.ps-group-node {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  border-radius: 10px;
+  background: var(--principal-bg, rgba(20, 24, 32, 0.4));
+  border: 2px solid var(--principal-color, #64748b);
+  box-shadow:
+    inset 0 0 0 1px rgba(15, 18, 24, 0.55),
+    0 0 0 1px rgba(0, 0, 0, 0.25);
+  pointer-events: none;
+}
+
+.ps-group-node .ps-handle {
+  pointer-events: none;
+}
+
+.ps-group-selected {
+  border-color: var(--principal-color, #94a3b8);
+  border-style: solid;
+  box-shadow:
+    inset 0 0 0 1px rgba(15, 18, 24, 0.6),
+    0 0 0 1px var(--principal-color, #94a3b8);
+}
+
+.ps-group-focused {
+  border-color: #d4a017 !important;
+  border-style: solid;
+}
+
+.ps-group-header {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: linear-gradient(180deg, var(--principal-header-bg, rgba(15, 18, 24, 0.92)) 0%, rgba(15, 18, 24, 0.55) 100%);
+  border-bottom: 1px solid var(--principal-color, rgba(148, 163, 184, 0.12));
+  border-top-left-radius: 8px;
+  border-top-right-radius: 8px;
+  cursor: pointer;
+  pointer-events: auto;
+  user-select: none;
+  transition: background 120ms ease;
+}
+
+.ps-group-header:hover {
+  background: linear-gradient(180deg, rgba(30, 36, 48, 0.95) 0%, rgba(20, 24, 32, 0.65) 100%);
+}
+
+.ps-group-badge {
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  padding: 2px 7px;
+  border-radius: 4px;
+  white-space: nowrap;
+  flex-shrink: 0;
+  background: var(--principal-color, #475569);
+  color: #0f1218;
+}
+
+.ps-group-addr {
+  font-size: 10px;
+  font-family: "JetBrains Mono", monospace;
+  color: #94a3b8;
+  flex-shrink: 0;
+}
+
+.ps-group-count {
+  font-size: 10px;
+  color: #cbd5e1;
+  font-weight: 600;
+  margin-left: auto;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* React Flow stacks nodes in DOM order. Group containers go behind
+   their children so the contract nodes inside read above the dashed
+   border. */
+.react-flow__node-group {
+  z-index: 0 !important;
+}
+
