@@ -118,26 +118,34 @@ export function SurfaceCanvas({ machines, fundFlows, principals, selectedAddress
         const tgt = e.target?.toLowerCase();
         // Aggregated bundles already terminate at group endpoints, so
         // the simple endpoint check matches even when the underlying
-        // sample edges have different addresses.
+        // sample edges have different addresses. The both-in-connected
+        // clause keeps intra-group child↔child edges visible when the
+        // group itself is selected — without it, clicking a group dims
+        // every internal wire because none of them touch the group
+        // address directly.
         const edgeInAudit = hiActive && highlightedAddresses.has(src) && highlightedAddresses.has(tgt);
-        const related = hiActive ? edgeInAudit : (!sel || src === sel || tgt === sel);
+        const directlyConnected = src === sel || tgt === sel;
+        const related = hiActive
+          ? edgeInAudit
+          : (!sel || directlyConnected || (connectedNodes.has(src) && connectedNodes.has(tgt)));
         const caps = e.data?.capabilities || [];
         // Default label is whatever buildGraphLayout assigned (the
         // bundle count for aggregated edges). On selection we replace
-        // that with the per-flow capability summary so the user gets
-        // the detail when they're focused on one node.
+        // that with the per-flow capability summary — but only for
+        // edges directly attached to the selected node, so selecting a
+        // whole group doesn't paint every internal wire with a label.
         const defaultLabel = e.label || "";
-        const labelText = (sel && related)
+        const labelText = (sel && directlyConnected)
           ? (caps.join(", ") || e.data?.flowType || defaultLabel)
           : defaultLabel;
         return {
           ...e,
           label: labelText,
-          labelStyle: e.labelStyle || { fill: "#94a3b8", fontSize: 9 },
+          labelStyle: e.labelStyle || { fill: "#f8fafc", fontSize: 12, fontWeight: 700 },
           labelBgStyle: labelText
-            ? (e.labelBgStyle || { fill: "#0f1218", fillOpacity: 0.85 })
+            ? (e.labelBgStyle || { fill: "#0f1218", fillOpacity: 0.95 })
             : undefined,
-          labelBgPadding: labelText ? (e.labelBgPadding || [4, 6]) : undefined,
+          labelBgPadding: labelText ? (e.labelBgPadding || [4, 7]) : undefined,
           style: {
             ...e.style,
             opacity: related ? 1 : 0.08,

@@ -2033,27 +2033,27 @@
   right: 0;
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 8px 12px;
-  background: linear-gradient(180deg, var(--principal-header-bg, rgba(15, 18, 24, 0.92)) 0%, rgba(15, 18, 24, 0.55) 100%);
-  border-bottom: 1px solid var(--principal-color, rgba(148, 163, 184, 0.12));
+  gap: 10px;
+  padding: 11px 14px;
+  background: linear-gradient(180deg, var(--principal-header-bg-top, rgba(15, 18, 24, 0.92)) 0%, var(--principal-header-bg-bot, rgba(15, 18, 24, 0.55)) 100%);
+  border-bottom: 2px solid var(--principal-color, rgba(148, 163, 184, 0.12));
   border-top-left-radius: 8px;
   border-top-right-radius: 8px;
   cursor: pointer;
   pointer-events: auto;
   user-select: none;
-  transition: background 120ms ease;
+  transition: filter 120ms ease;
 }
 
 .ps-group-header:hover {
-  background: linear-gradient(180deg, rgba(30, 36, 48, 0.95) 0%, rgba(20, 24, 32, 0.65) 100%);
+  filter: brightness(1.12);
 }
 
 .ps-group-badge {
-  font-size: 10px;
+  font-size: 13px;
   font-weight: 800;
   letter-spacing: 0.06em;
-  padding: 2px 7px;
+  padding: 3px 9px;
   border-radius: 4px;
   white-space: nowrap;
   flex-shrink: 0;
@@ -2062,16 +2062,16 @@
 }
 
 .ps-group-addr {
-  font-size: 10px;
+  font-size: 11px;
   font-family: "JetBrains Mono", monospace;
-  color: #94a3b8;
+  color: #f1f5f9;
   flex-shrink: 0;
 }
 
 .ps-group-count {
-  font-size: 10px;
-  color: #cbd5e1;
-  font-weight: 600;
+  font-size: 12px;
+  color: #f8fafc;
+  font-weight: 700;
   margin-left: auto;
   white-space: nowrap;
   overflow: hidden;

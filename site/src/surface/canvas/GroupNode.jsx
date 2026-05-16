@@ -26,17 +26,19 @@ export function GroupNode({ data }) {
 
   const tvl = data.totalUsd > 0 ? formatUsd(data.totalUsd) : null;
 
-  // Append 8-digit-hex alpha bytes for the body + header tints so the
-  // container reads as a Safe/EOA/Timelock/ProxyAdmin at a glance,
-  // not just by the border. `14` ≈ 8% alpha for the body (subtle but
-  // visible against the dark canvas) and `33` ≈ 20% for the header.
+  // Body is transparent on purpose — even an 8% colored tint sits above
+  // the React Flow edges layer and dims any line crossing the group.
+  // The 80%-alpha colored header bar + 2px colored border carry all the
+  // type identity; the body just needs to let edges read through. `cc`
+  // ≈ 80% top of header, `77` ≈ 47% bottom.
   return (
     <div
       className={`ps-group-node ps-group-${p.type}${data.focused ? " ps-group-focused" : ""}${data.selected ? " ps-group-selected" : ""}`}
       style={{
         "--principal-color": color,
-        "--principal-bg": `${color}14`,
-        "--principal-header-bg": `${color}33`,
+        "--principal-bg": "transparent",
+        "--principal-header-bg-top": `${color}cc`,
+        "--principal-header-bg-bot": `${color}77`,
       }}
     >
       {/* Edges still terminate on the group itself when a cross-group
@@ -51,9 +53,7 @@ export function GroupNode({ data }) {
           if (data.onSelect) data.onSelect();
         }}
       >
-        <span className="ps-group-badge" style={{ background: color + "22", color }}>
-          {badge}
-        </span>
+        <span className="ps-group-badge">{badge}</span>
         <span className="ps-group-addr">{shortAddr(p.address)}</span>
         <span className="ps-group-count">
           {data.childCount} contract{data.childCount === 1 ? "" : "s"}
