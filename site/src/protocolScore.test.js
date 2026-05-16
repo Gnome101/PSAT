@@ -102,11 +102,11 @@ describe("computeProtocolScore", () => {
     expect(axis(computeProtocolScore([contract], [], verifiedCoverage), "audits")).toBe(1);
   });
 
-  it("labels the strict audit axis as verified coverage", () => {
+  it("labels the strict audit axis as audit", () => {
     const score = computeProtocolScore({ contracts: [contractWithUnpause(SAFE_4_OF_7)] }, null);
     const auditAxis = score.axes.find((entry) => entry.key === "audits");
 
-    expect(auditAxis.label).toBe("Verified Audit Coverage");
+    expect(auditAxis.label).toBe("Audit");
   });
 
   it("adds detail copy with positive notes and concrete negative examples", () => {
