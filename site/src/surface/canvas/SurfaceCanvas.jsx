@@ -9,6 +9,7 @@ import {
 } from "@xyflow/react";
 
 import { elkLayout } from "../layout/elkLayout.js";
+import { ChanneledStepEdge } from "./ChanneledStepEdge.jsx";
 import { ContractNode } from "./ContractNode.jsx";
 import { FocusOnNode } from "./FocusOnNode.jsx";
 import { GroupNode } from "./GroupNode.jsx";
@@ -16,6 +17,7 @@ import { PrincipalNode } from "./PrincipalNode.jsx";
 import { PrincipalTourNav } from "./PrincipalTourNav.jsx";
 
 const nodeTypes = { contract: ContractNode, principal: PrincipalNode, group: GroupNode };
+const edgeTypes = { channeled: ChanneledStepEdge };
 
 export function SurfaceCanvas({ machines, fundFlows, principals, selectedAddress, focusAddress, focusedAddress, highlightedAddresses, onSelectMachine, onSelectPrincipal, principalTour, onTourGo, onTourBack }) {
   const [initNodes, setInitNodes] = useState([]);
@@ -165,6 +167,7 @@ export function SurfaceCanvas({ machines, fundFlows, principals, selectedAddress
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
         nodeTypes={nodeTypes}
+        edgeTypes={edgeTypes}
         onPaneClick={() => onSelectMachine(null)}
         fitView
         minZoom={0.2}

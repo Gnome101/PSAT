@@ -504,6 +504,17 @@ export function aggregateEdges(rawEdges, contractToGroup, principalList, machine
     if (p.address) canonicalByLc.set(p.address.toLowerCase(), p.address);
   }
 
+  // Set of addresses that render as a GroupNode. Those nodes only
+  // carry ctrl-in (top) / ctrl-out (bottom) handles — if an
+  // aggregated value-flow edge keeps its original value-in/value-out
+  // handle on a group endpoint, React Flow can't resolve it and falls
+  // back to the node centre, drawing the edge from somewhere inside
+  // the container. Force ctrl handles for group endpoints to fix that.
+  const groupAddrs = new Set();
+  for (const g of contractToGroup.values()) {
+    if (g) groupAddrs.add(String(g).toLowerCase());
+  }
+
   function endpoint(lcAddr) {
     const g = contractToGroup.get(lcAddr);
     if (g) return canonicalByLc.get(g) || g;
@@ -518,14 +529,17 @@ export function aggregateEdges(rawEdges, contractToGroup, principalList, machine
     const toEnd = endpoint(toLc);
     if (fromEnd.toLowerCase() === toEnd.toLowerCase()) continue;
 
+    const srcHandle = groupAddrs.has(fromEnd.toLowerCase()) ? "ctrl-out" : e.sourceHandle;
+    const tgtHandle = groupAddrs.has(toEnd.toLowerCase()) ? "ctrl-in" : e.targetHandle;
+
     const key = `${fromEnd.toLowerCase()}->${toEnd.toLowerCase()}`;
     if (!bundles.has(key)) {
       bundles.set(key, {
         source: fromEnd,
         target: toEnd,
         samples: [],
-        sourceHandle: e.sourceHandle,
-        targetHandle: e.targetHandle,
+        sourceHandle: srcHandle,
+        targetHandle: tgtHandle,
         hasValue: false,
       });
     }
@@ -545,7 +559,7 @@ export function aggregateEdges(rawEdges, contractToGroup, principalList, machine
       target: b.target,
       sourceHandle: b.sourceHandle,
       targetHandle: b.targetHandle,
-      type: "smoothstep",
+      type: "channeled",
       style: {
         stroke: b.hasValue ? "#7fc4b6" : "#94a3b8",
         strokeWidth: width,
@@ -568,6 +582,74 @@ export function aggregateEdges(rawEdges, contractToGroup, principalList, machine
     });
   }
   return out;
+}
+
+// Handle id → axis the side runs along. Used by assignEdgeLanes to
+// know whether to compare endpoints by x or y when sorting members of
+// a single side bucket. Keep this in sync with the Handle <Position>
+// in ContractNode / GroupNode / PrincipalNode.
+const HANDLE_AXIS = {
+  "ctrl-in": "x",   // Position.Top
+  "ctrl-out": "x",  // Position.Bottom
+  "value-in": "y",  // Position.Left
+  "value-out": "y", // Position.Right
+};
+
+// After ELK has positioned every node, group edges by the (node,
+// handle) side they exit / enter and assign each one a lane index so
+// that the custom ChanneledStepEdge can fan them out across the side
+// rather than stacking on the handle centre. Lane 0 is centred, ±1 is
+// one slot away, etc.
+//
+// All members of a single bucket live in the same coordinate space —
+// either both top-level (cross-group bundles) or both children of the
+// same group (intra-group bundles). So a raw position.x/y comparison
+// is enough; we don't need to walk parent chains.
+export function assignEdgeLanes(nodes, edges) {
+  const nodeById = new Map();
+  for (const n of nodes) nodeById.set(n.id, n);
+
+  const buckets = new Map();
+  function add(nodeId, handle, edgeId, role, otherId) {
+    const key = `${nodeId}|${handle || ""}`;
+    if (!buckets.has(key)) buckets.set(key, []);
+    buckets.get(key).push({ edgeId, role, otherId });
+  }
+  for (const e of edges) {
+    add(e.source, e.sourceHandle, e.id, "source", e.target);
+    add(e.target, e.targetHandle, e.id, "target", e.source);
+  }
+
+  const laneByEdge = new Map();
+  for (const [key, members] of buckets) {
+    const handle = key.split("|")[1];
+    const axis = HANDLE_AXIS[handle] || "x";
+    members.sort((m1, m2) => {
+      const a = nodeById.get(m1.otherId);
+      const b = nodeById.get(m2.otherId);
+      return ((a?.position?.[axis]) || 0) - ((b?.position?.[axis]) || 0);
+    });
+    const n = members.length;
+    members.forEach((m, i) => {
+      const lane = n <= 1 ? 0 : i - (n - 1) / 2;
+      const entry = laneByEdge.get(m.edgeId) || {};
+      entry[m.role] = lane;
+      laneByEdge.set(m.edgeId, entry);
+    });
+  }
+
+  return edges.map((e) => {
+    const lanes = laneByEdge.get(e.id);
+    if (!lanes) return e;
+    return {
+      ...e,
+      data: {
+        ...(e.data || {}),
+        sourceLane: lanes.source || 0,
+        targetLane: lanes.target || 0,
+      },
+    };
+  });
 }
 
 // Group container chrome sizing. Padding leaves room for the ~46px
@@ -668,8 +750,17 @@ export async function elkLayout(machines, fundFlows, principals) {
     // Children positions are RELATIVE to their parent in both ELK and
     // React Flow — store them raw and let React Flow handle the offset.
     const childPos = new Map();
+    // ELK orthogonally routed intra-group edges as part of the layered
+    // pass for each compound group. Pull the resulting waypoints out,
+    // translated to absolute world coords so ChanneledStepEdge can use
+    // them directly. Skipping these here means falling back to the
+    // 3-segment step path — fine for cross-group bundles but it's what
+    // produces the spaghetti inside dense Safes today.
+    const edgeWaypoints = new Map();
     for (const child of layout.children || []) {
       topPos.set(child.id, { x: child.x || 0, y: child.y || 0 });
+      const groupX = child.x || 0;
+      const groupY = child.y || 0;
       // ELK sometimes returns tiny default dimensions for compound
       // parents instead of auto-sizing to fit children — even with
       // hierarchyHandling=INCLUDE_CHILDREN. Recompute the parent size
@@ -696,6 +787,19 @@ export async function elkLayout(machines, fundFlows, principals) {
       for (const sub of child.children || []) {
         childPos.set(sub.id, { x: sub.x || 0, y: sub.y || 0 });
       }
+      for (const elkEdge of child.edges || []) {
+        const section = (elkEdge.sections || [])[0];
+        if (!section) continue;
+        const pts = [
+          { x: groupX + section.startPoint.x, y: groupY + section.startPoint.y },
+          ...((section.bendPoints || []).map((bp) => ({
+            x: groupX + bp.x,
+            y: groupY + bp.y,
+          }))),
+          { x: groupX + section.endPoint.x, y: groupY + section.endPoint.y },
+        ];
+        edgeWaypoints.set(elkEdge.id, pts);
+      }
     }
 
     const laidOutNodes = rawNodes.map((n) => {
@@ -717,11 +821,87 @@ export async function elkLayout(machines, fundFlows, principals) {
       }
       return next;
     });
-    return { nodes: laidOutNodes, edges: rawEdges };
+    const laneAdjusted = assignEdgeLanes(laidOutNodes, rawEdges);
+    const withObstacles = attachObstacles(laneAdjusted, laidOutNodes);
+    const finalEdges = withObstacles.map((e) => {
+      const pts = edgeWaypoints.get(e.id);
+      if (!pts) return e;
+      return { ...e, data: { ...(e.data || {}), waypoints: pts } };
+    });
+    return { nodes: laidOutNodes, edges: finalEdges };
   } catch {
     // Fallback to manual positions if elk fails. Groups will still
     // render but children stack at (0,0) inside the box — only
     // reached if ELK rectpacking throws unexpectedly.
-    return { nodes: rawNodes, edges: rawEdges };
+    const laneAdjusted = assignEdgeLanes(rawNodes, rawEdges);
+    return { nodes: rawNodes, edges: attachObstacles(laneAdjusted, rawNodes) };
   }
+}
+
+// Top-level node bounding boxes. ChanneledStepEdge uses these to pick
+// a centerY (or centerX) that doesn't drive the edge's middle segment
+// through the interior of a group container.
+function collectObstacles(nodes) {
+  const out = [];
+  for (const n of nodes) {
+    if (n.parentId) continue;
+    if (n.type !== "group" && n.type !== "contract") continue;
+    // Groups carry ELK-computed dims on style; contracts use the same
+    // CHILD_W/CHILD_H we hand ELK for top-level layout. The rendered
+    // .ps-node may be a touch smaller, but a slightly oversized
+    // obstacle is fine — we'd rather route around a card than clip it.
+    const w = n.style?.width ?? CHILD_W;
+    const h = n.style?.height ?? CHILD_H;
+    out.push({
+      id: n.id,
+      x: n.position?.x || 0,
+      y: n.position?.y || 0,
+      w,
+      h,
+    });
+  }
+  return out;
+}
+
+// Attach the right obstacle list per edge:
+//   - cross-group edges get top-level groups + standalone contracts so
+//     they route around other group containers
+//   - intra-group edges get the OTHER children of their parent group
+//     (in absolute world coords) so they don't slice through siblings
+// All edges sharing the same obstacle list reference the same array so
+// React Flow's prop diff doesn't churn.
+function attachObstacles(edges, nodes) {
+  const topLevel = collectObstacles(nodes);
+  const nodeById = new Map();
+  for (const n of nodes) nodeById.set(n.id, n);
+
+  // Children grouped by parent, with positions translated to absolute
+  // world coords. ReactFlow gives edge components absolute sourceX /
+  // targetX, so obstacles need to match that frame.
+  const siblingsByParent = new Map();
+  for (const n of nodes) {
+    if (!n.parentId) continue;
+    const parent = nodeById.get(n.parentId);
+    if (!parent) continue;
+    const absX = (parent.position?.x || 0) + (n.position?.x || 0);
+    const absY = (parent.position?.y || 0) + (n.position?.y || 0);
+    const w = n.style?.width ?? CHILD_W;
+    const h = n.style?.height ?? CHILD_H;
+    if (!siblingsByParent.has(n.parentId)) siblingsByParent.set(n.parentId, []);
+    siblingsByParent.get(n.parentId).push({ id: n.id, x: absX, y: absY, w, h });
+  }
+
+  return edges.map((e) => {
+    let obstacles = topLevel;
+    if (e.data?.intraGroup) {
+      const src = nodeById.get(e.source);
+      const parentId = src?.parentId;
+      const siblings = parentId ? siblingsByParent.get(parentId) : null;
+      if (siblings) obstacles = siblings;
+    }
+    return {
+      ...e,
+      data: { ...(e.data || {}), obstacles },
+    };
+  });
 }
