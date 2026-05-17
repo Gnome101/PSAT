@@ -74,9 +74,18 @@ export function ChanneledStepEdge(props) {
 
   if (polyline) {
     path = polylinePath(polyline);
-    const mid = polyline[Math.floor(polyline.length / 2)];
-    labelX = mid.x;
-    labelY = mid.y;
+    // Spread labels along the polyline using a deterministic hash of
+    // the edge id rather than always placing them at the geometric
+    // midpoint. Bundling makes neighbouring edges follow very similar
+    // paths near the shared bus stubs, so midpoint-based placement
+    // piles labels on top of each other when a contract is selected
+    // and every connected edge shows its capability label. Anchoring
+    // each edge at a different fraction in [0.3, 0.7] keeps labels
+    // pinned in the readable middle band of the edge while spreading
+    // them so the user can actually distinguish what each one says.
+    const pos = labelPositionAlong(polyline, id);
+    labelX = pos.x;
+    labelY = pos.y;
   } else {
     const r = getSmoothStepPath({
       sourceX: sx,
@@ -120,4 +129,33 @@ function polylinePath(pts) {
     d += ` L ${pts[i].x} ${pts[i].y}`;
   }
   return d;
+}
+
+// djb2-style string hash; deterministic per edge id so the label
+// position is stable across renders. We only need spread, not
+// cryptographic quality.
+function hashString(s) {
+  let h = 5381;
+  for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0;
+  return Math.abs(h);
+}
+
+// Pick a point along an orthogonal polyline for label placement.
+// Fraction is in [0.3, 0.7] so labels stay in the readable middle
+// band of the edge (not running into source/target node chrome) while
+// the per-edge hash keeps neighbouring bundle members at distinct
+// positions instead of stacking on the geometric midpoint.
+function labelPositionAlong(polyline, edgeId) {
+  const segs = polyline.length - 1;
+  if (segs < 1) return polyline[0] || { x: 0, y: 0 };
+  const fraction = 0.3 + 0.4 * ((hashString(edgeId || "") % 1000) / 1000);
+  const t = fraction * segs;
+  const idx = Math.min(segs - 1, Math.floor(t));
+  const local = t - idx;
+  const a = polyline[idx];
+  const b = polyline[idx + 1];
+  return {
+    x: a.x + (b.x - a.x) * local,
+    y: a.y + (b.y - a.y) * local,
+  };
 }

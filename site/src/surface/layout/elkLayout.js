@@ -659,9 +659,16 @@ export function assignEdgeLanes(nodes, edges) {
 // card its own column of slack — without this, cards on neighbouring
 // rows in dense groups visually butt up against each other.
 const GROUP_PADDING_TOP = 60;
-const GROUP_PADDING_SIDE = 18;
-const GROUP_PADDING_BOTTOM = 18;
-const CHILD_W = 200;
+const GROUP_PADDING_SIDE = 24;
+const GROUP_PADDING_BOTTOM = 24;
+// Child cell sized for the widest contract card the .ps-node CSS
+// actually renders (no max-width; long names like
+// "EtherFiRedemptionManager" / "AuctionManager" stretch the card to
+// ~250px). Telling the grid 200px and getting a 250px card back is
+// what was making adjacent cells overlap. CHILD_H stays larger than
+// the actual rendered height so vertical spacing has slack for the
+// occasional double-line card.
+const CHILD_W = 260;
 const CHILD_H = 130;
 const PRINCIPAL_W = 140;
 const PRINCIPAL_H = 60;
@@ -699,11 +706,16 @@ function bandFor(m) {
   return 1;
 }
 
-// Spacing between children inside a group. Tighter than the outer
-// rectpacking gap because intra-group reading is the dense case — gaps
-// here trade visual cohesion for readability.
-const CHILD_H_GAP = 30;
-const CHILD_V_GAP = 40;
+// Spacing between children inside a group. Roomier than the obvious
+// minimum because:
+//   - tight gaps make the bundled edge trunks visually merge with
+//     adjacent cells; ~50px of horizontal slack keeps the cabling
+//     readable as it forks across the band.
+//   - selecting a contract reveals capability labels on its edges; a
+//     larger V_GAP gives those labels somewhere to land without
+//     overlapping cards in the next row.
+const CHILD_H_GAP = 50;
+const CHILD_V_GAP = 70;
 
 // Within-group child layout: bucket by role band, sort each band by
 // TVL desc, pack each band into a grid centred horizontally so the
