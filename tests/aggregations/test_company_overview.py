@@ -622,6 +622,9 @@ def _normalize_prefetch(result: dict) -> dict:
             cid: sorted((d["address"], d["resolved_type"], repr(d["details"])) for d in rows)
             for cid, rows in result["fp_governance_rows"].items()
         },
+        "fp_in_contract_principals": {
+            cid: sorted(addrs) for cid, addrs in result["fp_in_contract_principals"].items()
+        },
         "upgrade_events_count": dict(result["upgrade_events_count"]),
         "upgrade_events_last": dict(result["upgrade_events_last"]),
         "balances": {cid: sorted(bal_key(b) for b in rows) for cid, rows in result["balances"].items()},
