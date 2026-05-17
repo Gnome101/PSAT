@@ -1056,6 +1056,12 @@ def _build_flows_and_principals(
         if not c["address"]:
             continue
         target = c["address"].lower()
+        lookup_c = lookup_contract_by_entry.get(target)
+        # In-protocol contract addresses that hold actual call authority
+        # on this target's EffectiveFunctions. Same authoritative signal
+        # (FunctionPrincipal) drives both the controller-flow gate and
+        # the principal-flow emit below.
+        fp_principals: set[str] = fp_in_contract_by_cid.get(lookup_c.id, set()) if lookup_c else set()
 
         if c.get("owner") and c["owner"] in contract_addrs:
             flow_type = (
@@ -1065,10 +1071,23 @@ def _build_flows_and_principals(
             )
             add_flow(c["owner"], target, flow_type)
 
+        # The ``controllers`` dict at the contract entry is populated
+        # unfiltered from every tracked address-typed ControllerValue
+        # row, which includes integration/composability references
+        # (``weth``, ``oracle``, ``treasury``, ``swapRouter``, ``stEth``)
+        # alongside real authorizers. Emitting type=controller for the
+        # former asserts a control relationship that doesn't exist.
+        # Gate on FunctionPrincipal membership so only CV values that
+        # the capability resolver also identified as call-authority
+        # principals produce a controller flow.
         for cid, val in c.get("controllers", {}).items():
             if isinstance(val, str) and val.startswith("0x"):
                 val_lower = val.lower()
-                if val_lower in contract_addrs and val_lower != (c.get("owner") or ""):
+                if (
+                    val_lower in contract_addrs
+                    and val_lower != (c.get("owner") or "")
+                    and val_lower in fp_principals
+                ):
                     add_flow(val_lower, target, "controller")
 
         # In-protocol contract principals come from FunctionPrincipal —
@@ -1079,9 +1098,8 @@ def _build_flows_and_principals(
         # was flagged as a principal of every EtherFi contract whose
         # graph traversed it). FP is the authoritative signal: an
         # address only appears here if it can actually call a function.
-        lookup_c = lookup_contract_by_entry.get(target)
         if lookup_c:
-            for node_addr in fp_in_contract_by_cid.get(lookup_c.id) or ():
+            for node_addr in fp_principals:
                 if not node_addr or node_addr == target:
                     continue
                 if node_addr not in contract_addrs:
