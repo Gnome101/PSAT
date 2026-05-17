@@ -32,9 +32,9 @@ describe("auditUi constants", () => {
     );
   });
 
-  it("MATCH_TYPE_META has entries for the coverage match types", () => {
+  it("MATCH_TYPE_META has entries for the four match types", () => {
     expect(Object.keys(MATCH_TYPE_META)).toEqual(
-      expect.arrayContaining(["reviewed_commit", "canonical_standard", "reviewed_address", "direct", "impl_era"]),
+      expect.arrayContaining(["reviewed_commit", "reviewed_address", "direct", "impl_era"]),
     );
   });
 

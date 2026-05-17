@@ -12,7 +12,6 @@ export const AUDIT_STATUS_META = {
 
 export const MATCH_TYPE_META = {
   reviewed_commit: { label: "bytecode verified", color: "#166534", bg: "#dcfce7", border: "#bbf7d0" },
-  canonical_standard: { label: "canonical standard", color: "#065f46", bg: "#ccfbf1", border: "#99f6e4" },
   reviewed_address: { label: "address pinned", color: "#1e40af", bg: "#dbeafe", border: "#bfdbfe" },
   direct: { label: "name heuristic", color: "#475569", bg: "#f1f5f9", border: "#e2e8f0" },
   impl_era: { label: "upgrade-window heuristic", color: "#475569", bg: "#f1f5f9", border: "#e2e8f0" },
@@ -35,7 +34,6 @@ export const EQUIVALENCE_META = {
 
 export const PROOF_KIND_META = {
   clean: { label: "✓ reviewed", color: "#166534", bg: "#dcfce7", border: "#bbf7d0" },
-  canonical_standard: { label: "canonical", color: "#065f46", bg: "#ccfbf1", border: "#99f6e4" },
   post_fix: { label: "✓ fix deployed", color: "#065f46", bg: "#ccfbf1", border: "#99f6e4" },
   pre_fix_unpatched: { label: "🚨 FIX NOT SHIPPED", color: "#7f1d1d", bg: "#fecaca", border: "#f87171" },
   cited_only: { label: "? coincidental", color: "#475569", bg: "#f1f5f9", border: "#e2e8f0" },
@@ -91,9 +89,6 @@ export function proofKindTitle(proofKind) {
   }
   if (proofKind === "cited_only") {
     return "Matched a commit that the audit cited for context only (not reviewed, not a fix)";
-  }
-  if (proofKind === "canonical_standard") {
-    return "Exact canonical standard match; covers the standard shell only";
   }
   return undefined;
 }

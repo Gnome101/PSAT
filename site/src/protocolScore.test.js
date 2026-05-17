@@ -62,7 +62,7 @@ describe("computeProtocolScore", () => {
     expect(highRisk.axes.some((entry) => entry.key === "risk")).toBe(false);
   });
 
-  it("credits reviewed-commit audit proof but ignores heuristic audit links", () => {
+  it("only credits bytecode-verified audit coverage", () => {
     const contract = { ...contractWithUnpause(SAFE_4_OF_7), address: "0xabc" };
     const heuristicCoverage = {
       coverage: [
@@ -100,36 +100,6 @@ describe("computeProtocolScore", () => {
 
     expect(axis(computeProtocolScore([contract], [], heuristicCoverage), "audits")).toBe(0);
     expect(axis(computeProtocolScore([contract], [], verifiedCoverage), "audits")).toBe(1);
-  });
-
-  it("credits exact canonical standard coverage without crediting heuristic audit links", () => {
-    const contract = { ...contractWithUnpause(SAFE_4_OF_7), address: "0xabc" };
-    const coverage = {
-      coverage: [
-        {
-          address: "0xabc",
-          audit_count: 1,
-          audits: [
-            {
-              audit_id: "canonical:openzeppelin-transparent-upgradeable-proxy",
-              coverage_source: "canonical_standard",
-              match_type: "canonical_standard",
-              match_confidence: "high",
-              equivalence_status: "proven",
-              proof_kind: "canonical_standard",
-            },
-            {
-              audit_id: 2,
-              match_type: "direct",
-              match_confidence: "high",
-              equivalence_status: "not_attempted",
-            },
-          ],
-        },
-      ],
-    };
-
-    expect(axis(computeProtocolScore([contract], [], coverage), "audits")).toBe(1);
   });
 
   it("labels the strict audit axis as audit", () => {
