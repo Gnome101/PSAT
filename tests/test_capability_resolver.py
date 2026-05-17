@@ -412,6 +412,88 @@ def test_state_variable_owner_resolved_via_controller_values(session):
     )
 
 
+@requires_postgres
+def test_signature_auth_signer_state_variable_resolved_via_controller_values(session):
+    """A ``signature_auth`` predicate whose signer is a state variable
+    must resolve through ``ControllerValue`` the same way
+    ``_resolve_equality_principal`` does for the OZ-Ownable case above.
+
+    Today ``_resolve_signer_from_leaf`` ignores ``ctx.state_var_values``
+    and unconditionally returns ``finite_set([], quality=lower_bound)``
+    for any state-variable signer — so ``signature_witness(...)`` wraps
+    an empty signer, and ``_rows_for_signature_witness`` writes zero
+    ``FunctionPrincipal`` rows. Every signature-gated function whose
+    signer is a state variable silently drops its signer from the
+    governance / chat / per-function principal views.
+
+    The pin: with a persisted ``ControllerValue`` row for ``signerAddr``,
+    the resolved capability must be
+    ``signature_witness(finite_set([signer], exact, enumerable))`` so
+    the writer emits one ``signature_witness`` row downstream.
+    """
+    from db.models import ControllerValue
+    from services.resolution.capability_resolver import resolve_contract_capabilities
+
+    address = "0x" + uuid.uuid4().hex[:8] + "34" * 16
+    signer_addr = "0x" + "cd" * 20
+
+    contract = _seed_contract(session, address=address)
+    session.add(
+        ControllerValue(
+            contract_id=contract.id,
+            controller_id="signerAddr",
+            value=signer_addr,
+            resolved_type="eoa",
+            source="state_variable",
+        )
+    )
+    session.commit()
+
+    artifact = {
+        "schema_version": "semantic",
+        "contract_name": "T",
+        "trees": {
+            "claim(bytes32,uint8,bytes32,bytes32)": {
+                "op": "LEAF",
+                "leaf": {
+                    "kind": "signature_auth",
+                    "operator": "eq",
+                    "authority_role": "caller_authority",
+                    "operands": [
+                        {"source": "signature_recovery"},
+                        {"source": "state_variable", "state_variable_name": "signerAddr"},
+                    ],
+                    "references_msg_sender": True,
+                    "parameter_indices": [],
+                    "expression": "signerAddr == ecrecover(h, v, r, s)",
+                    "basis": [],
+                    "confidence": "high",
+                },
+            }
+        },
+    }
+    _seed_job_with_artifact(session, address=address, predicate_trees=artifact)
+
+    out = resolve_contract_capabilities(session, address=address, chain_id=1)
+    assert out is not None
+    cap = out["claim(bytes32,uint8,bytes32,bytes32)"]
+    assert cap["kind"] == "signature_witness", (
+        f"expected signature_witness wrapping the resolved signer; got kind={cap.get('kind')}"
+    )
+    signer = cap.get("signer") or {}
+    assert signer.get("kind") == "finite_set", (
+        f"expected signer to be a finite_set sourced from ControllerValue; got kind={signer.get('kind')}"
+    )
+    assert signer_addr.lower() in {m.lower() for m in (signer.get("members") or [])}, (
+        f"expected {signer_addr} in signer members (sourced from ControllerValue row); "
+        f"got members={signer.get('members')}"
+    )
+    assert signer.get("membership_quality") == "exact", (
+        f"expected signer membership_quality=exact when controller_values has the answer; "
+        f"got {signer.get('membership_quality')}"
+    )
+
+
 # ---------------------------------------------------------------------------
 # Bug 4: end-to-end external-authority traversal. Given a descriptor whose
 # authority contract emits relevant membership events, the resolver must
