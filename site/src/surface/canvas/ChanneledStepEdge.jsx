@@ -2,22 +2,6 @@ import { BaseEdge, getSmoothStepPath } from "@xyflow/react";
 
 import { routeOrthogonal } from "./orthogonalRouter.js";
 
-// Each edge gets a lane index (signed integer, 0 = centred on the
-// handle) for its source side and its target side. assignEdgeLanes in
-// elkLayout.js fills these from `data.sourceLane` / `data.targetLane`
-// so that multiple edges sharing one side of a node fan out across it
-// rather than stacking on top of each other.
-const LANE_SPACING = 16;
-
-// How far source/target can drift from the ELK-baked endpoint before
-// we give up on the polyline waypoints. A few pixels covers rounding
-// noise between ELK's port positions and ReactFlow's handle centres;
-// anything larger means the user has dragged the node and we should
-// recompute the path.
-const ENDPOINT_TOLERANCE = 4;
-
-const SIDE_TO_AXIS = { top: "x", bottom: "x", left: "y", right: "y" };
-
 export function ChanneledStepEdge(props) {
   const {
     id,
@@ -41,16 +25,17 @@ export function ChanneledStepEdge(props) {
     interactionWidth,
   } = props;
 
-  const sLane = Number(data?.sourceLane || 0);
-  const tLane = Number(data?.targetLane || 0);
-
-  const sAxis = SIDE_TO_AXIS[sourcePosition];
-  const tAxis = SIDE_TO_AXIS[targetPosition];
-
-  const sx = sourceX + (sAxis === "x" ? sLane * LANE_SPACING : 0);
-  const sy = sourceY + (sAxis === "y" ? sLane * LANE_SPACING : 0);
-  const tx = targetX + (tAxis === "x" ? tLane * LANE_SPACING : 0);
-  const ty = targetY + (tAxis === "y" ? tLane * LANE_SPACING : 0);
+  // Lane offsets are intentionally not applied. The bundling visual
+  // (every edge sharing a handle traveling through the same `STUB`-px
+  // perpendicular trunk before forking) only emerges when all edges
+  // start at the exact same point on the handle — lane-fanning would
+  // spread them across the side and break the shared-stub overlap.
+  // The lane fields on `data` are still populated by assignEdgeLanes
+  // for any future tooling that wants them.
+  const sx = sourceX;
+  const sy = sourceY;
+  const tx = targetX;
+  const ty = targetY;
 
   // elkLayout swaps the obstacle list per edge: top-level groups for
   // cross-group bundles, siblings of the parent group for intra-group
@@ -58,45 +43,34 @@ export function ChanneledStepEdge(props) {
   // sourceX/Y / targetX/Y, so the same routing pass handles them.
   const obstacles = data?.obstacles || [];
 
-  // Three render paths, in order of preference:
-  //   1. ELK-baked waypoints (intra-group edges). ELK already routed
-  //      these with full orthogonal obstacle avoidance inside the
-  //      compound group during the layered pass, so we draw straight
-  //      through them. If the user has dragged a node since layout,
-  //      the endpoint tolerance check kicks the edge into the next
-  //      branch until ELK re-runs.
-  //   2. Multi-bend orthogonal router. Picks 3 or 5 waypoints so each
-  //      segment clears the obstacle list. This is what keeps a
-  //      cross-group edge from cutting through a Safe / Timelock group
-  //      that happens to sit between its source and target columns.
-  //   3. getSmoothStepPath. Last-resort fallback when neither of the
-  //      above could find a clear route — preserves the previous
-  //      behaviour for edges where the router gives up (e.g. mixed
-  //      handle axes).
+  // Two render paths, in order of preference:
+  //   1. Multi-bend orthogonal router (`routeOrthogonal`). Prefers the
+  //      5-segment bus-stub shape so every edge from the same handle
+  //      shares its first / last perpendicular segment — that overlap
+  //      is what produces the bundled "trunk" visual. Falls back to a
+  //      3-segment route when 5 can't find a clear column.
+  //   2. getSmoothStepPath. Last-resort fallback when the router gives
+  //      up (e.g. mixed handle axes that routeOrthogonal doesn't model).
+  //
+  // We intentionally do NOT consult ELK-baked waypoints any more. ELK
+  // routes each edge to land on the centre of the handle without bus
+  // stubs, which kills the bundling visual we're going for inside
+  // dense intra-group clusters. Routing every edge through
+  // routeOrthogonal trades ELK's per-edge crossing minimisation for a
+  // bus-pattern that reads as a cable at a glance — a worthwhile
+  // tradeoff for the surface-page goal.
   let path;
   let labelX = (sx + tx) / 2;
   let labelY = (sy + ty) / 2;
-  const pts = data?.waypoints;
-  const waypointsStillAnchored =
-    pts && pts.length >= 2
-    && Math.abs(pts[0].x - sourceX) < ENDPOINT_TOLERANCE
-    && Math.abs(pts[0].y - sourceY) < ENDPOINT_TOLERANCE
-    && Math.abs(pts[pts.length - 1].x - targetX) < ENDPOINT_TOLERANCE
-    && Math.abs(pts[pts.length - 1].y - targetY) < ENDPOINT_TOLERANCE;
 
-  let polyline = null;
-  if (waypointsStillAnchored) {
-    polyline = pts;
-  } else {
-    polyline = routeOrthogonal({
-      sx, sy, tx, ty,
-      sourcePos: sourcePosition,
-      targetPos: targetPosition,
-      obstacles,
-      sourceId: source,
-      targetId: target,
-    });
-  }
+  const polyline = routeOrthogonal({
+    sx, sy, tx, ty,
+    sourcePos: sourcePosition,
+    targetPos: targetPosition,
+    obstacles,
+    sourceId: source,
+    targetId: target,
+  });
 
   if (polyline) {
     path = polylinePath(polyline);

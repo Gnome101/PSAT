@@ -43,16 +43,27 @@ export function routeOrthogonal({
   const sAxisV = sourcePos === "top" || sourcePos === "bottom";
   const tAxisV = targetPos === "top" || targetPos === "bottom";
 
+  // Prefer the 5-segment route over the 3-segment one even when 3
+  // would clear. The 5-segment shape produces the bundling visual:
+  // every edge leaving the same source handle shares the first
+  // `STUB`-pixel perpendicular stub (since y1 = sy ± STUB depends only
+  // on the handle, not the edge), and every edge arriving at the same
+  // target handle shares the last `STUB`-pixel stub the same way.
+  // With many edges through one handle this reads as a single thick
+  // "trunk" that forks/converges at the bus columns, rather than the
+  // spaghetti the 3-segment route produces when each edge picks its
+  // own midline. 3-segment still serves as the fallback for cases
+  // where 5-segment can't find a clear column.
   if (sAxisV && tAxisV) {
     return (
-      tryThreeSegmentV(sx, sy, tx, ty, sourcePos, targetPos, obs)
-      || tryFiveSegmentV(sx, sy, tx, ty, sourcePos, targetPos, obs)
+      tryFiveSegmentV(sx, sy, tx, ty, sourcePos, targetPos, obs)
+      || tryThreeSegmentV(sx, sy, tx, ty, sourcePos, targetPos, obs)
     );
   }
   if (!sAxisV && !tAxisV) {
     return (
-      tryThreeSegmentH(sx, sy, tx, ty, sourcePos, targetPos, obs)
-      || tryFiveSegmentH(sx, sy, tx, ty, sourcePos, targetPos, obs)
+      tryFiveSegmentH(sx, sy, tx, ty, sourcePos, targetPos, obs)
+      || tryThreeSegmentH(sx, sy, tx, ty, sourcePos, targetPos, obs)
     );
   }
   // Mixed-axis cross-group edges (e.g. group ctrl-out → contract

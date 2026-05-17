@@ -666,11 +666,141 @@ const CHILD_H = 130;
 const PRINCIPAL_W = 140;
 const PRINCIPAL_H = 60;
 
-export async function elkLayout(machines, fundFlows, principals) {
-  const { nodes: rawNodes, edges: rawEdges, groupChildren, intraGroupEdgesByGroup } = buildGraphLayout(machines, fundFlows, principals);
+// In-group band assignment. Three bands top-to-bottom:
+//   0 = control surfaces — timelocks, role admins, governance contracts.
+//   1 = value-bearing — value handlers, bridges, value-moving tokens.
+//   2 = interfaces & plumbing — pure tokens, factories, utility.
+// Position carries meaning: a glance tells you which contracts hold
+// authority vs hold value vs are interface/plumbing, regardless of which
+// protocol you're looking at.
+//
+// We can't rely on `role` alone. The backend classifier puts any
+// contract with asset_pull / asset_send into `value_handler`, which
+// captures TimelockController-style admins that also execute value
+// moves during their queued operations. Has-timelock and
+// control_model=governance are the more reliable "this contract issues
+// commands" signals, so they win over `role` when both fire.
+function bandFor(m) {
+  if (!m) return 2;
+  if (m.has_timelock) return 0;
+  if (m.control_model === "governance") return 0;
+  if (m.role === "governance") return 0;
+  // Name override: the backend role classifier and the has_timelock
+  // flag both fail to surface contracts that ARE themselves a control
+  // surface (TimelockController, BoringGovernance, etc.) when those
+  // contracts also have asset-move side effects — they end up tagged
+  // value_handler and lose to the band-1 catchall. Pattern-match the
+  // name so they float to the top. Has-timelock is a property
+  // assigned to contracts *controlled by* a timelock, not the timelock
+  // itself, which is why we need the explicit name check.
+  const nameLower = (m.name || "").toLowerCase();
+  if (/timelock|governance|guardian/.test(nameLower)) return 0;
+  if (m.role === "token" || m.role === "factory" || m.role === "utility") return 2;
+  return 1;
+}
 
-  // Split nodes into top-level vs grouped-children so the ELK graph
-  // mirrors the React Flow parent/child hierarchy.
+// Spacing between children inside a group. Tighter than the outer
+// rectpacking gap because intra-group reading is the dense case — gaps
+// here trade visual cohesion for readability.
+const CHILD_H_GAP = 30;
+const CHILD_V_GAP = 40;
+
+// Within-group child layout: bucket by role band, sort each band by
+// TVL desc, pack each band into a grid centred horizontally so the
+// whole group reads as control-on-top / value-in-middle / interfaces-
+// at-bottom regardless of which contracts happen to be in it.
+//
+// Returns: { positions: Map<address, {x,y}>, width, height }
+// All coords are relative to the group container's origin; React Flow
+// adds the parent offset.
+export function layoutGroupInterior(kids, machines) {
+  if (!kids || kids.length === 0) {
+    return { positions: new Map(), width: CHILD_W + 2 * GROUP_PADDING_SIDE, height: GROUP_PADDING_TOP + GROUP_PADDING_BOTTOM };
+  }
+
+  const machineByAddr = new Map();
+  for (const m of machines || []) {
+    if (m.address) machineByAddr.set(m.address.toLowerCase(), m);
+  }
+
+  // Bucket into bands using the multi-signal classifier (role +
+  // has_timelock + control_model). See bandFor for why role alone isn't
+  // enough.
+  const bands = [[], [], []];
+  for (const kid of kids) {
+    const m = machineByAddr.get(kid.id?.toLowerCase());
+    bands[bandFor(m)].push({
+      id: kid.id,
+      tvl: m?.total_usd || 0,
+      name: m?.name || kid.id || "",
+    });
+  }
+
+  // Sort each band: TVL desc → name asc. TVL surfaces money-holding
+  // contracts at the front of their row; name tie-break keeps the
+  // layout stable across re-renders.
+  for (const list of bands) {
+    list.sort((a, b) => (b.tvl - a.tvl) || a.name.localeCompare(b.name));
+  }
+
+  // Pick a column count for each band that keeps the band's aspect
+  // close to the 1.6 target the outer rectpacking uses. For small
+  // bands (≤4 items) prefer a single row — squashing 3 contracts into
+  // 2x2 feels arbitrary.
+  function chooseCols(count) {
+    if (count <= 4) return count;
+    return Math.max(1, Math.floor(Math.sqrt(count * 1.6)));
+  }
+
+  const bandPlans = bands.map((list) => {
+    if (list.length === 0) return null;
+    const cols = chooseCols(list.length);
+    const rows = Math.ceil(list.length / cols);
+    return {
+      list,
+      cols,
+      rows,
+      width: cols * CHILD_W + (cols - 1) * CHILD_H_GAP,
+      height: rows * CHILD_H + (rows - 1) * CHILD_V_GAP,
+    };
+  });
+
+  // Group interior width = widest band's width. Each band gets
+  // centred horizontally within that width so the layout looks
+  // balanced regardless of how lopsided the role distribution is.
+  const interiorW = Math.max(0, ...bandPlans.filter(Boolean).map((b) => b.width));
+  const totalWidth = interiorW + 2 * GROUP_PADDING_SIDE;
+
+  const positions = new Map();
+  let curY = GROUP_PADDING_TOP;
+  for (const plan of bandPlans) {
+    if (!plan) continue;
+    const offsetX = GROUP_PADDING_SIDE + (interiorW - plan.width) / 2;
+    for (let i = 0; i < plan.list.length; i++) {
+      const col = i % plan.cols;
+      const row = Math.floor(i / plan.cols);
+      positions.set(plan.list[i].id, {
+        x: offsetX + col * (CHILD_W + CHILD_H_GAP),
+        y: curY + row * (CHILD_H + CHILD_V_GAP),
+      });
+    }
+    curY += plan.height + CHILD_V_GAP;
+  }
+  const totalHeight = (curY - CHILD_V_GAP) + GROUP_PADDING_BOTTOM;
+
+  return { positions, width: totalWidth, height: totalHeight };
+}
+
+export async function elkLayout(machines, fundFlows, principals) {
+  const { nodes: rawNodes, edges: rawEdges } = buildGraphLayout(machines, fundFlows, principals);
+
+  // Split nodes into top-level vs grouped-children. ELK only sees the
+  // top level now: each group is handed to it as a single sized box.
+  // The inside of every group is laid out by layoutGroupInterior
+  // (semantic bands: control / value / interfaces) so position carries
+  // meaning regardless of how the group's children relate to each other
+  // in the call graph. ELK's `layered` algorithm minimised crossings
+  // but ignored role — that's what made dense Safes read as scattered.
   const childByParent = new Map();
   const topLevel = [];
   for (const n of rawNodes) {
@@ -687,50 +817,28 @@ export async function elkLayout(machines, fundFlows, principals) {
     return { width: CHILD_W, height: CHILD_H };
   }
 
+  // Pre-compute every group's interior layout. Doing this before
+  // building elkChildren means the group's overall width/height — which
+  // ELK uses to pack groups against each other — comes from the actual
+  // role-band layout, not from ELK's own compound-layout heuristic.
+  const groupInteriors = new Map();
+  for (const n of topLevel) {
+    if (n.type !== "group") continue;
+    const kids = childByParent.get(n.id) || [];
+    groupInteriors.set(n.id, layoutGroupInterior(kids, machines));
+  }
+
   const elkChildren = topLevel.map((n) => {
     if (n.type === "group") {
-      const kids = childByParent.get(n.id) || [];
-      const groupLc = n.id.toLowerCase();
-      const intraEdges = (intraGroupEdgesByGroup && intraGroupEdgesByGroup.get(groupLc)) || [];
-      // Use `layered` so children stack by caller→callee hierarchy:
-      // a contract that controls others lives in an earlier layer than
-      // the contracts it controls. The intra-group edges fed in here
-      // are what ELK uses to derive the layer assignment. Children
-      // with no internal edges still get placed cleanly — they just
-      // share layer 0 as a horizontal row.
-      return {
-        id: n.id,
-        layoutOptions: {
-          "elk.algorithm": "layered",
-          "elk.direction": "DOWN",
-          "elk.padding": `[top=${GROUP_PADDING_TOP},left=${GROUP_PADDING_SIDE},bottom=${GROUP_PADDING_BOTTOM},right=${GROUP_PADDING_SIDE}]`,
-          "elk.spacing.nodeNode": "30",
-          "elk.layered.spacing.nodeNodeBetweenLayers": "60",
-          "elk.aspectRatio": "1.6",
-          "elk.layered.crossingMinimization.strategy": "LAYER_SWEEP",
-          "elk.layered.nodePlacement.strategy": "BRANDES_KOEPF",
-          "elk.layered.edgeRouting": "ORTHOGONAL",
-        },
-        children: kids.map((kid) => ({
-          id: kid.id,
-          width: CHILD_W,
-          height: CHILD_H,
-        })),
-        edges: intraEdges.map((e) => ({
-          id: e.id,
-          sources: [e.source],
-          targets: [e.target],
-        })),
-      };
+      const interior = groupInteriors.get(n.id);
+      return { id: n.id, width: interior.width, height: interior.height };
     }
     return { id: n.id, ...dimsFor(n) };
   });
 
-  // We hand ELK the node hierarchy only. Edges live entirely in
-  // ReactFlow — the smoothstep router draws them from source.center to
-  // target.center without needing ELK waypoints. Skipping the edges
-  // also sidesteps ELK's UnsupportedGraphException for cross-hierarchy
-  // edges that touch a rectpacking child.
+  // ELK only does the outer rectpacking pass over groups + standalone
+  // contracts. No edges fed to ELK; intra-group routing is handled
+  // entirely by ChanneledStepEdge's bundled router downstream.
   const elkGraph = {
     id: "root",
     layoutOptions: {
@@ -744,95 +852,39 @@ export async function elkLayout(machines, fundFlows, principals) {
 
   try {
     const layout = await elk.layout(elkGraph);
-    // Top-level positions + group dimensions
     const topPos = new Map();
-    const topDims = new Map();
-    // Children positions are RELATIVE to their parent in both ELK and
-    // React Flow — store them raw and let React Flow handle the offset.
-    const childPos = new Map();
-    // ELK orthogonally routed intra-group edges as part of the layered
-    // pass for each compound group. Pull the resulting waypoints out,
-    // translated to absolute world coords so ChanneledStepEdge can use
-    // them directly. Skipping these here means falling back to the
-    // 3-segment step path — fine for cross-group bundles but it's what
-    // produces the spaghetti inside dense Safes today.
-    const edgeWaypoints = new Map();
     for (const child of layout.children || []) {
       topPos.set(child.id, { x: child.x || 0, y: child.y || 0 });
-      const groupX = child.x || 0;
-      const groupY = child.y || 0;
-      // ELK sometimes returns tiny default dimensions for compound
-      // parents instead of auto-sizing to fit children — even with
-      // hierarchyHandling=INCLUDE_CHILDREN. Recompute the parent size
-      // from the laid-out children's bounding box so the dashed
-      // container always wraps everything inside it. Falls back to
-      // ELK's reported size when there are no children (shouldn't
-      // happen for a group, but safe).
-      if (child.children && child.children.length > 0) {
-        let maxRight = 0;
-        let maxBottom = 0;
-        for (const sub of child.children) {
-          const cw = sub.width || CHILD_W;
-          const ch = sub.height || CHILD_H;
-          maxRight = Math.max(maxRight, (sub.x || 0) + cw);
-          maxBottom = Math.max(maxBottom, (sub.y || 0) + ch);
-        }
-        topDims.set(child.id, {
-          width: Math.max(child.width || 0, maxRight + GROUP_PADDING_SIDE),
-          height: Math.max(child.height || 0, maxBottom + GROUP_PADDING_BOTTOM),
-        });
-      } else if (child.width != null && child.height != null) {
-        topDims.set(child.id, { width: child.width, height: child.height });
-      }
-      for (const sub of child.children || []) {
-        childPos.set(sub.id, { x: sub.x || 0, y: sub.y || 0 });
-      }
-      for (const elkEdge of child.edges || []) {
-        const section = (elkEdge.sections || [])[0];
-        if (!section) continue;
-        const pts = [
-          { x: groupX + section.startPoint.x, y: groupY + section.startPoint.y },
-          ...((section.bendPoints || []).map((bp) => ({
-            x: groupX + bp.x,
-            y: groupY + bp.y,
-          }))),
-          { x: groupX + section.endPoint.x, y: groupY + section.endPoint.y },
-        ];
-        edgeWaypoints.set(elkEdge.id, pts);
-      }
     }
 
     const laidOutNodes = rawNodes.map((n) => {
       if (n.parentId) {
-        return {
-          ...n,
-          position: childPos.get(n.id) || n.position,
-        };
+        // Child positions come from the JS interior layout, relative
+        // to the parent group's origin (React Flow adds the parent
+        // offset automatically via extent="parent").
+        const interior = groupInteriors.get(n.parentId);
+        const pos = interior?.positions?.get(n.id) || n.position;
+        return { ...n, position: pos };
       }
-      const next = {
-        ...n,
-        position: topPos.get(n.id) || n.position,
-      };
+      const next = { ...n, position: topPos.get(n.id) || n.position };
       if (n.type === "group") {
-        const d = topDims.get(n.id);
-        if (d) {
-          next.style = { ...(n.style || {}), width: d.width, height: d.height };
+        const interior = groupInteriors.get(n.id);
+        if (interior) {
+          next.style = {
+            ...(n.style || {}),
+            width: interior.width,
+            height: interior.height,
+          };
         }
       }
       return next;
     });
     const laneAdjusted = assignEdgeLanes(laidOutNodes, rawEdges);
-    const withObstacles = attachObstacles(laneAdjusted, laidOutNodes);
-    const finalEdges = withObstacles.map((e) => {
-      const pts = edgeWaypoints.get(e.id);
-      if (!pts) return e;
-      return { ...e, data: { ...(e.data || {}), waypoints: pts } };
-    });
-    return { nodes: laidOutNodes, edges: finalEdges };
+    return { nodes: laidOutNodes, edges: attachObstacles(laneAdjusted, laidOutNodes) };
   } catch {
-    // Fallback to manual positions if elk fails. Groups will still
-    // render but children stack at (0,0) inside the box — only
-    // reached if ELK rectpacking throws unexpectedly.
+    // Fallback to manual positions if elk fails. Groups still get the
+    // JS-computed interior dims; only the inter-group rectpacking is
+    // lost (groups stack at their fallback positions).
     const laneAdjusted = assignEdgeLanes(rawNodes, rawEdges);
     return { nodes: rawNodes, edges: attachObstacles(laneAdjusted, rawNodes) };
   }
