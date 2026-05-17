@@ -622,9 +622,7 @@ def _normalize_prefetch(result: dict) -> dict:
             cid: sorted((d["address"], d["resolved_type"], repr(d["details"])) for d in rows)
             for cid, rows in result["fp_governance_rows"].items()
         },
-        "fp_in_contract_principals": {
-            cid: sorted(addrs) for cid, addrs in result["fp_in_contract_principals"].items()
-        },
+        "fp_in_contract_principals": {cid: sorted(addrs) for cid, addrs in result["fp_in_contract_principals"].items()},
         "upgrade_events_count": dict(result["upgrade_events_count"]),
         "upgrade_events_last": dict(result["upgrade_events_last"]),
         "balances": {cid: sorted(bal_key(b) for b in rows) for cid, rows in result["balances"].items()},
@@ -838,9 +836,7 @@ def test_fund_flows_principal_requires_authorization_edge(db_session):
     target_contract = _add_contract(
         db_session, address=target_addr, job=target_job, protocol_id=p.id, contract_name="LiquidityPool"
     )
-    _add_contract(
-        db_session, address=token_addr, job=token_job, protocol_id=p.id, contract_name="WstETH"
-    )
+    _add_contract(db_session, address=token_addr, job=token_job, protocol_id=p.id, contract_name="WstETH")
 
     # Only seed a CGN row — the kind that gets written for any address
     # in the resolved control graph, including transitive nodes. No CV,
@@ -863,9 +859,7 @@ def test_fund_flows_principal_requires_authorization_edge(db_session):
     overreach = [
         f
         for f in fund_flows
-        if f["from"] == token_addr.lower()
-        and f["to"] == target_addr.lower()
-        and f["type"] == "principal"
+        if f["from"] == token_addr.lower() and f["to"] == target_addr.lower() and f["type"] == "principal"
     ]
     assert overreach == [], (
         "A ControlGraphNode row without any authorization edge must not "
@@ -906,9 +900,7 @@ def test_fund_flows_controller_requires_authorization_relation(db_session):
     target_contract = _add_contract(
         db_session, address=target_addr, job=target_job, protocol_id=p.id, contract_name="LiquidityPool"
     )
-    _add_contract(
-        db_session, address=token_addr, job=token_job, protocol_id=p.id, contract_name="WstETH"
-    )
+    _add_contract(db_session, address=token_addr, job=token_job, protocol_id=p.id, contract_name="WstETH")
 
     # A CV row of the form an integration variable produces — controller_id
     # is a non-authorization name (so the owner-substring heuristic does
@@ -932,9 +924,7 @@ def test_fund_flows_controller_requires_authorization_relation(db_session):
     overreach = [
         f
         for f in fund_flows
-        if f["from"] == token_addr.lower()
-        and f["to"] == target_addr.lower()
-        and f["type"] == "controller"
+        if f["from"] == token_addr.lower() and f["to"] == target_addr.lower() and f["type"] == "controller"
     ]
     assert overreach == [], (
         "An integration ControllerValue (e.g. wstEth(), weth(), oracle(), "

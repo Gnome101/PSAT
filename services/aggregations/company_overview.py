@@ -1108,11 +1108,7 @@ def _build_flows_and_principals(
         for cid, val in c.get("controllers", {}).items():
             if isinstance(val, str) and val.startswith("0x"):
                 val_lower = val.lower()
-                if (
-                    val_lower in contract_addrs
-                    and val_lower != (c.get("owner") or "")
-                    and val_lower in fp_principals
-                ):
+                if val_lower in contract_addrs and val_lower != (c.get("owner") or "") and val_lower in fp_principals:
                     add_flow(val_lower, target, "controller")
 
         # In-protocol contract principals come from FunctionPrincipal —
