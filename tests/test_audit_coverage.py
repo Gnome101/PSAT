@@ -2034,6 +2034,29 @@ def test_scope_entry_address_produces_reviewed_address_match(db_session, seed_pr
     assert m.pinned_commit == "abc1234"
 
 
+def test_scope_entry_address_can_match_global_shared_contract(db_session, seed_protocol):
+    """Address-pinned audits can target the one global Contract row for a shared dependency."""
+    from db.models import Protocol
+    from services.audits.coverage import match_contracts_for_audit
+
+    audit_protocol_id, _ = seed_protocol
+    owner = Protocol(name=f"shared-owner-{uuid.uuid4().hex[:8]}")
+    db_session.add(owner)
+    db_session.commit()
+
+    addr = "0x" + "9" * 40
+    shared = _add_contract(db_session, owner.id, address=addr, name="StETH")
+    audit = _add_audit(db_session, audit_protocol_id, scope=[], date="2024-06-01")
+    audit.scope_entries = [{"name": "StETH", "address": addr, "commit": "abc1234", "chain": "ethereum"}]
+    db_session.commit()
+
+    matches = match_contracts_for_audit(db_session, audit.id)
+    assert len(matches) == 1
+    assert matches[0].contract_id == shared.id
+    assert matches[0].protocol_id == audit_protocol_id
+    assert matches[0].match_type == "reviewed_address"
+
+
 def test_scope_entry_proxy_address_resolves_to_impl(db_session, seed_protocol):
     """Audit's scope table names the PROXY address; coverage row targets
     the impl contract_id (proxy rejected by db trigger, resolved before insert)."""

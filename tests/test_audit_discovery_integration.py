@@ -613,6 +613,9 @@ def test_sync_upserts_on_duplicate_url(db_session):
             "confidence": 0.95,
             "source_url": "https://ex.com/",
             "source_repo": "spearbit/portfolio",
+            "reviewed_commits": ["abc123def456"],
+            "referenced_repos": ["owner/protocol"],
+            "classified_commits": [{"sha": "abc123def456", "label": "reviewed", "provenance": "ai_returned"}],
         }
     ]
     _sync_audit_reports_to_db(db_session, protocol_id, r2)
@@ -622,6 +625,61 @@ def test_sync_upserts_on_duplicate_url(db_session):
     assert rows[0].title == "Updated title"
     assert float(rows[0].confidence) == 0.95
     assert rows[0].source_repo == "spearbit/portfolio"
+    assert rows[0].reviewed_commits == ["abc123def456"]
+    assert rows[0].referenced_repos == ["owner/protocol"]
+    assert rows[0].classified_commits == [{"sha": "abc123def456", "label": "reviewed", "provenance": "ai_returned"}]
+
+    r3 = [
+        {
+            "url": "https://ex.com/audit.pdf",  # same URL, poorer rediscovery result
+            "pdf_url": "https://ex.com/audit.pdf",
+            "auditor": "Spearbit",
+            "title": "Rediscovered title",
+            "date": "2024-01-01",
+            "confidence": 0.9,
+            "source_url": "https://ex.com/rediscovered",
+        }
+    ]
+    _sync_audit_reports_to_db(db_session, protocol_id, r3)
+
+    rows = db_session.query(AuditReport).filter_by(protocol_id=protocol_id).all()
+    assert len(rows) == 1
+    assert rows[0].title == "Rediscovered title"
+    assert rows[0].source_repo == "spearbit/portfolio"
+    assert rows[0].reviewed_commits == ["abc123def456"]
+    assert rows[0].referenced_repos == ["owner/protocol"]
+    assert rows[0].classified_commits == [{"sha": "abc123def456", "label": "reviewed", "provenance": "ai_returned"}]
+
+
+def test_sync_accepts_audit_date_ranges(db_session):
+    """Audit discovery can return human date ranges, not just ISO dates."""
+    from db.models import AuditReport, Protocol
+    from workers.discovery import _sync_audit_reports_to_db
+
+    protocol = Protocol(name=f"date-range-test-{uuid.uuid4().hex[:8]}")
+    db_session.add(protocol)
+    db_session.commit()
+
+    date_range = "2023-04-28 to 2023-05-05"
+    _sync_audit_reports_to_db(
+        db_session,
+        protocol.id,
+        [
+            {
+                "url": "https://github.com/0xVolodya/audits/blob/main/reports/eigenlayer.md",
+                "auditor": "0xVolodya, Independent Security Researcher",
+                "title": "[dep: EigenLayer] EigenLayer Audit Report",
+                "date": date_range,
+                "confidence": 1.0,
+                "source_repo": "Layr-Labs/eigenlayer-contracts",
+                "reviewed_commits": ["7a23e259050fe88a179ab0345cc8cfc9b5e57221"],
+                "referenced_repos": ["Layr-Labs/eigenlayer-contracts"],
+            }
+        ],
+    )
+
+    row = db_session.query(AuditReport).filter_by(protocol_id=protocol.id).one()
+    assert row.date == date_range
 
 
 # ---------------------------------------------------------------------------

@@ -62,6 +62,7 @@ DEFAULT_CONFIDENCE_BY_SOURCE: dict[str, float] = {
     "dapp_crawl": 0.7,
     "defillama": 0.7,
     "inventory": 0.5,
+    "ai_inventory": 0.5,
     "tavily_ai_inventory": 0.5,
     "deployer_expansion": 0.4,
 }

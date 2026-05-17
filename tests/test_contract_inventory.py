@@ -14,7 +14,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from services.discovery.activity import enrich_with_activity
-from services.discovery.chain_resolver import resolve_unknown_chains
+from services.discovery.chain_resolver import resolve_unknown_chains, validate_claimed_chains
 from services.discovery.deployer import expand_from_deployers
 from services.discovery.inventory import (
     _build_contracts,
@@ -71,7 +71,7 @@ class TestBuildContracts:
         assert c["address"] == addr
         assert c["chains"] == ["ethereum"]
         assert c["confidence"] > 0.7
-        assert c["source"] == ["tavily_ai_inventory"]
+        assert c["source"] == ["ai_inventory"]
         assert len(c["source_ids"]) >= 2
         # Sources map should contain the URLs
         assert len(sources_map) >= 2
@@ -92,6 +92,15 @@ class TestBuildContracts:
 
         assert by_addr[addr_a]["chains"] == ["ethereum"]
         assert set(by_addr[addr_b]["chains"]) == {"ethereum", "arbitrum"}
+
+    def test_chain_labels_are_canonicalized(self):
+        addr = "0x" + "e" * 40
+        entries = [
+            _entry(address=addr, chain="Ethereum mainnet"),
+            _entry(address=addr, chain="Base", url="https://base.example.com"),
+        ]
+        contracts, _ = _build_contracts(entries, limit=10)
+        assert set(contracts[0]["chains"]) == {"ethereum", "base"}
 
     def test_limit_and_sort_order(self):
         """Higher-confidence contracts sort first; limit is respected."""
@@ -276,7 +285,7 @@ class TestSearchProtocolInventoryOffline:
         # Corroborated address gets both sources and deployer confidence boost
         assert addr_both in by_addr
         corroborated = by_addr[addr_both]
-        assert "tavily_ai_inventory" in corroborated["source"]
+        assert "ai_inventory" in corroborated["source"]
         assert "deployer_expansion" in corroborated["source"]
         assert corroborated["evidence"].get("deployer", 0) > 0
 
@@ -487,7 +496,7 @@ class TestGroupMultiDeployments:
                 "address": "0x" + "a" * 40,
                 "chains": ["ethereum"],
                 "confidence": 0.9,
-                "source": ["tavily_ai_inventory"],
+                "source": ["ai_inventory"],
                 "evidence": {},
                 "source_ids": ["s1"],
             },
@@ -496,7 +505,7 @@ class TestGroupMultiDeployments:
                 "address": "0x" + "b" * 40,
                 "chains": ["arbitrum"],
                 "confidence": 0.8,
-                "source": ["tavily_ai_inventory"],
+                "source": ["ai_inventory"],
                 "evidence": {},
                 "source_ids": ["s2"],
             },
@@ -518,7 +527,7 @@ class TestGroupMultiDeployments:
                 "address": "0x" + "a" * 40,
                 "chains": ["ethereum"],
                 "confidence": 0.9,
-                "source": ["tavily_ai_inventory"],
+                "source": ["ai_inventory"],
                 "evidence": {},
                 "source_ids": ["s1"],
             },
@@ -527,7 +536,7 @@ class TestGroupMultiDeployments:
                 "address": "0x" + "a" * 40,
                 "chains": ["ethereum"],
                 "confidence": 0.7,
-                "source": ["tavily_ai_inventory"],
+                "source": ["ai_inventory"],
                 "evidence": {},
                 "source_ids": ["s2"],
             },
@@ -571,7 +580,7 @@ class TestGroupMultiDeployments:
                 "address": "0x" + "a" * 40,
                 "chains": ["ethereum"],
                 "confidence": 0.9,
-                "source": ["tavily_ai_inventory"],
+                "source": ["ai_inventory"],
                 "evidence": {},
                 "source_ids": ["s1"],
                 "activity": {"last_active": "2026-01-01T00:00:00+00:00", "score": 0.95},
@@ -582,7 +591,7 @@ class TestGroupMultiDeployments:
                 "address": "0x" + "b" * 40,
                 "chains": ["base"],
                 "confidence": 0.8,
-                "source": ["tavily_ai_inventory"],
+                "source": ["ai_inventory"],
                 "evidence": {},
                 "source_ids": ["s2"],
                 "activity": {"last_active": "2026-01-02T00:00:00+00:00", "score": 0.90},
@@ -654,6 +663,34 @@ class TestResolveUnknownChains:
         )
         result = resolve_unknown_chains(contracts)
         assert result[0]["chains"] == ["unknown"]
+
+    def test_exa_claimed_chain_corrected_when_code_lives_elsewhere(self, monkeypatch):
+        addr = "0x" + "e" * 40
+        contracts = [{"name": "AI", "address": addr, "chains": ["Ethereum mainnet"], "source": ["exa_deep_research"]}]
+        monkeypatch.setattr("services.discovery.chain_resolver._get_alchemy_key", lambda: "fake")
+
+        def fake_batch_get_code(rpc_url, addresses):
+            if "base-mainnet" in rpc_url:
+                return {a: "0x6001" for a in addresses}
+            return {a: "0x" for a in addresses}
+
+        monkeypatch.setattr("services.discovery.chain_resolver._batch_get_code", fake_batch_get_code)
+
+        result = validate_claimed_chains(contracts)
+        assert result[0]["chains"] == ["base"]
+
+    def test_exa_claimed_chain_marked_unknown_when_no_code_found(self, monkeypatch):
+        addr = "0x" + "e" * 40
+        contracts = [{"name": "AI", "address": addr, "chains": ["Base"], "source": ["exa_deep_research"]}]
+        monkeypatch.setattr("services.discovery.chain_resolver._get_alchemy_key", lambda: "fake")
+        monkeypatch.setattr(
+            "services.discovery.chain_resolver._batch_get_code",
+            lambda rpc_url, addresses: {a: "0x" for a in addresses},
+        )
+
+        result = validate_claimed_chains(contracts)
+        assert result[0]["chains"] == ["unknown"]
+        assert result[0]["chain_sanity"]["status"] == "unresolved_no_code_on_claimed_or_supported_chains"
 
 
 # ---------------------------------------------------------------------------
