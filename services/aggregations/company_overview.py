@@ -585,6 +585,31 @@ def _prefetch_child_tables(
 _PRINCIPAL_TYPES = frozenset({"contract", "safe", "timelock", "eoa", "proxy_admin"})
 _PRINCIPAL_TYPES_SQL = ("contract", "safe", "timelock", "eoa", "proxy_admin")
 
+# ControllerValue.controller_id values that denote a contract's *active*
+# owner. The substring heuristic ``"owner" in controller_id.lower()`` used
+# to drive this and false-positives on ``pendingOwner``, ``previousOwner``,
+# ``roleOwner``, ``ownerFee``, etc. Combined with last-write-wins
+# assignment in the CV iteration, OZ Ownable2Step contracts (both
+# ``owner()`` and ``pendingOwner()`` tracked) routinely latched the
+# not-yet-accepted pending owner — and the wrong owner cascaded into the
+# ownership hierarchy and the controls/controls_value fund flow.
+#
+# Exact whitelist instead. Covers the canonical Ownable variants: bare
+# state-var name (``owner`` / ``_owner``) and the prefixed
+# ``state_variable:`` form the tracker emits today.
+_ACTIVE_OWNER_CONTROLLER_IDS = frozenset(
+    {
+        "owner",
+        "_owner",
+        "state_variable:owner",
+        "state_variable:_owner",
+    }
+)
+
+
+def _is_active_owner_controller(controller_id: str | None) -> bool:
+    return (controller_id or "").lower() in _ACTIVE_OWNER_CONTROLLER_IDS
+
 
 def _trim_control_graph(nodes: list[dict[str, Any]], edges: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
     """Drop mapping-entry leaf nodes (and edges pointing at them) from a
@@ -798,7 +823,7 @@ def build_governance_view(
         if lookup_contract:
             for cv in controller_values_by_cid.get(lookup_contract.id, []):
                 controllers[cv.controller_id] = cv.value
-                if "owner" in cv.controller_id.lower() and cv.value and cv.value.startswith("0x"):
+                if _is_active_owner_controller(cv.controller_id) and cv.value and cv.value.startswith("0x"):
                     owner = cv.value.lower()
 
         upgrade_count = upgrade_events_count_by_cid.get(contract_row.id) if contract_row else None
