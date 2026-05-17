@@ -868,6 +868,75 @@ def test_fund_flows_principal_requires_authorization_edge(db_session):
     )
 
 
+def test_fund_flows_principal_emitted_for_in_contract_function_principal(db_session):
+    """Positive complement to the CGN-overreach pin above: when an
+    in-protocol contract holds an actual ``FunctionPrincipal`` row on
+    the target's function, the principal flow **is** emitted.
+
+    The post-fix in-contract pass at company_overview.py:1122-1128
+    iterates ``fp_in_contract_principals`` (the prefetch projection at
+    :419-464) rather than walking raw CGN rows. Without this test the
+    only coverage of the new code path is the negative
+    test_fund_flows_principal_requires_authorization_edge above, which
+    deliberately seeds *no* FP row — so the success branch never runs
+    and the fix could regress silently to "always empty".
+
+    Concretely: the target's ``transferFrom`` is gated by a
+    ``FunctionPrincipal`` row pointing at the authority contract. That
+    is the authoritative per-function access-control record the
+    capability resolver writes; an in-protocol address only appears
+    here if it can actually call the function. The principal flow
+    ``authority -> target`` must be in fund_flows.
+    """
+    p = _add_protocol(db_session, f"principal-positive-{uuid.uuid4().hex[:8]}")
+
+    target_addr = _addr("target")
+    authority_addr = _addr("authority")
+
+    target_job = _add_job(db_session, address=target_addr, protocol_id=p.id, name="Vault")
+    authority_job = _add_job(db_session, address=authority_addr, protocol_id=p.id, name="Operator")
+    target_contract = _add_contract(
+        db_session, address=target_addr, job=target_job, protocol_id=p.id, contract_name="Vault"
+    )
+    _add_contract(db_session, address=authority_addr, job=authority_job, protocol_id=p.id, contract_name="Operator")
+
+    ef = EffectiveFunction(
+        contract_id=target_contract.id,
+        function_name="transferFrom",
+        selector="0x23b872dd",
+        abi_signature="transferFrom(address,address,uint256)",
+        authority_public=False,
+    )
+    db_session.add(ef)
+    db_session.commit()
+    db_session.refresh(ef)
+
+    db_session.add(
+        FunctionPrincipal(
+            function_id=ef.id,
+            address=authority_addr.lower(),
+            resolved_type=None,
+            origin="semantic_capability:finite_set",
+            principal_type="controller",
+        )
+    )
+    db_session.commit()
+
+    payload = build_company_overview(db_session, p.name)
+    fund_flows = payload["fund_flows"]
+
+    principal_flow = [
+        f
+        for f in fund_flows
+        if f["from"] == authority_addr.lower() and f["to"] == target_addr.lower() and f["type"] == "principal"
+    ]
+    assert principal_flow, (
+        "Expected a type=principal fund_flow from authority -> target when a "
+        "FunctionPrincipal row links them. Got fund_flows="
+        f"{[f for f in fund_flows if f['to'] == target_addr.lower()]}"
+    )
+
+
 def test_fund_flows_controller_requires_authorization_relation(db_session):
     """A ControllerValue row pointing at another in-protocol contract
     must NOT produce a ``type=controller`` fund_flow unless the storage
