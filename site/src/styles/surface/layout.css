@@ -771,51 +771,6 @@
   border: none !important;
 }
 
-/* React Flow renders viewport children in DOM order: edges first,
-   then edgelabel-renderer, then nodes. Without an explicit z-index
-   the group containers (nodes) paint OVER our edge labels — their
-   tinted headers + colored borders tint the chip and the borders
-   read as lines crossing the label. Lifting the renderer above the
-   nodes layer leaves clicks unaffected (pointer-events:none) but
-   keeps every chip on top of all other canvas chrome. */
-.react-flow__edgelabel-renderer {
-  z-index: 10;
-}
-
-/* Selection-time edge labels render in EdgeLabelRenderer (HTML
-   overlay) so no SVG edge can paint over them. position:absolute is
-   required by React Flow's overlay; the transform is injected by the
-   edge component to place the label at its target corner.
-
-   Two direction variants tint the chip so you can read who-controls-
-   whom at a glance instead of having to recall the position
-   convention (above = selected controls this contract, etc.):
-     --out   selected -> other (selected acts on this contract)
-     --in    other -> selected (this contract acts on selected)
-   Warm/cool pairing was picked to be pre-attentive without clashing
-   with the existing edge palette (#7fc4b6 value, #94a3b8 control). */
-.ps-edge-label {
-  position: absolute;
-  pointer-events: none;
-  background: #0f1218;
-  color: #f8fafc;
-  font-size: 12px;
-  font-weight: 700;
-  padding: 4px 7px;
-  border-radius: 2px;
-  white-space: nowrap;
-}
-
-.ps-edge-label--out {
-  background: #78350f;
-  color: #fef3c7;
-}
-
-.ps-edge-label--in {
-  background: #1e3a8a;
-  color: #dbeafe;
-}
-
 /* Selection legend — small floating box that appears in bottom-right
    of the canvas while a contract is selected. Swatch colors match the
    chip variants so the user reads the legend once and learns the
@@ -853,6 +808,50 @@
 
 .ps-selection-legend-swatch--in {
   background: #1e3a8a;
+}
+
+/* Selection chip rendered on each related contract / group container.
+   Positioned OUTSIDE the card with a small gap so it never overlaps
+   the card border:
+     --out (warm) ABOVE the card  — "selected acts on this" / chip near
+                                    the input handle (ctrl-in = top).
+     --in  (cool) BELOW the card  — "this acts on selected" / chip near
+                                    the output handle (ctrl-out = bottom).
+   The top/bottom split also matches the old edge-chip placement, where
+   chips sat at the polyline corner near the non-selected end — that
+   corner was just outside the contract's input handle (top) for OUT
+   chips and just outside the output handle (bottom) for IN chips. */
+.ps-node-chip {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 6;
+  padding: 2px 6px;
+  font-size: 11px;
+  font-weight: 700;
+  border-radius: 2px;
+  /* Single-line so the chip never grows tall enough to invade the
+     vertical gap between rows (V_GAP = 70px in elkLayout, and a
+     2-line chip blew past that, causing chip-on-chip overlaps with
+     the row above / below). Horizontal overflow is fine — the
+     H_GAP (50px) leaves ~30px between a chip overhang and the
+     neighbor card's edge even for the longest 5-cap chips. */
+  white-space: nowrap;
+  text-align: center;
+  pointer-events: none;
+  letter-spacing: 0.02em;
+}
+
+.ps-node-chip--out {
+  bottom: calc(100% + 4px);
+  background: #78350f;
+  color: #fef3c7;
+}
+
+.ps-node-chip--in {
+  top: calc(100% + 4px);
+  background: #1e3a8a;
+  color: #dbeafe;
 }
 
 .ps-node-caps {

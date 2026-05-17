@@ -6,12 +6,19 @@ import { ROLE_META } from "../meta.js";
 export function ContractNode({ data }) {
   const m = data.machine;
   const roleColor = (ROLE_META[m.role] || ROLE_META.utility).color;
+  const chip = data.selectionChip;
   return (
     <div
       className={`ps-node${data.selected ? " ps-node-selected" : ""}${data.focused ? " ps-node-focused" : ""}`}
       style={{ borderLeftColor: roleColor }}
       onClick={data.onSelect}
     >
+      {chip?.out && (
+        <div className="ps-node-chip ps-node-chip--out">{chip.out}</div>
+      )}
+      {chip?.in && (
+        <div className="ps-node-chip ps-node-chip--in">{chip.in}</div>
+      )}
       <Handle type="target" position={Position.Top} id="ctrl-in" className="ps-handle" />
       <Handle type="target" position={Position.Left} id="value-in" className="ps-handle" />
       <Handle type="source" position={Position.Right} id="value-out" className="ps-handle" />

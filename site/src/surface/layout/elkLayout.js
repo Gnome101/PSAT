@@ -418,7 +418,7 @@ export function buildGraphLayout(machines, fundFlows, principals) {
       type: "smoothstep",
       style: { stroke: isValue ? "#7fc4b6" : "#94a3b8", strokeWidth: isValue ? 1.5 : 1 },
       animated: false,
-      data: { capabilities: (flow.capabilities || []).slice(0, 3), flowType: flow.type },
+      data: { capabilities: flow.capabilities || [], flowType: flow.type },
     });
   }
 
@@ -572,12 +572,23 @@ export function aggregateEdges(rawEdges, contractToGroup, principalList, machine
       // weight. A numeric count label on top of that was redundant and
       // out of style with the rest of the page; selection chips
       // (added later) communicate the per-edge specifics on click.
+      //
+      // Per-sample capabilities + flowType are preserved so chips can
+      // describe the SPECIFIC (from, to) flow rather than the bundle's
+      // union — bundles can mix flow shapes (e.g. controller vs
+      // principal, different cap sets per target) and a union'd chip
+      // misleadingly suggests every child has the same relationship.
       data: {
         flowType: b.samples[0]?.data?.flowType,
         capabilities: Array.from(
           new Set(b.samples.flatMap((s) => s.data?.capabilities || [])),
-        ).slice(0, 3),
-        samples: b.samples.map((s) => ({ from: s.source, to: s.target })),
+        ),
+        samples: b.samples.map((s) => ({
+          from: s.source,
+          to: s.target,
+          capabilities: s.data?.capabilities || [],
+          flowType: s.data?.flowType,
+        })),
       },
     });
   }

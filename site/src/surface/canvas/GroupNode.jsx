@@ -25,6 +25,7 @@ export function GroupNode({ data }) {
   }
 
   const tvl = data.totalUsd > 0 ? formatUsd(data.totalUsd) : null;
+  const chip = data.selectionChip;
 
   // Body is transparent on purpose — even an 8% colored tint sits above
   // the React Flow edges layer and dims any line crossing the group.
@@ -41,6 +42,12 @@ export function GroupNode({ data }) {
         "--principal-header-bg-bot": `${color}77`,
       }}
     >
+      {chip?.out && (
+        <div className="ps-node-chip ps-node-chip--out">{chip.out}</div>
+      )}
+      {chip?.in && (
+        <div className="ps-node-chip ps-node-chip--in">{chip.in}</div>
+      )}
       {/* Edges still terminate on the group itself when a cross-group
           edge points at the principal — give it real handles so React
           Flow can route them, just like the standalone PrincipalNode. */}
