@@ -1,4 +1,4 @@
-import { BaseEdge, getSmoothStepPath } from "@xyflow/react";
+import { BaseEdge, EdgeLabelRenderer, getSmoothStepPath } from "@xyflow/react";
 
 import { routeOrthogonal } from "./orthogonalRouter.js";
 
@@ -74,16 +74,19 @@ export function ChanneledStepEdge(props) {
 
   if (polyline) {
     path = polylinePath(polyline);
-    // Spread labels along the polyline using a deterministic hash of
-    // the edge id rather than always placing them at the geometric
-    // midpoint. Bundling makes neighbouring edges follow very similar
-    // paths near the shared bus stubs, so midpoint-based placement
-    // piles labels on top of each other when a contract is selected
-    // and every connected edge shows its capability label. Anchoring
-    // each edge at a different fraction in [0.3, 0.7] keeps labels
-    // pinned in the readable middle band of the edge while spreading
-    // them so the user can actually distinguish what each one says.
-    const pos = labelPositionAlong(polyline, id);
+    // Two placement modes:
+    //   - Selection-mode labels (data.selectedEnd is set) anchor at
+    //     the polyline corner just before the terminal stub at the
+    //     NON-selected end. Each labeled edge connects to a different
+    //     "other" contract, so those corners spread across the canvas
+    //     and the label sits visually attached to the contract it
+    //     describes instead of landing on the shared bus trunk where
+    //     bundle members overlap.
+    //   - Other labels (bundle counts, etc.) keep the hashed-fraction
+    //     spread along the middle of the polyline.
+    const pos = data?.selectedEnd
+      ? labelPositionAtNonSelectedEnd(polyline, data.selectedEnd)
+      : labelPositionAlong(polyline, id);
     labelX = pos.x;
     labelY = pos.y;
   } else {
@@ -101,22 +104,43 @@ export function ChanneledStepEdge(props) {
     labelY = r[2];
   }
 
+  // Selection labels render in the HTML overlay above the SVG edge
+  // layer (via EdgeLabelRenderer) so no other edge — even one drawn
+  // later in the array — can paint a line through them. Inline SVG
+  // labels stay inside their <g>, so two labeled edges crossing each
+  // other still washed each other out. Bundle-count labels stay on
+  // BaseEdge: they're tiny and rarely overlapped.
+  const useOverlayLabel = Boolean(label) && Boolean(data?.selectedEnd);
   return (
-    <BaseEdge
-      id={id}
-      path={path}
-      labelX={labelX}
-      labelY={labelY}
-      label={label}
-      labelStyle={labelStyle}
-      labelBgStyle={labelBgStyle}
-      labelBgPadding={labelBgPadding}
-      labelBgBorderRadius={labelBgBorderRadius}
-      style={style}
-      markerEnd={markerEnd}
-      markerStart={markerStart}
-      interactionWidth={interactionWidth}
-    />
+    <>
+      <BaseEdge
+        id={id}
+        path={path}
+        labelX={useOverlayLabel ? undefined : labelX}
+        labelY={useOverlayLabel ? undefined : labelY}
+        label={useOverlayLabel ? undefined : label}
+        labelStyle={useOverlayLabel ? undefined : labelStyle}
+        labelBgStyle={useOverlayLabel ? undefined : labelBgStyle}
+        labelBgPadding={useOverlayLabel ? undefined : labelBgPadding}
+        labelBgBorderRadius={useOverlayLabel ? undefined : labelBgBorderRadius}
+        style={style}
+        markerEnd={markerEnd}
+        markerStart={markerStart}
+        interactionWidth={interactionWidth}
+      />
+      {useOverlayLabel && (
+        <EdgeLabelRenderer>
+          <div
+            className="ps-edge-label"
+            style={{
+              transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)`,
+            }}
+          >
+            {label}
+          </div>
+        </EdgeLabelRenderer>
+      )}
+    </>
   );
 }
 
@@ -138,6 +162,19 @@ function hashString(s) {
   let h = 5381;
   for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0;
   return Math.abs(h);
+}
+
+// Anchor a label at the corner where the polyline turns into its
+// terminal stub at the non-selected end. For a 5-segment bus-stub
+// route the two outer segments are the shared trunks every bundled
+// edge overlaps on; the second-to-outer corner is the first point
+// where each edge's geometry diverges, so anchoring there gives every
+// label its own spot near the contract it describes.
+function labelPositionAtNonSelectedEnd(polyline, selectedEnd) {
+  if (!polyline || polyline.length < 2) return polyline?.[0] || { x: 0, y: 0 };
+  const idx = selectedEnd === "source" ? polyline.length - 2 : 1;
+  const p = polyline[idx];
+  return { x: p.x, y: p.y };
 }
 
 // Pick a point along an orthogonal polyline for label placement.

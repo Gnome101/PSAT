@@ -114,8 +114,7 @@ export function SurfaceCanvas({ machines, fundFlows, principals, selectedAddress
       })
     );
 
-    setEdges(
-      initEdges.map((e) => {
+    const nextEdges = initEdges.map((e) => {
         const src = e.source?.toLowerCase();
         const tgt = e.target?.toLowerCase();
         // Aggregated bundles already terminate at group endpoints, so
@@ -137,12 +136,28 @@ export function SurfaceCanvas({ machines, fundFlows, principals, selectedAddress
         // edges directly attached to the selected node, so selecting a
         // whole group doesn't paint every internal wire with a label.
         const defaultLabel = e.label || "";
-        const labelText = (sel && directlyConnected)
+        const isSelectionLabel = sel && directlyConnected;
+        const labelText = isSelectionLabel
           ? (caps.join(", ") || e.data?.flowType || defaultLabel)
           : defaultLabel;
+        // Selection labels: tell the edge component which end is the
+        // user's selected node so it can anchor the label near the
+        // OTHER end (the contract whose relationship the label
+        // describes). Without this, every connected edge's label
+        // lands on the shared bus trunk near the selected node and
+        // they pile up on top of each other.
+        const selectedEnd = isSelectionLabel
+          ? (src === sel ? "source" : "target")
+          : undefined;
         return {
           ...e,
           label: labelText,
+          data: { ...e.data, selectedEnd },
+          // Selection labels render via EdgeLabelRenderer (HTML
+          // overlay) so labelStyle / labelBgStyle / labelBgPadding
+          // are unused for those — the chip styling lives in CSS on
+          // .ps-edge-label. Bundle-count labels keep the SVG path
+          // through BaseEdge.
           labelStyle: e.labelStyle || { fill: "#f8fafc", fontSize: 12, fontWeight: 700 },
           labelBgStyle: labelText
             ? (e.labelBgStyle || { fill: "#0f1218", fillOpacity: 0.95 })
@@ -155,8 +170,19 @@ export function SurfaceCanvas({ machines, fundFlows, principals, selectedAddress
           },
           animated: related && e.animated,
         };
-      })
-    );
+      });
+
+    // Paint-order trick: React Flow renders edges in the order of the
+    // edges array inside a single SVG layer, so any edge appearing
+    // later draws over earlier ones. Push selection-labeled edges to
+    // the end so their lines AND chips sit above every other edge that
+    // happens to cross the label area.
+    nextEdges.sort((a, b) => {
+      const aSel = a.data?.selectedEnd ? 1 : 0;
+      const bSel = b.data?.selectedEnd ? 1 : 0;
+      return aSel - bSel;
+    });
+    setEdges(nextEdges);
   }, [initNodes, initEdges, selectedAddress, focusedAddress, highlightedAddresses, onSelectMachine, onSelectPrincipal]);
 
   return (

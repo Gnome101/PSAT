@@ -771,6 +771,35 @@
   border: none !important;
 }
 
+/* React Flow renders viewport children in DOM order: edges first,
+   then edgelabel-renderer, then nodes. Without an explicit z-index
+   the group containers (nodes) paint OVER our edge labels — their
+   tinted headers + colored borders tint the chip and the borders
+   read as lines crossing the label. Lifting the renderer above the
+   nodes layer leaves clicks unaffected (pointer-events:none) but
+   keeps every chip on top of all other canvas chrome. */
+.react-flow__edgelabel-renderer {
+  z-index: 10;
+}
+
+/* Selection-time edge labels render in EdgeLabelRenderer (HTML
+   overlay) so no SVG edge can paint over them. position:absolute is
+   required by React Flow's overlay; the transform is injected by the
+   edge component to place the label at its target corner. Styling
+   matches the SVG label this replaces (opaque dark bg, bold light
+   text, ~2px radius) — only the paint layer changed. */
+.ps-edge-label {
+  position: absolute;
+  pointer-events: none;
+  background: #0f1218;
+  color: #f8fafc;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 4px 7px;
+  border-radius: 2px;
+  white-space: nowrap;
+}
+
 .ps-node-caps {
   display: flex;
   flex-wrap: wrap;
