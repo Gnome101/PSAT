@@ -50,6 +50,28 @@ function BridgeFunctionList({ label, values }) {
 }
 
 function BridgeContextCard({ bridgeContext }) {
+  if (bridgeContext?.status === "resolved" && bridgeContext?.routes?.length) {
+    const protocols = asArray(bridgeContext.protocols?.length ? bridgeContext.protocols : [bridgeContext.protocol || "Bridge"]);
+    const routes = asArray(bridgeContext.routes).map((route) => (
+      `${route.chain_display_name || route.chain || route.network || route.eid || route.domain} -> ${route.peer || route.peer_address || route.route_type || "configured"}`
+    ));
+    const policies = asArray(bridgeContext.policies).map((policy) => (
+      policy.address ? `${policy.label}: ${policy.address}` : `${policy.label}: ${policy.value}`
+    ));
+    const limits = asArray(bridgeContext.limits).map((limit) => `${limit.label}: ${limit.value}`);
+    return (
+      <div className="card">
+        <div className="card-header-row">
+          <h3>Resolved Bridge Context</h3>
+          <span className="chip alt">{bridgeContext.routes.length} active routes</span>
+        </div>
+        <BridgeChipList label="Protocols" values={protocols} fallback="Bridge" />
+        <BridgeFunctionList label="Routes" values={routes} />
+        {policies.length ? <BridgeFunctionList label="Policies" values={policies} /> : null}
+        {limits.length ? <BridgeFunctionList label="Limits" values={limits} /> : null}
+      </div>
+    );
+  }
   if (!bridgeContext?.is_bridge) return null;
   const upgrade = bridgeContext.upgrade_context || {};
   const protocols = asArray(bridgeContext.protocols);

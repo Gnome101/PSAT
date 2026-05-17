@@ -35,6 +35,7 @@ from sqlalchemy import and_, exists, func, or_, select
 from sqlalchemy.orm import Session, aliased, selectinload
 
 from db.models import (
+    Artifact,
     Contract,
     ContractBalance,
     ControlGraphEdge,
@@ -48,6 +49,7 @@ from db.models import (
     TvlSnapshot,
     UpgradeEvent,
 )
+from services.bridges.peer_analysis import annotate_bridge_peer_analysis
 from services.governance.principals import _build_company_function_entry
 
 logger = logging.getLogger("services.aggregations.company_overview")
@@ -722,6 +724,17 @@ def build_governance_view(
 
     contracts: list[dict[str, Any]] = []
     owner_groups: dict[str, list[dict]] = {}
+    bridge_runtime_by_job_id: dict[Any, dict[str, Any]] = {}
+    job_ids = [job.id for job in jobs]
+    if job_ids:
+        for job_id, data in session.execute(
+            select(Artifact.job_id, Artifact.data).where(
+                Artifact.job_id.in_(job_ids),
+                Artifact.name == "bridge_runtime_context",
+            )
+        ).all():
+            if isinstance(data, dict):
+                bridge_runtime_by_job_id[job_id] = data
 
     for job in jobs:
         request = job.request if isinstance(job.request, dict) else {}
@@ -819,10 +832,24 @@ def build_governance_view(
         control_model = summary_row.control_model if summary_row else None
 
         name_lower = contract_name.lower()
+        name_key = name_lower.replace("_", "")
+        is_op_stack_bridge_name = any(
+            marker in name_key
+            for marker in (
+                "optimismportal",
+                "superchainconfig",
+                "anchorstateregistry",
+                "systemconfig",
+                "crossdomainmessenger",
+                "standardbridge",
+            )
+        ) and any(standard in {"Bridge", "Wormhole", "OP Stack"} for standard in standards)
         bridge_standards = {"Bridge", "LayerZero", "CCIP", "Wormhole", "Hyperlane", "Axelar", "Connext"}
         bridge_protocols = sorted(
             standard for standard in standards if standard in bridge_standards and standard != "Bridge"
         )
+        if is_op_stack_bridge_name:
+            bridge_protocols = ["OP Stack"]
         bridge_effects = {
             "cross_chain_message",
             "bridge_transfer",
@@ -830,12 +857,16 @@ def build_governance_view(
             "bridge_config_update",
             "bridge_security_config",
         }
-        if (
-            "bridge" in name_lower
-            or "gateway" in name_lower
-            or all_effects.intersection(bridge_effects)
-            or any(standard in bridge_standards for standard in standards)
-        ):
+        has_bridge_effects = bool(all_effects.intersection(bridge_effects))
+        persisted_bridge_context = bridge_runtime_by_job_id.get(job.id)
+        has_active_bridge_runtime = bool(
+            isinstance(persisted_bridge_context, dict)
+            and persisted_bridge_context.get("status") == "resolved"
+            and persisted_bridge_context.get("routes")
+        )
+        if "bridge" in name_lower or "gateway" in name_lower or has_bridge_effects or is_op_stack_bridge_name:
+            role = "bridge"
+        elif has_active_bridge_runtime:
             role = "bridge"
         elif any(e in value_effects for e in ("asset_pull", "asset_send")):
             role = "value_handler"
@@ -847,6 +878,8 @@ def build_governance_view(
             role = "factory"
         else:
             role = "utility"
+        if has_active_bridge_runtime and "bridge" not in capabilities:
+            capabilities.append("bridge")
 
         balance_contract = lookup_contract or contract_row
         balances_list = []
@@ -901,16 +934,19 @@ def build_governance_view(
             code_has_upgrade_path = bool(
                 (summary_row and summary_row.is_upgradeable) or "implementation_update" in all_effects
             )
-            entry["bridge_context"] = {
-                "protocols": bridge_protocols,
-                "effect_labels": bridge_labels,
-                "has_config_update": "bridge_config_update" in all_effects,
-                "has_security_config": "bridge_security_config" in all_effects,
-                "deployed_proxy": bool(is_proxy),
-                "code_has_upgrade_path": code_has_upgrade_path,
-                "upgradeable": bool(is_proxy or code_has_upgrade_path),
-                "can_change_bridge_logic": bool(is_proxy or code_has_upgrade_path),
-            }
+            if bridge_labels or "bridge" in name_lower or "gateway" in name_lower or is_op_stack_bridge_name:
+                entry["bridge_static_context"] = {
+                    "protocols": bridge_protocols,
+                    "effect_labels": bridge_labels,
+                    "has_config_update": "bridge_config_update" in all_effects,
+                    "has_security_config": "bridge_security_config" in all_effects,
+                    "deployed_proxy": bool(is_proxy),
+                    "code_has_upgrade_path": code_has_upgrade_path,
+                    "upgradeable": bool(is_proxy or code_has_upgrade_path),
+                    "can_change_bridge_logic": bool(is_proxy or code_has_upgrade_path),
+                }
+            if has_active_bridge_runtime and isinstance(persisted_bridge_context, dict):
+                entry["bridge_context"] = annotate_bridge_peer_analysis(session, persisted_bridge_context)
 
         graph_contract = lookup_contract or contract_row
         if graph_contract:

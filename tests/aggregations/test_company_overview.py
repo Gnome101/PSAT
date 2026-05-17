@@ -19,6 +19,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from sqlalchemy import select  # noqa: E402
 
 from db.models import (  # noqa: E402
+    Artifact,
     Contract,
     ContractBalance,
     ContractSummary,
@@ -328,10 +329,110 @@ def test_build_company_overview_bridge_context_summarizes_upgrade_control(db_ses
 
     assert entry["role"] == "bridge"
     assert "bridge-security" in entry["capabilities"]
-    assert entry["bridge_context"]["protocols"] == ["LayerZero"]
-    assert entry["bridge_context"]["has_security_config"] is True
-    assert entry["bridge_context"]["code_has_upgrade_path"] is True
-    assert entry["bridge_context"]["can_change_bridge_logic"] is True
+    assert "bridge_context" not in entry
+    assert entry["bridge_static_context"]["protocols"] == ["LayerZero"]
+    assert entry["bridge_static_context"]["has_security_config"] is True
+    assert entry["bridge_static_context"]["code_has_upgrade_path"] is True
+    assert entry["bridge_static_context"]["can_change_bridge_logic"] is True
+
+
+def test_build_company_overview_does_not_promote_static_bridge_standard_only(db_session):
+    p = _add_protocol(db_session, f"bridge-standard-only-{uuid.uuid4().hex[:8]}")
+    addr = _addr("safe")
+    job = _add_job(db_session, address=addr, protocol_id=p.id, name="GnosisSafe")
+    contract = _add_contract(
+        db_session,
+        address=addr,
+        job=job,
+        protocol_id=p.id,
+        contract_name="GnosisSafe",
+        is_proxy=True,
+    )
+    db_session.add(
+        ContractSummary(
+            contract_id=contract.id,
+            control_model="multisig",
+            is_upgradeable=False,
+            is_pausable=False,
+            has_timelock=False,
+            risk_level="low",
+            is_factory=False,
+            is_nft=False,
+            standards=["Bridge", "LayerZero"],
+            source_verified=True,
+        )
+    )
+    db_session.add(
+        EffectiveFunction(
+            contract_id=contract.id,
+            function_name="execTransaction",
+            selector="0x6a761202",
+            abi_signature="execTransaction(address,uint256,bytes,uint8,uint256,uint256,uint256,address,address,bytes)",
+            effect_labels=["asset_send"],
+            effect_targets=[],
+            action_summary="Sends assets out of the contract.",
+            authority_public=False,
+            authority_roles=[],
+        )
+    )
+    db_session.commit()
+
+    payload = build_company_overview(db_session, p.name)
+    entry = next(c for c in payload["contracts"] if c["address"] == addr)
+
+    assert entry["role"] != "bridge"
+    assert "bridge_context" not in entry
+    assert "bridge_static_context" not in entry
+
+
+def test_build_company_overview_surfaces_persisted_active_bridge_runtime(db_session):
+    p = _add_protocol(db_session, f"bridge-runtime-{uuid.uuid4().hex[:8]}")
+    addr = _addr("lz")
+    peer = _addr("peer")
+    job = _add_job(db_session, address=addr, protocol_id=p.id, name="OFTAdapter")
+    contract = _add_contract(db_session, address=addr, job=job, protocol_id=p.id, contract_name="OFTAdapter")
+    db_session.add(
+        ContractSummary(
+            contract_id=contract.id,
+            control_model="ownable",
+            is_upgradeable=False,
+            is_pausable=False,
+            has_timelock=False,
+            risk_level="low",
+            is_factory=False,
+            is_nft=False,
+            standards=[],
+            source_verified=True,
+        )
+    )
+    db_session.add(
+        Artifact(
+            job_id=job.id,
+            name="bridge_runtime_context",
+            data={
+                "status": "resolved",
+                "protocol": "LayerZero",
+                "protocols": ["LayerZero"],
+                "routes": [
+                    {
+                        "chain": "base",
+                        "chain_display_name": "Base",
+                        "peer": peer,
+                        "peer_address": peer,
+                    }
+                ],
+            },
+        )
+    )
+    db_session.commit()
+
+    payload = build_company_overview(db_session, p.name)
+    entry = next(c for c in payload["contracts"] if c["address"] == addr)
+
+    assert entry["role"] == "bridge"
+    assert "bridge" in entry["capabilities"]
+    assert entry["bridge_context"]["status"] == "resolved"
+    assert entry["bridge_context"]["routes"][0]["peer_analysis"]["status"] == "not_queued"
 
 
 def test_build_functions_for_protocol_returns_keyed_function_list(db_session):

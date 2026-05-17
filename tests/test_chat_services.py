@@ -395,9 +395,10 @@ def test_contract_brief_and_upgrade_summary(db_session, seeded_protocol):
     # Owner controller was resolved via classify_address.
     assert brief["controllers"]["owner"]["kind"] == "timelock"
     assert brief["last_upgrade"]["new_impl"] == IMPL_ADDR
-    assert brief["bridge_context"]["protocols"] == ["LayerZero"]
-    assert brief["bridge_context"]["source_contract"] == IMPL_ADDR
-    assert brief["bridge_context"]["upgrade_context"]["can_change_bridge_logic"] is True
+    assert "bridge_context" not in brief
+    assert brief["bridge_static_context"]["protocols"] == ["LayerZero"]
+    assert brief["bridge_static_context"]["source_contract"] == IMPL_ADDR
+    assert brief["bridge_static_context"]["upgrade_context"]["can_change_bridge_logic"] is True
 
     miss = chat_data.contract_brief(db_session, "0x" + "0" * 40)
     assert "error" in miss
@@ -470,11 +471,12 @@ def test_tool_wrappers_round_trip(db_session, seeded_protocol):
 
     contract = chat_tools._get_contract_info(db_session, ctx, address=PROXY_ADDR)
     assert contract["kind"] == "contract"
-    assert contract["bridge_context"]["protocols"] == ["LayerZero"]
+    assert "bridge_context" not in contract
+    assert contract["bridge_static_context"]["protocols"] == ["LayerZero"]
 
     overview = chat_tools._get_contract_overview(db_session, ctx, address=PROXY_ADDR)
     assert overview["info"]["kind"] == "contract"
-    assert overview["info"]["bridge_context"]["upgrade_context"]["can_change_bridge_logic"] is True
+    assert overview["info"]["bridge_static_context"]["upgrade_context"]["can_change_bridge_logic"] is True
     assert overview["upgrade_summary"]["impl_count"] == 1
 
     upgrades = chat_tools._get_upgrade_history(db_session, ctx, address=PROXY_ADDR)

@@ -132,9 +132,10 @@ export function AgentPanel({ companyName, selectedMachine, onHighlight, onFocusA
     [turns],
   );
   const selectedBridgeContext = selectedMachine?.bridge_context || null;
+  const selectedBridgeActive = selectedBridgeContext?.status === "resolved" && selectedBridgeContext?.routes?.length > 0;
   const selectedBridgeProtocols = selectedBridgeContext?.protocols?.length
     ? selectedBridgeContext.protocols
-    : selectedBridgeContext
+    : selectedBridgeActive
       ? ["Bridge"]
       : [];
 
@@ -247,10 +248,11 @@ export function AgentPanel({ companyName, selectedMachine, onHighlight, onFocusA
             <span className="agent-context-meta"> · {selectedMachine.address?.slice(0, 8)}…</span>
           )}
         </span>
-        {selectedBridgeContext && (
+        {selectedBridgeActive && (
           <span className="agent-context-bridge">
             {selectedBridgeProtocols.join(" · ")}
-            {selectedBridgeContext.can_change_bridge_logic ? " · upgrade path changes bridge" : ""}
+            {" · "}
+            {selectedBridgeContext.routes.length} active routes
           </span>
         )}
       </div>

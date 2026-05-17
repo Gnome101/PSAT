@@ -8,6 +8,10 @@ export function ContractNode({ data }) {
   const roleColor = (ROLE_META[m.role] || ROLE_META.utility).color;
   const bridgeContext = m.bridge_context;
   const bridgeProtocols = bridgeContext?.protocols || [];
+  const activeBridge = bridgeContext?.status === "resolved" && bridgeContext?.routes?.length > 0;
+  const visibleStandards = (m.standards || []).filter((standard) => (
+    activeBridge || !["Bridge", "LayerZero", "CCIP", "Wormhole", "Hyperlane", "Axelar", "Connext"].includes(standard)
+  ));
   return (
     <div
       className={`ps-node${data.selected ? " ps-node-selected" : ""}${data.focused ? " ps-node-focused" : ""}`}
@@ -28,13 +32,14 @@ export function ContractNode({ data }) {
           ))}
         </div>
       )}
-      {m.standards && m.standards.length > 0 && (
-        <div className="ps-node-standards">{m.standards.join(" · ")}</div>
+      {visibleStandards.length > 0 && (
+        <div className="ps-node-standards">{visibleStandards.join(" · ")}</div>
       )}
-      {bridgeContext && (
+      {activeBridge && (
         <div className="ps-node-bridge">
           {bridgeProtocols.join(" · ") || "Bridge"}
-          {bridgeContext.can_change_bridge_logic ? " · upgrade path changes bridge" : ""}
+          {" · active routes "}
+          {bridgeContext.routes.length}
         </div>
       )}
       <div className="ps-node-addr">{shortAddr(m.address)}</div>

@@ -18,12 +18,15 @@ from db.models import (
     ControlGraphEdge,
     ControlGraphNode,
     ControllerValue,
+    EffectiveFunction,
     Job,
     JobStage,
 )
 from db.nested_artifacts import store_bundle as store_nested_artifacts
 from db.queue import create_job, get_artifact, store_artifact
 from schemas.control_tracking import ControlSnapshot, ControlTrackingPlan
+from services.bridges.peer_analysis import queue_bridge_peer_analysis
+from services.bridges.runtime import resolve_bridge_runtime
 from services.resolution.capability_resolver import (
     find_analysis_job_for_address,
     find_dependency_provider_job_for_address,
@@ -130,6 +133,7 @@ class ResolutionWorker(BaseWorker):
                     )
                 )
             session.commit()
+            self._resolve_bridge_runtime_context(session, job, contract_row, contract_analysis, snapshot, rpc_url)
 
         logger.info(
             "Resolution stage control snapshot complete for job %s address=%s name=%s",
@@ -250,6 +254,80 @@ class ResolutionWorker(BaseWorker):
             job.address or "0x0",
             job.name or "Contract",
         )
+
+    def _resolve_bridge_runtime_context(
+        self,
+        session: Session,
+        job: Job,
+        contract_row: Contract,
+        contract_analysis: dict,
+        snapshot: ControlSnapshot,
+        rpc_url: str,
+    ) -> None:
+        static_context = contract_analysis.get("bridge_context")
+        if not isinstance(static_context, dict) or not static_context.get("is_bridge"):
+            return
+
+        raw_summary = contract_analysis.get("summary")
+        summary = raw_summary if isinstance(raw_summary, dict) else {}
+        raw_classification = contract_analysis.get("contract_classification")
+        classification = raw_classification if isinstance(raw_classification, dict) else {}
+        standards = list(summary.get("standards") or classification.get("standards") or [])
+        controller_values = {
+            key: value.get("value")
+            for key, value in (snapshot.get("controller_values") or {}).items()
+            if isinstance(value, dict)
+        }
+        functions = [
+            {
+                "function": row.abi_signature or row.function_name,
+                "selector": row.selector,
+                "effect_labels": list(row.effect_labels or []),
+                "effect_targets": list(row.effect_targets or []),
+                "action_summary": row.action_summary,
+            }
+            for row in session.execute(
+                select(EffectiveFunction).where(EffectiveFunction.contract_id == contract_row.id)
+            ).scalars()
+        ]
+        contract = {
+            "address": contract_row.address,
+            "chain": contract_row.chain,
+            "name": contract_row.contract_name or job.name,
+            "standards": standards,
+            "controllers": controller_values,
+            "bridge_static_context": static_context,
+        }
+        try:
+            runtime = resolve_bridge_runtime(rpc_url=rpc_url, contract=contract, functions=functions)
+            if runtime.get("status") == "resolved":
+                runtime = queue_bridge_peer_analysis(
+                    session,
+                    source_job=job,
+                    source_contract=contract_row,
+                    runtime=runtime,
+                    default_rpc_url=rpc_url,
+                )
+                store_artifact(session, job.id, "bridge_runtime_context", data=runtime)
+                logger.info(
+                    "Job %s: stored bridge runtime context for %s with %d route(s)",
+                    job.id,
+                    contract_row.address,
+                    len(runtime.get("routes") or []),
+                )
+        except Exception as exc:
+            record_degraded(
+                phase="bridge_runtime_context",
+                exc=exc,
+                context={"address": contract_row.address, "job_id": str(job.id)},
+            )
+            logger.warning(
+                "Job %s: bridge runtime context resolution failed for %s: %s",
+                job.id,
+                contract_row.address,
+                exc,
+                extra={"exc_type": type(exc).__name__},
+            )
 
     def _fetch_balances(
         self,

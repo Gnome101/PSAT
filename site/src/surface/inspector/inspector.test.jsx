@@ -97,15 +97,16 @@ describe("AgentPanel", () => {
           name: "LayerZeroBridge",
           address: "0x1111111111111111111111111111111111111111",
           bridge_context: {
+            status: "resolved",
             protocols: ["LayerZero"],
-            can_change_bridge_logic: true,
+            routes: [{ eid: 30184, chain: "base", peer: "0x2222222222222222222222222222222222222222" }],
           },
         }}
         onHighlight={() => {}}
         onFocusAddress={() => {}}
       />,
     );
-    expect(screen.getByText("LayerZero · upgrade path changes bridge")).toBeInTheDocument();
+    expect(screen.getByText("LayerZero · 1 active routes")).toBeInTheDocument();
   });
 });
 

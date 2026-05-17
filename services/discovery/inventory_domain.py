@@ -72,6 +72,8 @@ CHAIN_IDS: dict[str, int] = {
     "scroll": 534352,
     "zksync": 324,
     "blast": 81457,
+    "mode": 34443,
+    "bera": 80094,
 }
 
 

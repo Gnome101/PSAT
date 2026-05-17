@@ -173,7 +173,7 @@ def build_analysis_detail(session: Session, run_name: str) -> dict[str, Any] | N
         payload["summary"] = contract_analysis.get("summary")
         bridge_context = contract_analysis.get("bridge_context")
         if isinstance(bridge_context, dict):
-            payload["bridge_context"] = bridge_context
+            payload["bridge_static_context"] = bridge_context
 
     # Synthesis fallback for upgrade_history. Mirrors the per-artifact
     # endpoint at /api/analyses/{job}/artifact/upgrade_history. Runs after

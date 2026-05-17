@@ -13,6 +13,7 @@ the LLM as message content, so they must round-trip through ``json``.
 
 from __future__ import annotations
 
+import os
 from typing import Any
 
 from sqlalchemy import func, select
@@ -22,11 +23,14 @@ from db.models import (
     AuditReport,
     Contract,
     ContractSummary,
+    EffectiveFunction,
     Job,
     JobStatus,
     Protocol,
     UpgradeEvent,
 )
+from services.bridges.peer_analysis import annotate_bridge_peer_analysis
+from services.bridges.runtime import resolve_bridge_runtime
 
 # Common aliases the same chain shows up under in our DB. Treat
 # `ethereum`/`mainnet` as the same canonical chain when matching, so a
@@ -151,8 +155,8 @@ def _resolve_contract(session, address: str, chain: str | None) -> Contract | No
     return rows[0]
 
 
-def _contract_bridge_context(session, contract: Contract) -> dict[str, Any] | None:
-    """Read normalized bridge context from the contract_analysis artifact.
+def _contract_bridge_static_context(session, contract: Contract) -> tuple[dict[str, Any], Contract] | None:
+    """Read static bridge signals from the contract_analysis artifact.
 
     Proxy shells often inherit analysis from their implementation child, so
     look at the selected contract first and then the current implementation.
@@ -165,6 +169,20 @@ def _contract_bridge_context(session, contract: Contract) -> dict[str, Any] | No
         if impl is not None and impl.id != contract.id:
             candidates.append(impl)
 
+    def has_static_signal(ctx: dict[str, Any]) -> bool:
+        if not ctx.get("is_bridge"):
+            return False
+        return any(
+            ctx.get(key)
+            for key in (
+                "send_functions",
+                "receive_functions",
+                "config_functions",
+                "security_config_functions",
+                "movement_models",
+            )
+        )
+
     for candidate in candidates:
         if candidate.job_id is None:
             continue
@@ -172,10 +190,61 @@ def _contract_bridge_context(session, contract: Contract) -> dict[str, Any] | No
         if not isinstance(artifact, dict):
             continue
         bridge_context = artifact.get("bridge_context")
-        if isinstance(bridge_context, dict):
+        if isinstance(bridge_context, dict) and has_static_signal(bridge_context):
             out = dict(bridge_context)
             out["source_contract"] = candidate.address
-            return out
+            return out, candidate
+    return None
+
+
+def _effective_functions_for_contract(session, contract: Contract) -> list[dict[str, Any]]:
+    rows = (
+        session.execute(select(EffectiveFunction).where(EffectiveFunction.contract_id == contract.id)).scalars().all()
+    )
+    return [
+        {
+            "function": row.abi_signature or row.function_name,
+            "selector": row.selector,
+            "effect_labels": list(row.effect_labels or []),
+            "effect_targets": list(row.effect_targets or []),
+            "action_summary": row.action_summary,
+        }
+        for row in rows
+    ]
+
+
+def _active_bridge_context(
+    *,
+    session,
+    contract: Contract,
+    summary: ContractSummary | None,
+    controllers: dict[str, Any],
+    static_context: dict[str, Any] | None,
+    functions: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    if static_context is None:
+        return None
+    controller_values = {
+        key: value.get("value") or value.get("address") if isinstance(value, dict) else None
+        for key, value in controllers.items()
+    }
+    try:
+        resolved = resolve_bridge_runtime(
+            rpc_url=os.getenv("ETH_RPC", "https://ethereum-rpc.publicnode.com"),
+            contract={
+                "address": contract.address,
+                "chain": contract.chain,
+                "name": contract.contract_name,
+                "standards": list(summary.standards or []) if summary else [],
+                "controllers": controller_values,
+                "bridge_static_context": static_context,
+            },
+            functions=functions,
+        )
+    except Exception:
+        return None
+    if resolved.get("status") == "resolved" and resolved.get("routes"):
+        return annotate_bridge_peer_analysis(session, resolved)
     return None
 
 
@@ -217,7 +286,26 @@ def contract_brief(session, address: str, chain: str | None = None) -> dict[str,
 
     self_kind = classify_address(session, contract.address, contract.chain)
 
-    bridge_context = _contract_bridge_context(session, contract)
+    static_bridge = _contract_bridge_static_context(session, contract)
+    bridge_static_context = static_bridge[0] if static_bridge else None
+    bridge_source_contract = static_bridge[1] if static_bridge else contract
+    bridge_functions = _effective_functions_for_contract(session, bridge_source_contract) if static_bridge else []
+    bridge_context = None
+    if bridge_source_contract.job_id is not None:
+        from db.queue import get_artifact
+
+        persisted_bridge = get_artifact(session, bridge_source_contract.job_id, "bridge_runtime_context")
+        if isinstance(persisted_bridge, dict) and persisted_bridge.get("status") == "resolved":
+            bridge_context = annotate_bridge_peer_analysis(session, persisted_bridge)
+    if bridge_context is None:
+        bridge_context = _active_bridge_context(
+            session=session,
+            contract=contract,
+            summary=summary,
+            controllers=controllers,
+            static_context=bridge_static_context,
+            functions=bridge_functions,
+        )
 
     out: dict[str, Any] = {
         "address": contract.address,
@@ -252,6 +340,8 @@ def contract_brief(session, address: str, chain: str | None = None) -> dict[str,
     }
     if bridge_context is not None:
         out["bridge_context"] = bridge_context
+    if bridge_static_context is not None:
+        out["bridge_static_context"] = bridge_static_context
     return out
 
 

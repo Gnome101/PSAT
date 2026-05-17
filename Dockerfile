@@ -53,6 +53,7 @@ COPY workers/ workers/
 COPY start_workers.sh start_container.sh start_web.sh start_browser.sh start_monitor.sh ./
 RUN chmod +x start_workers.sh start_container.sh start_web.sh start_browser.sh start_monitor.sh
 COPY services/ services/
+COPY data/ data/
 COPY schemas/ schemas/
 COPY routers/ routers/
 COPY utils/ utils/

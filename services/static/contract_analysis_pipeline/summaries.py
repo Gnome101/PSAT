@@ -1399,7 +1399,7 @@ def _build_bridge_context(
 
     standards = set(classification.get("standards") or [])
     protocols = {standard for standard in standards if standard in _BRIDGE_PROTOCOL_STANDARDS}
-    is_bridge = "Bridge" in standards or bool(protocols) or bool(bridge_functions)
+    is_bridge = bool(bridge_functions)
     has_security_config = any(
         "bridge_security_config" in (function.get("effect_labels") or []) for function in bridge_functions
     )

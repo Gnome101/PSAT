@@ -1,0 +1,1119 @@
+{
+  "source": "@layerzerolabs/lz-definitions",
+  "source_version": "3.1.2",
+  "package_spec": "@layerzerolabs/lz-definitions@3.1.2",
+  "stage": "mainnet",
+  "endpoint_version": "v2",
+  "eids": [
+    {
+      "eid": 30101,
+      "network": "ethereum-mainnet",
+      "chain": "ethereum",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30102,
+      "network": "bsc-mainnet",
+      "chain": "bsc",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30106,
+      "network": "avalanche-mainnet",
+      "chain": "avalanche",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30108,
+      "network": "aptos-mainnet",
+      "chain": "aptos",
+      "chain_type": "aptos"
+    },
+    {
+      "eid": 30109,
+      "network": "polygon-mainnet",
+      "chain": "polygon",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30110,
+      "network": "arbitrum-mainnet",
+      "chain": "arbitrum",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30111,
+      "network": "optimism-mainnet",
+      "chain": "optimism",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30112,
+      "network": "fantom-mainnet",
+      "chain": "fantom",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30114,
+      "network": "swimmer-mainnet",
+      "chain": "swimmer",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30115,
+      "network": "dfk-mainnet",
+      "chain": "dfk",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30116,
+      "network": "harmony-mainnet",
+      "chain": "harmony",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30118,
+      "network": "dexalot-mainnet",
+      "chain": "dexalot",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30125,
+      "network": "celo-mainnet",
+      "chain": "celo",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30126,
+      "network": "moonbeam-mainnet",
+      "chain": "moonbeam",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30138,
+      "network": "fuse-mainnet",
+      "chain": "fuse",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30145,
+      "network": "gnosis-mainnet",
+      "chain": "gnosis",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30148,
+      "network": "shrapnel-mainnet",
+      "chain": "shrapnel",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30149,
+      "network": "dos-mainnet",
+      "chain": "dos",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30150,
+      "network": "klaytn-mainnet",
+      "chain": "klaytn",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30151,
+      "network": "metis-mainnet",
+      "chain": "metis",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30152,
+      "network": "intain-mainnet",
+      "chain": "intain",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30153,
+      "network": "coredao-mainnet",
+      "chain": "coredao",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30154,
+      "network": "goerli-mainnet",
+      "chain": "goerli",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30155,
+      "network": "okx-mainnet",
+      "chain": "okx",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30158,
+      "network": "zkpolygon-mainnet",
+      "chain": "zkpolygon",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30159,
+      "network": "canto-mainnet",
+      "chain": "canto",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30161,
+      "network": "sepolia-mainnet",
+      "chain": "sepolia",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30165,
+      "network": "zksync-mainnet",
+      "chain": "zksync",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30167,
+      "network": "moonriver-mainnet",
+      "chain": "moonriver",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30168,
+      "network": "solana-mainnet",
+      "chain": "solana",
+      "chain_type": "solana"
+    },
+    {
+      "eid": 30173,
+      "network": "tenet-mainnet",
+      "chain": "tenet",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30175,
+      "network": "nova-mainnet",
+      "chain": "nova",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30176,
+      "network": "meter-mainnet",
+      "chain": "meter",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30177,
+      "network": "kava-mainnet",
+      "chain": "kava",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30181,
+      "network": "mantle-mainnet",
+      "chain": "mantle",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30182,
+      "network": "hubble-mainnet",
+      "chain": "hubble",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30183,
+      "network": "zkconsensys-mainnet",
+      "chain": "zkconsensys",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30184,
+      "network": "base-mainnet",
+      "chain": "base",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30195,
+      "network": "zora-mainnet",
+      "chain": "zora",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30196,
+      "network": "tomo-mainnet",
+      "chain": "tomo",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30197,
+      "network": "loot-mainnet",
+      "chain": "loot",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30198,
+      "network": "meritcircle-mainnet",
+      "chain": "meritcircle",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30199,
+      "network": "telos-mainnet",
+      "chain": "telos",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30202,
+      "network": "opbnb-mainnet",
+      "chain": "opbnb",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30205,
+      "network": "lif3-mainnet",
+      "chain": "lif3",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30210,
+      "network": "astar-mainnet",
+      "chain": "astar",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30211,
+      "network": "aurora-mainnet",
+      "chain": "aurora",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30212,
+      "network": "conflux-mainnet",
+      "chain": "conflux",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30213,
+      "network": "orderly-mainnet",
+      "chain": "orderly",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30214,
+      "network": "scroll-mainnet",
+      "chain": "scroll",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30215,
+      "network": "eon-mainnet",
+      "chain": "eon",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30216,
+      "network": "xpla-mainnet",
+      "chain": "xpla",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30217,
+      "network": "manta-mainnet",
+      "chain": "manta",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30218,
+      "network": "pgn-mainnet",
+      "chain": "pgn",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30230,
+      "network": "shimmer-mainnet",
+      "chain": "shimmer",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30234,
+      "network": "bb1-mainnet",
+      "chain": "bb1",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30235,
+      "network": "rarible-mainnet",
+      "chain": "rarible",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30236,
+      "network": "xai-mainnet",
+      "chain": "xai",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30237,
+      "network": "real-mainnet",
+      "chain": "real",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30238,
+      "network": "tiltyard-mainnet",
+      "chain": "tiltyard",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30243,
+      "network": "blast-mainnet",
+      "chain": "blast",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30255,
+      "network": "fraxtal-mainnet",
+      "chain": "fraxtal",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30257,
+      "network": "zkatana-mainnet",
+      "chain": "zkatana",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30260,
+      "network": "mode-mainnet",
+      "chain": "mode",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30263,
+      "network": "masa-mainnet",
+      "chain": "masa",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30265,
+      "network": "homeverse-mainnet",
+      "chain": "homeverse",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30266,
+      "network": "merlin-mainnet",
+      "chain": "merlin",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30267,
+      "network": "degen-mainnet",
+      "chain": "degen",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30273,
+      "network": "skale-mainnet",
+      "chain": "skale",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30274,
+      "network": "xlayer-mainnet",
+      "chain": "xlayer",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30278,
+      "network": "sanko-mainnet",
+      "chain": "sanko",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30279,
+      "network": "bob-mainnet",
+      "chain": "bob",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30280,
+      "network": "sei-mainnet",
+      "chain": "sei",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30281,
+      "network": "kinto-mainnet",
+      "chain": "kinto",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30282,
+      "network": "ebi-mainnet",
+      "chain": "ebi",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30283,
+      "network": "cyber-mainnet",
+      "chain": "cyber",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30284,
+      "network": "iota-mainnet",
+      "chain": "iota",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30285,
+      "network": "joc-mainnet",
+      "chain": "joc",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30290,
+      "network": "taiko-mainnet",
+      "chain": "taiko",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30291,
+      "network": "xchain-mainnet",
+      "chain": "xchain",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30292,
+      "network": "etherlink-mainnet",
+      "chain": "etherlink",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30293,
+      "network": "bouncebit-mainnet",
+      "chain": "bouncebit",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30294,
+      "network": "gravity-mainnet",
+      "chain": "gravity",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30295,
+      "network": "flare-mainnet",
+      "chain": "flare",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30301,
+      "network": "zklink-mainnet",
+      "chain": "zklink",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30302,
+      "network": "peaq-mainnet",
+      "chain": "peaq",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30303,
+      "network": "zircuit-mainnet",
+      "chain": "zircuit",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30309,
+      "network": "lightlink-mainnet",
+      "chain": "lightlink",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30311,
+      "network": "lyra-mainnet",
+      "chain": "lyra",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30312,
+      "network": "ape-mainnet",
+      "chain": "ape",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30313,
+      "network": "reya-mainnet",
+      "chain": "reya",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30314,
+      "network": "bitlayer-mainnet",
+      "chain": "bitlayer",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30315,
+      "network": "dm2verse-mainnet",
+      "chain": "dm2verse",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30316,
+      "network": "hedera-mainnet",
+      "chain": "hedera",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30317,
+      "network": "bevm-mainnet",
+      "chain": "bevm",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30318,
+      "network": "plume-mainnet",
+      "chain": "plume",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30319,
+      "network": "worldchain-mainnet",
+      "chain": "worldchain",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30320,
+      "network": "unichain-mainnet",
+      "chain": "unichain",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30321,
+      "network": "lisk-mainnet",
+      "chain": "lisk",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30322,
+      "network": "morph-mainnet",
+      "chain": "morph",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30323,
+      "network": "codex-mainnet",
+      "chain": "codex",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30324,
+      "network": "abstract-mainnet",
+      "chain": "abstract",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30325,
+      "network": "movement-mainnet",
+      "chain": "movement",
+      "chain_type": "aptos"
+    },
+    {
+      "eid": 30326,
+      "network": "initia-mainnet",
+      "chain": "initia",
+      "chain_type": "initia"
+    },
+    {
+      "eid": 30327,
+      "network": "superposition-mainnet",
+      "chain": "superposition",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30328,
+      "network": "edu-mainnet",
+      "chain": "edu",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30329,
+      "network": "hemi-mainnet",
+      "chain": "hemi",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30330,
+      "network": "islander-mainnet",
+      "chain": "islander",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30331,
+      "network": "mp1-mainnet",
+      "chain": "mp1",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30332,
+      "network": "sonic-mainnet",
+      "chain": "sonic",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30333,
+      "network": "rootstock-mainnet",
+      "chain": "rootstock",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30334,
+      "network": "sophon-mainnet",
+      "chain": "sophon",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30335,
+      "network": "swell-mainnet",
+      "chain": "swell",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30336,
+      "network": "flow-mainnet",
+      "chain": "flow",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30337,
+      "network": "bl4-mainnet",
+      "chain": "bl4",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30338,
+      "network": "bl5-mainnet",
+      "chain": "bl5",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30339,
+      "network": "ink-mainnet",
+      "chain": "ink",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30340,
+      "network": "soneium-mainnet",
+      "chain": "soneium",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30341,
+      "network": "space-mainnet",
+      "chain": "space",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30342,
+      "network": "glue-mainnet",
+      "chain": "glue",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30343,
+      "network": "ton-mainnet",
+      "chain": "ton",
+      "chain_type": "ton"
+    },
+    {
+      "eid": 30359,
+      "network": "cronosevm-mainnet",
+      "chain": "cronosevm",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30360,
+      "network": "cronoszkevm-mainnet",
+      "chain": "cronoszkevm",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30361,
+      "network": "goat-mainnet",
+      "chain": "goat",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30362,
+      "network": "bera-mainnet",
+      "chain": "bera",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30363,
+      "network": "bahamut-mainnet",
+      "chain": "bahamut",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30364,
+      "network": "story-mainnet",
+      "chain": "story",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30365,
+      "network": "xdc-mainnet",
+      "chain": "xdc",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30366,
+      "network": "concrete-mainnet",
+      "chain": "concrete",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30367,
+      "network": "hyperliquid-mainnet",
+      "chain": "hyperliquid",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30368,
+      "network": "nibiruburned-mainnet",
+      "chain": "nibiruburned",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30369,
+      "network": "nibiru-mainnet",
+      "chain": "nibiru",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30370,
+      "network": "plumephoenix-mainnet",
+      "chain": "plumephoenix",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30371,
+      "network": "gunz-mainnet",
+      "chain": "gunz",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30372,
+      "network": "animechain-mainnet",
+      "chain": "animechain",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30373,
+      "network": "lens-mainnet",
+      "chain": "lens",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30374,
+      "network": "subtensorevm-mainnet",
+      "chain": "subtensorevm",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30375,
+      "network": "katana-mainnet",
+      "chain": "katana",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30376,
+      "network": "botanix-mainnet",
+      "chain": "botanix",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30377,
+      "network": "tac-mainnet",
+      "chain": "tac",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30378,
+      "network": "sui-mainnet",
+      "chain": "sui",
+      "chain_type": "sui"
+    },
+    {
+      "eid": 30379,
+      "network": "silicon-mainnet",
+      "chain": "silicon",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30380,
+      "network": "somnia-mainnet",
+      "chain": "somnia",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30381,
+      "network": "camp-mainnet",
+      "chain": "camp",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30382,
+      "network": "humanity-mainnet",
+      "chain": "humanity",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30383,
+      "network": "plasma-mainnet",
+      "chain": "plasma",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30384,
+      "network": "apexfusionnexus-mainnet",
+      "chain": "apexfusionnexus",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30385,
+      "network": "dinari-mainnet",
+      "chain": "dinari",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30386,
+      "network": "zkverify-mainnet",
+      "chain": "zkverify",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30387,
+      "network": "etherealburned-mainnet",
+      "chain": "etherealburned",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30388,
+      "network": "og-mainnet",
+      "chain": "og",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30389,
+      "network": "gatelayer-mainnet",
+      "chain": "gatelayer",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30390,
+      "network": "monad-mainnet",
+      "chain": "monad",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30391,
+      "network": "ethereal-mainnet",
+      "chain": "ethereal",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30392,
+      "network": "openledger-mainnet",
+      "chain": "openledger",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30393,
+      "network": "doma-mainnet",
+      "chain": "doma",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30394,
+      "network": "injectiveevm-mainnet",
+      "chain": "injectiveevm",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30395,
+      "network": "nexera-mainnet",
+      "chain": "nexera",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30396,
+      "network": "stable-mainnet",
+      "chain": "stable",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30397,
+      "network": "zama-mainnet",
+      "chain": "zama",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30398,
+      "network": "megaeth-mainnet",
+      "chain": "megaeth",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30399,
+      "network": "horizen-mainnet",
+      "chain": "horizen",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30400,
+      "network": "converge-mainnet",
+      "chain": "converge",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30401,
+      "network": "rise-mainnet",
+      "chain": "rise",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30402,
+      "network": "redbelly-mainnet",
+      "chain": "redbelly",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30403,
+      "network": "citrea-mainnet",
+      "chain": "citrea",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30404,
+      "network": "moca-mainnet",
+      "chain": "moca",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30405,
+      "network": "sagaevm-mainnet",
+      "chain": "sagaevm",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30406,
+      "network": "kite-mainnet",
+      "chain": "kite",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30407,
+      "network": "pharos-mainnet",
+      "chain": "pharos",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30408,
+      "network": "irys-mainnet",
+      "chain": "irys",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30409,
+      "network": "chiliz-mainnet",
+      "chain": "chiliz",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30410,
+      "network": "tempo-mainnet",
+      "chain": "tempo",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30411,
+      "network": "edge-mainnet",
+      "chain": "edge",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30412,
+      "network": "gensyn-mainnet",
+      "chain": "gensyn",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30413,
+      "network": "ault-mainnet",
+      "chain": "ault",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30414,
+      "network": "neox-mainnet",
+      "chain": "neox",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30415,
+      "network": "rayls-mainnet",
+      "chain": "rayls",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30416,
+      "network": "robinhood-mainnet",
+      "chain": "robinhood",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30417,
+      "network": "arc-mainnet",
+      "chain": "arc",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30418,
+      "network": "adi-mainnet",
+      "chain": "adi",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30420,
+      "network": "tron-mainnet",
+      "chain": "tron",
+      "chain_type": "evm"
+    },
+    {
+      "eid": 30423,
+      "network": "iotal1-mainnet",
+      "chain": "iotal1",
+      "chain_type": "iotal1"
+    },
+    {
+      "eid": 30500,
+      "network": "starknet-mainnet",
+      "chain": "starknet",
+      "chain_type": "starknet"
+    },
+    {
+      "eid": 30600,
+      "network": "stellar-mainnet",
+      "chain": "stellar",
+      "chain_type": "stellar"
+    }
+  ]
+}

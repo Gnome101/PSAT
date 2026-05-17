@@ -306,6 +306,34 @@ describe("SummaryTab", () => {
     expect(screen.getByText("upgradeTo(address)")).toBeInTheDocument();
     expect(screen.queryByText("Bridge Protocols")).not.toBeInTheDocument();
   });
+
+  it("shows resolved bridge runtime routes", () => {
+    render(
+      <SummaryTab
+        detail={{
+          address: "0x1111111111111111111111111111111111111111",
+          summary: { standards: ["Bridge", "LayerZero"] },
+          bridge_context: {
+            status: "resolved",
+            protocol: "LayerZero",
+            protocols: ["LayerZero"],
+            routes: [
+              {
+                chain: "base",
+                chain_display_name: "Base",
+                peer: "0x2222222222222222222222222222222222222222",
+              },
+            ],
+            limits: [{ label: "base max message size", value: 10000 }],
+          },
+        }}
+      />,
+    );
+
+    expect(screen.getByText("Resolved Bridge Context")).toBeInTheDocument();
+    expect(screen.getByText("Base -> 0x2222222222222222222222222222222222222222")).toBeInTheDocument();
+    expect(screen.getByText("base max message size: 10000")).toBeInTheDocument();
+  });
 });
 
 describe("HeroMesh", () => {

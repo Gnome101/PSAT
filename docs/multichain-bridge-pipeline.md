@@ -44,9 +44,12 @@ Protocol standards such as `LayerZero`, `CCIP`, `Wormhole`, `Hyperlane`,
 `Axelar`, and `Connext` are surfaced as contract standards when the code shape
 matches their send/receive/config patterns.
 
-Static analysis also emits a normalized `bridge_context` block inside
-`contract_analysis`. It groups send, receive, config, security-config, and
-upgrade functions, then attaches the existing upgradeability result:
+Static analysis emits a normalized bridge-signal block inside
+`contract_analysis`. The company API exposes those unresolved signals as
+`bridge_static_context`; the user-facing `bridge_context` name is reserved for
+active runtime context with resolved routes. The static block groups send,
+receive, config, security-config, and upgrade functions, then attaches the
+existing upgradeability result:
 
 - `upgrade_context.code_has_upgrade_path`: the code exposes an implementation
   update path or proxy shell shape;
@@ -72,6 +75,20 @@ Examples:
   announce, and routing/aggregation ISM configuration;
 - Wormhole emitter or VAA verification paths;
 - Axelar gateway/gas-service executable paths.
+
+For LayerZero V2, PSAT keeps the candidate endpoint IDs in
+`data/layerzero_eids.json`. That file is generated from LayerZero's npm SDK
+package instead of a hand-maintained shortlist:
+
+```bash
+node scripts/refresh_layerzero_eids.mjs
+```
+
+The runtime resolver uses those SDK-derived EIDs to batch-probe selected OApps
+for configured peers, then performs the authoritative onchain reads for message
+libraries, executor limits, and ULN/DVN config. Only that resolved output should
+be returned as `bridge_context`. The SDK tells PSAT which EIDs exist; the OApp
+and Endpoint contracts tell PSAT which routes are actually configured.
 
 The important output is not just "external call"; it is:
 

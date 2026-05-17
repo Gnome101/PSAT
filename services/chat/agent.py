@@ -81,10 +81,10 @@ def _system_prompt(session, ctx: AgentContext) -> str:
             "control without verifying the actual gating."
         ),
         (
-            "BRIDGE CONTEXT — when a tool result includes bridge_context, use its "
-            "protocol names, send/receive/config function names, security model, "
-            "and upgrade_context directly. Do not summarize bridge setup as a "
-            "count when concrete functions or protocol names are available."
+            "BRIDGE CONTEXT — bridge_context means active resolved bridge state "
+            "(for example peers, DVNs, endpoints, and limits). bridge_static_context "
+            "is only an unresolved static signal; do not present its protocol names "
+            "as configured routes or security policy."
         ),
     ]
     if ctx.selected_address:

@@ -7,14 +7,6 @@ import { BalanceTable } from "./BalanceTable.jsx";
 import { LaneColumn } from "./LaneColumn.jsx";
 import { OpsLane } from "./OpsLane.jsx";
 
-const BRIDGE_EFFECT_LABELS = new Set([
-  "cross_chain_message",
-  "bridge_transfer",
-  "bridge_receive",
-  "bridge_config_update",
-  "bridge_security_config",
-]);
-
 function unique(values) {
   return [...new Set(values.filter(Boolean))];
 }
@@ -38,65 +30,108 @@ function readableBridgeLabel(value) {
   return String(value || "").replace(/_/g, " ");
 }
 
+function dvnSummary(config) {
+  if (!config) return "DVNs unresolved";
+  const required = config.required_dvns || [];
+  const optional = config.optional_dvns || [];
+  const confirmations = config.confirmations != null ? `${config.confirmations} conf` : "confirmations unresolved";
+  const requiredText = required.length ? `${required.length} required DVN${required.length === 1 ? "" : "s"}` : "no required DVNs";
+  const optionalText = optional.length ? `, ${optional.length} optional` : "";
+  return `${confirmations}, ${requiredText}${optionalText}`;
+}
+
+function RuntimeRouteList({ routes }) {
+  if (!routes?.length) return null;
+  return (
+    <div className="ps-bridge-section">
+      <div className="ps-bridge-section-label">Resolved routes</div>
+      <div className="ps-bridge-function-list">
+        {routes.map((route) => {
+          const maxSize = route.executor?.max_message_size;
+          const peer = route.peer || route.peer_address || route.route_type || "route configured";
+          const peerStatus = route.peer_analysis?.status;
+          return (
+            <span className="ps-bridge-function" key={`${route.eid || route.domain || route.chain}:${peer}`}>
+              {route.chain_display_name || route.chain || route.network || route.eid || route.domain}{" -> "}{peer}
+              {peerStatus ? <><br />peer analysis: {readableBridgeLabel(peerStatus)}</> : null}
+              <br />
+              send: {dvnSummary(route.send_uln)}
+              <br />
+              receive: {dvnSummary(route.receive_uln)}
+              {route.ism ? <><br />ISM: {route.ism}</> : null}
+              {route.l2_chain_id ? <><br />L2 chain: {route.l2_chain_id}</> : null}
+              {maxSize != null ? <><br />max message: {maxSize}</> : null}
+            </span>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function BridgeFunctionBlock({ label, values }) {
+  if (!values.length) return null;
   return (
     <div className="ps-bridge-section">
       <div className="ps-bridge-section-label">{label}</div>
-      {values.length ? (
-        <div className="ps-bridge-function-list">
-          {values.map((value) => (
-            <span className="ps-bridge-function" key={value}>{value}</span>
-          ))}
-        </div>
-      ) : (
-        <span className="ps-bridge-empty">None detected</span>
-      )}
+      <div className="ps-bridge-function-list">
+        {values.map((value) => (
+          <span className="ps-bridge-function" key={value}>{value}</span>
+        ))}
+      </div>
     </div>
   );
 }
 
 function BridgeContextPanel({ machine }) {
   const bridgeContext = machine.bridge_context;
-  const allBridgeFunctions = bridgeFunctions(machine, (effects) =>
-    [...BRIDGE_EFFECT_LABELS].some((label) => effects.has(label))
-  );
-  if (!bridgeContext && allBridgeFunctions.length === 0) return null;
+  if (!bridgeContext || bridgeContext.status !== "resolved" || !bridgeContext.routes?.length) return null;
 
-  const protocols = bridgeContext?.protocols?.length ? bridgeContext.protocols : ["Bridge"];
-  const movement = bridgeFunctions(machine, (effects) =>
-    (effects.has("cross_chain_message") || effects.has("bridge_transfer")) && !effects.has("bridge_config_update")
-  );
+  const protocols = bridgeContext.protocols?.length ? bridgeContext.protocols : [bridgeContext.protocol || "Bridge"];
   const receives = bridgeFunctions(machine, (effects) => effects.has("bridge_receive"));
   const routeConfig = bridgeFunctions(machine, (effects) =>
     effects.has("bridge_config_update") && !effects.has("bridge_security_config")
   );
   const securityConfig = bridgeFunctions(machine, (effects) => effects.has("bridge_security_config"));
-  const upgradePath = bridgeFunctions(machine, (effects) => effects.has("implementation_update"));
-  const effectLabels = (bridgeContext?.effect_labels || []).filter(Boolean);
+  const configFunctions = unique([...(bridgeContext.config_functions || []), ...routeConfig]);
+  const policies = (bridgeContext.policies || []).map((policy) => (
+    policy.address ? `${policy.label}: ${policy.address}` : policy.label
+  ));
+  const assets = (bridgeContext.assets || []).map((asset) => `${asset.label}: ${asset.address}`);
+  const relationships = (bridgeContext.relationships || []).map((item) => `${item.label}: ${item.address}`);
+  const endpoint = bridgeContext.endpoint?.address
+    ? [`endpoint: ${bridgeContext.endpoint.address}${bridgeContext.endpoint.local_eid ? ` (local eid ${bridgeContext.endpoint.local_eid})` : ""}`]
+    : [];
+  const mailbox = bridgeContext.mailbox?.address
+    ? [`mailbox: ${bridgeContext.mailbox.address}${bridgeContext.mailbox.local_domain != null ? ` (domain ${bridgeContext.mailbox.local_domain})` : ""}`]
+    : [];
+  const libraries = unique((bridgeContext.routes || []).flatMap((route) => [
+    route.send_library ? `${route.chain} send lib: ${route.send_library}` : null,
+    route.receive_library ? `${route.chain} receive lib: ${route.receive_library}` : null,
+  ]));
 
   return (
     <section className="ps-bridge-panel">
       <div className="ps-bridge-panel-top">
-        <div className="ps-bridge-title">Bridge Context</div>
-        {bridgeContext?.can_change_bridge_logic && (
-          <span className="ps-bridge-status">upgrade path changes bridge</span>
-        )}
+        <div className="ps-bridge-title">Resolved Bridge Context</div>
+        <span className="ps-bridge-status">{bridgeContext.routes.length} active routes</span>
       </div>
       <div className="ps-bridge-chip-row">
         {protocols.map((protocol) => (
           <span className="ps-bridge-chip" key={protocol}>{protocol}</span>
         ))}
-        {effectLabels.map((label) => (
-          <span className="ps-bridge-chip ps-bridge-chip-muted" key={label}>
-            {readableBridgeLabel(label)}
-          </span>
-        ))}
+        {bridgeContext.source && <span className="ps-bridge-chip ps-bridge-chip-muted">{readableBridgeLabel(bridgeContext.source)}</span>}
       </div>
-      <BridgeFunctionBlock label="Token / message movement" values={movement} />
+      <BridgeFunctionBlock label="Endpoint" values={endpoint} />
+      <BridgeFunctionBlock label="Mailbox" values={mailbox} />
+      <BridgeFunctionBlock label="Policies" values={policies} />
+      <BridgeFunctionBlock label="Relationships" values={relationships} />
+      <BridgeFunctionBlock label="Assets" values={assets} />
+      <RuntimeRouteList routes={bridgeContext.routes} />
       <BridgeFunctionBlock label="Receives" values={receives} />
-      <BridgeFunctionBlock label="Route config" values={routeConfig} />
+      <BridgeFunctionBlock label="Route config" values={configFunctions} />
       <BridgeFunctionBlock label="Security config" values={securityConfig} />
-      <BridgeFunctionBlock label="Upgrade path" values={upgradePath} />
+      <BridgeFunctionBlock label="Message libraries" values={libraries} />
     </section>
   );
 }
@@ -118,6 +153,7 @@ export function ContractMachine({
   );
   const bridgeContext = machine.bridge_context;
   const bridgeProtocols = bridgeContext?.protocols || [];
+  const activeBridge = bridgeContext?.status === "resolved" && bridgeContext?.routes?.length > 0;
 
   useEffect(() => {
     if (highlightedFunction) setActiveTab(tabForLane(highlightedFunction.lane));
@@ -155,13 +191,12 @@ export function ContractMachine({
           {machine.is_proxy ? <span className="ps-badge" style={{ "--badge-accent": "#9a8a6e" }}>{machine.proxy_type || "proxy"}</span> : null}
           {machine.upgrade_count != null ? <span className="ps-badge" style={{ "--badge-accent": "#8b92a8" }}>{machine.upgrade_count} upgrades</span> : null}
           <span className="ps-badge" style={{ "--badge-accent": "#6b7590" }}>{machine.totalFunctions} functions</span>
-          {bridgeContext && (
+          {activeBridge && (
             <>
               {(bridgeProtocols.length ? bridgeProtocols : ["Bridge"]).map((protocol) => (
                 <span className="ps-badge" style={{ "--badge-accent": "#9e8a6a" }} key={protocol}>{protocol}</span>
               ))}
-              {bridgeContext.has_security_config && <span className="ps-badge" style={{ "--badge-accent": "#a08a70" }}>bridge security</span>}
-              {bridgeContext.can_change_bridge_logic && <span className="ps-badge" style={{ "--badge-accent": "#d4a017" }}>upgrade path changes bridge</span>}
+              <span className="ps-badge" style={{ "--badge-accent": "#a08a70" }}>{bridgeContext.routes.length} routes</span>
             </>
           )}
           {usdLabel && <span className="ps-badge" style={{ "--badge-accent": "#f59e0b" }}>{usdLabel}</span>}
