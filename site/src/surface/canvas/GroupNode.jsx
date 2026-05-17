@@ -60,8 +60,10 @@ export function GroupNode({ data }) {
           if (data.onSelect) data.onSelect();
         }}
       >
-        <span className="ps-group-badge">{badge}</span>
-        <span className="ps-group-addr">{shortAddr(p.address)}</span>
+        <div className="ps-group-header-row">
+          <span className="ps-group-badge">{badge}</span>
+          <span className="ps-group-addr">{shortAddr(p.address)}</span>
+        </div>
         <span className="ps-group-count">
           {data.childCount} contract{data.childCount === 1 ? "" : "s"}
           {tvl ? ` · ${tvl}` : ""}

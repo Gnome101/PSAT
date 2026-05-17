@@ -669,7 +669,7 @@ export function assignEdgeLanes(nodes, edges) {
 // than the .ps-node CSS naturally renders so rectpacking gives each
 // card its own column of slack — without this, cards on neighbouring
 // rows in dense groups visually butt up against each other.
-const GROUP_PADDING_TOP = 60;
+const GROUP_PADDING_TOP = 74;
 const GROUP_PADDING_SIDE = 24;
 const GROUP_PADDING_BOTTOM = 24;
 // Child cell sized for the widest contract card the .ps-node CSS

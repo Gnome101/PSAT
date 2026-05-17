@@ -2115,9 +2115,10 @@
   left: 0;
   right: 0;
   display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 11px 14px;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  padding: 9px 14px;
   background: linear-gradient(180deg, var(--principal-header-bg-top, rgba(15, 18, 24, 0.92)) 0%, var(--principal-header-bg-bot, rgba(15, 18, 24, 0.55)) 100%);
   border-bottom: 2px solid var(--principal-color, rgba(148, 163, 184, 0.12));
   border-top-left-radius: 8px;
@@ -2130,6 +2131,13 @@
 
 .ps-group-header:hover {
   filter: brightness(1.12);
+}
+
+.ps-group-header-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
 }
 
 .ps-group-badge {
@@ -2155,10 +2163,7 @@
   font-size: 12px;
   color: #f8fafc;
   font-weight: 700;
-  margin-left: auto;
   white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 
 /* React Flow stacks nodes in DOM order. Group containers go behind
