@@ -214,7 +214,7 @@ describe("aggregateEdges", () => {
   const machines = buildMachines(ETHERFI_COMPANY_RICH, functionData);
   const safeAddr = RICH_ADDRESSES.SAFE.toLowerCase();
 
-  it("collapses multiple cross-group edges into one bundle with a count", () => {
+  it("collapses multiple cross-group edges into one bundle, keeping samples but no count label", () => {
     const rawEdges = [
       { id: "e1", source: machines[0].address, target: "0xexternal1", data: {} },
       { id: "e2", source: machines[1].address, target: "0xexternal1", data: {} },
@@ -230,9 +230,7 @@ describe("aggregateEdges", () => {
     expect(aggregated).toHaveLength(1);
     expect(aggregated[0].source.toLowerCase()).toBe(safeAddr);
     expect(aggregated[0].target).toBe("0xexternal1");
-    expect(aggregated[0].label).toBe("3");
-    expect(aggregated[0].data.count).toBe(3);
-    expect(aggregated[0].data.aggregated).toBe(true);
+    expect(aggregated[0].label).toBeUndefined();
     expect(aggregated[0].data.samples).toHaveLength(3);
   });
 
@@ -259,8 +257,7 @@ describe("aggregateEdges", () => {
     const principals = [{ address: RICH_ADDRESSES.SAFE, type: "safe", controls: [] }];
     const aggregated = aggregateEdges(rawEdges, contractToGroup, principals, machines);
     expect(aggregated).toHaveLength(1);
-    expect(aggregated[0].label).toBe("");
-    expect(aggregated[0].data.aggregated).toBe(false);
-    expect(aggregated[0].data.count).toBe(1);
+    expect(aggregated[0].label).toBeUndefined();
+    expect(aggregated[0].data.samples).toHaveLength(1);
   });
 });

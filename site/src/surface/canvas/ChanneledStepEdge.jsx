@@ -74,16 +74,14 @@ export function ChanneledStepEdge(props) {
 
   if (polyline) {
     path = polylinePath(polyline);
-    // Two placement modes:
-    //   - Selection-mode labels (data.selectedEnd is set) anchor at
-    //     the polyline corner just before the terminal stub at the
-    //     NON-selected end. Each labeled edge connects to a different
-    //     "other" contract, so those corners spread across the canvas
-    //     and the label sits visually attached to the contract it
-    //     describes instead of landing on the shared bus trunk where
-    //     bundle members overlap.
-    //   - Other labels (bundle counts, etc.) keep the hashed-fraction
-    //     spread along the middle of the polyline.
+    // Selection-mode labels (data.selectedEnd is set) anchor at the
+    // polyline corner just before the terminal stub at the
+    // NON-selected end. Each labeled edge connects to a different
+    // "other" contract, so those corners spread across the canvas and
+    // the label sits visually attached to the contract it describes
+    // instead of landing on the shared bus trunk where bundle members
+    // overlap. The labelPositionAlong fallback exists for any future
+    // mid-edge label; right now no edge sets a non-selection label.
     const pos = data?.selectedEnd
       ? labelPositionAtNonSelectedEnd(polyline, data.selectedEnd)
       : labelPositionAlong(polyline, id);

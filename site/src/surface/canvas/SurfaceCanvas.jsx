@@ -152,16 +152,14 @@ export function SurfaceCanvas({ machines, fundFlows, principals, selectedAddress
           ? edgeInAudit
           : (!sel || directlyConnected || (connectedNodes.has(src) && connectedNodes.has(tgt)));
         const caps = e.data?.capabilities || [];
-        // Default label is whatever buildGraphLayout assigned (the
-        // bundle count for aggregated edges). On selection we replace
-        // that with the per-flow capability summary — but only for
-        // edges directly attached to the selected node, so selecting a
-        // whole group doesn't paint every internal wire with a label.
-        const defaultLabel = e.label || "";
+        // Bundled edges carry no label by default — the shared-trunk
+        // routing already communicates weight visually. Labels appear
+        // only on selection, and only for edges directly attached to
+        // the selected node (the per-flow capability summary).
         const isSelectionLabel = sel && directlyConnected;
         const labelText = isSelectionLabel
-          ? (caps.join(", ") || e.data?.flowType || defaultLabel)
-          : defaultLabel;
+          ? (caps.join(", ") || e.data?.flowType || "")
+          : "";
         // Selection labels: tell the edge component which end is the
         // user's selected node so it can anchor the label near the
         // OTHER end (the contract whose relationship the label
@@ -177,9 +175,9 @@ export function SurfaceCanvas({ machines, fundFlows, principals, selectedAddress
           data: { ...e.data, selectedEnd },
           // Selection labels render via EdgeLabelRenderer (HTML
           // overlay) so labelStyle / labelBgStyle / labelBgPadding
-          // are unused for those — the chip styling lives in CSS on
-          // .ps-edge-label. Bundle-count labels keep the SVG path
-          // through BaseEdge.
+          // are unused for the chip itself — its styling lives in CSS
+          // on .ps-edge-label. These props are kept as a harmless
+          // fallback in case anything reverts to BaseEdge rendering.
           labelStyle: e.labelStyle || { fill: "#f8fafc", fontSize: 12, fontWeight: 700 },
           labelBgStyle: labelText
             ? (e.labelBgStyle || { fill: "#0f1218", fillOpacity: 0.95 })

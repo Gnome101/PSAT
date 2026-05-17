@@ -565,14 +565,14 @@ export function aggregateEdges(rawEdges, contractToGroup, principalList, machine
         strokeWidth: width,
       },
       animated: false,
-      label: isBundle ? String(count) : "",
-      labelStyle: { fill: "#f8fafc", fontSize: 13, fontWeight: 800 },
-      labelBgStyle: { fill: "#0f1218", fillOpacity: 0.95 },
-      labelBgPadding: [4, 7],
-      labelBgBorderRadius: 5,
+      // The shared-trunk routing from routeOrthogonal carries the
+      // "many connections" signal visually — every edge leaving a
+      // handle overlaps on the same perpendicular stub before forking,
+      // so the cable thickness at the bus column already reads as
+      // weight. A numeric count label on top of that was redundant and
+      // out of style with the rest of the page; selection chips
+      // (added later) communicate the per-edge specifics on click.
       data: {
-        count,
-        aggregated: isBundle,
         flowType: b.samples[0]?.data?.flowType,
         capabilities: Array.from(
           new Set(b.samples.flatMap((s) => s.data?.capabilities || [])),
