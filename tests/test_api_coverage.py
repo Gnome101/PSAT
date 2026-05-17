@@ -1234,6 +1234,88 @@ def test_company_audit_coverage_reuses_strict_dependency_rows(mock_session_cls):
     assert vault["last_audit"]["inherited_contract_address"] == target_addr
 
 
+@patch("routers.deps.SessionLocal")
+def test_company_audit_coverage_adds_exact_canonical_standard_rows(mock_session_cls):
+    client = _make_client()
+    mock_session = MagicMock()
+    _mock_session_ctx(mock_session_cls, mock_session)
+
+    protocol = SimpleNamespace(id=1, name="etherfi")
+    proxy = SimpleNamespace(
+        id=10,
+        address="0x" + "a" * 40,
+        chain="ethereum",
+        contract_name="TransparentUpgradeableProxy",
+        is_proxy=True,
+        implementation="0x" + "b" * 40,
+    )
+    impl = SimpleNamespace(
+        id=11,
+        address="0x" + "b" * 40,
+        chain="ethereum",
+        contract_name="EtherFiVault",
+        is_proxy=False,
+        implementation=None,
+    )
+    app_specific_safe = SimpleNamespace(
+        id=12,
+        address="0x" + "c" * 40,
+        chain="ethereum",
+        contract_name="User Safe Factory",
+        is_proxy=False,
+        implementation=None,
+    )
+    safe_proxy = SimpleNamespace(
+        id=13,
+        address="0x" + "d" * 40,
+        chain="ethereum",
+        contract_name="GnosisSafeProxy",
+        is_proxy=False,
+        implementation=None,
+    )
+
+    class Result:
+        def __init__(self, *, scalar=None, scalars=None, rows=None):
+            self._scalar = scalar
+            self._scalars = scalars or []
+            self._rows = rows
+
+        def scalar_one_or_none(self):
+            return self._scalar
+
+        def scalars(self):
+            return self
+
+        def all(self):
+            return self._rows if self._rows is not None else self._scalars
+
+    mock_session.execute.side_effect = [
+        Result(scalar=protocol),
+        Result(scalars=[proxy, impl, app_specific_safe, safe_proxy]),
+        Result(scalars=[]),
+        Result(scalars=[]),
+        Result(rows=[]),
+    ]
+
+    response = client.get("/api/company/etherfi/audit_coverage")
+    assert response.status_code == 200
+    body = response.json()
+
+    assert body["audit_count"] == 0
+    by_name = {row["contract_name"]: row for row in body["coverage"]}
+
+    proxy_coverage = by_name["TransparentUpgradeableProxy"]
+    assert proxy_coverage["audit_count"] == 1
+    assert proxy_coverage["last_audit"]["audit_id"] == "canonical:openzeppelin-transparent-upgradeable-proxy"
+    assert proxy_coverage["last_audit"]["match_type"] == "canonical_standard"
+    assert proxy_coverage["last_audit"]["coverage_source"] == "canonical_standard"
+    assert proxy_coverage["last_audit"]["equivalence_status"] == "proven"
+
+    assert by_name["EtherFiVault"]["audit_count"] == 0
+    assert by_name["User Safe Factory"]["audit_count"] == 0
+    assert by_name["GnosisSafeProxy"]["last_audit"]["audit_id"] == "canonical:gnosis-safe-proxy"
+
+
 # ============================================================================
 # 10. Proxy subscription endpoints
 # ============================================================================

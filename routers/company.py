@@ -18,6 +18,7 @@ from services.aggregations.company_overview import (
     build_functions_for_protocol,
     resolve_company_jobs,
 )
+from services.audits.canonical_standards import canonical_coverage_brief
 from services.audits.serializers import _audit_brief, _audit_report_to_dict
 
 from . import deps
@@ -327,6 +328,8 @@ def company_audit_coverage(company_name: str) -> dict[str, Any]:
                     brief["inherited_from_protocol"] = getattr(e, "_inherited_from_protocol", None)
                     brief["inherited_contract_address"] = getattr(e, "_inherited_contract_address", None)
                 matching.append(brief)
+            if canonical := canonical_coverage_brief(c):
+                matching.append(canonical)
             # Inventory-only entries (discovered but never analyzed) have no
             # name and no audits — they contribute nothing to the coverage
             # view and otherwise inflate the payload (~67% of rows for a

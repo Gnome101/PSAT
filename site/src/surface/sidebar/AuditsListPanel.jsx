@@ -1,6 +1,10 @@
 import { useState } from "react";
 
-import { bytecodeVerifiedAudits, isBytecodeVerifiedAudit } from "../../auditCoverage.js";
+import {
+  bytecodeVerifiedAudits,
+  isBytecodeVerifiedAudit,
+  isCanonicalStandardCoverage,
+} from "../../auditCoverage.js";
 import {
   EQUIVALENCE_META,
   formatAuditDate,
@@ -27,7 +31,7 @@ function SelectedContractAuditCoverage({ machine, coverageData, onPickAudit }) {
           <span>{machine.name || row?.contract_name || shortAddr(machine.address)}</span>
         </div>
         <div className="ps-audits-contract-addr">{row?.address || machine.address}</div>
-        <div className="ps-audits-contract-note">No bytecode match</div>
+        <div className="ps-audits-contract-note">No verified coverage</div>
       </section>
     );
   }
@@ -37,7 +41,7 @@ function SelectedContractAuditCoverage({ machine, coverageData, onPickAudit }) {
       <div className="ps-audits-contract-top">
         <span>{machine.name || row.contract_name || shortAddr(machine.address)}</span>
         <span className="ps-monitor-muted">
-          {verifiedAudits.length} bytecode match{verifiedAudits.length === 1 ? "" : "es"}
+          {verifiedAudits.length} verified coverage item{verifiedAudits.length === 1 ? "" : "s"}
         </span>
       </div>
       <div className="ps-audits-contract-addr">{row.address}</div>
@@ -112,7 +116,10 @@ export function AuditsListPanel({ coverageData, activeAuditId, onPickAudit, load
     const dx = x.audit.date || "";
     const dy = y.audit.date || "";
     if (dx !== dy) return dx < dy ? 1 : -1;
-    return (y.audit.audit_id || 0) - (x.audit.audit_id || 0);
+    const nx = Number(x.audit.audit_id);
+    const ny = Number(y.audit.audit_id);
+    if (Number.isFinite(nx) && Number.isFinite(ny)) return ny - nx;
+    return String(y.audit.audit_id || "").localeCompare(String(x.audit.audit_id || ""));
   });
 
   const activeEntry = activeAuditId != null
@@ -137,7 +144,7 @@ export function AuditsListPanel({ coverageData, activeAuditId, onPickAudit, load
           coverageData={coverageData}
           onPickAudit={onPickAudit}
         />
-        <div className="ps-audits-panel-hdr">Verified audits ({entries.length})</div>
+        <div className="ps-audits-panel-hdr">Verified coverage ({entries.length})</div>
 
         {activeEntry && (
           <div className="ps-audits-active-card">
@@ -189,19 +196,25 @@ export function AuditsListPanel({ coverageData, activeAuditId, onPickAudit, load
                     matches {addresses.size} contract{addresses.size === 1 ? "" : "s"}
                   </div>
                 </button>
-                <button
-                  className="ps-audits-row-read"
-                  onClick={() =>
-                    setReadingAudit({
-                      audit,
-                      addresses,
-                      shaByAddr: byAudit.get(audit.audit_id)?.shaByAddr || new Map(),
-                    })
-                  }
-                  title="Read audit"
-                >
-                  Read ↗
-                </button>
+                {isCanonicalStandardCoverage(audit) ? (
+                  <span className="ps-audits-row-read" title="Exact canonical standard match">
+                    Standard
+                  </span>
+                ) : (
+                  <button
+                    className="ps-audits-row-read"
+                    onClick={() =>
+                      setReadingAudit({
+                        audit,
+                        addresses,
+                        shaByAddr: byAudit.get(audit.audit_id)?.shaByAddr || new Map(),
+                      })
+                    }
+                    title="Read audit"
+                  >
+                    Read ↗
+                  </button>
+                )}
               </div>
             );
           })}

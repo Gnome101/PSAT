@@ -73,11 +73,11 @@ describe("ProtocolSurface — sidebar tabs", () => {
   it("opens the Audits tab", async () => {
     renderSurface();
     await clickSidebarTab("Audits");
-    // AuditsListPanel renders "Verified audits (N)" once coverage resolves.
-    // The fixture has one bytecode-verified audit (Trail of Bits).
+    // AuditsListPanel renders "Verified coverage (N)" once coverage resolves.
+    // The fixture has one reviewed-commit audit (Trail of Bits).
     await waitFor(() => {
       const text = document.body.textContent || "";
-      expect(/Verified audits|Trail of Bits|No audits|loading/i.test(text)).toBe(true);
+      expect(/Verified coverage|Trail of Bits|No audits|loading/i.test(text)).toBe(true);
     });
     expectNoCrash();
   });

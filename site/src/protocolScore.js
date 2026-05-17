@@ -21,7 +21,7 @@ const CONFIG_HINTS = [
 
 const AXIS_DESCRIPTIONS = {
   authority: "Who can execute sensitive protocol actions and how protected that authority is.",
-  audits: "How much deployed code is audit-matched with source and bytecode evidence.",
+  audits: "How much deployed code has strict audit proof or exact canonical-standard coverage.",
   upgrades: "How much of the protocol can change after deployment and how protected those changes are.",
   pause: "Whether emergency stops exist and whether resuming the system is sufficiently controlled.",
   safes: "How much sensitive power is protected by Safes or timelocks, including Safe threshold strength.",
@@ -570,21 +570,25 @@ function buildAuditsTooltip(contracts, coverageByAddress) {
   const weak = auditRows.filter((row) => row.score > 0 && row.score < 0.75).length;
 
   const positive = strong
-    ? `${strong}/${contracts.length} contracts have bytecode-verified audit matches.`
+    ? `${strong}/${contracts.length} contracts have strict audit or canonical standard coverage.`
     : covered
-      ? `${covered}/${contracts.length} contracts have bytecode matches with unresolved audit findings.`
-      : "No bytecode-verified audit matches are present yet.";
+      ? `${covered}/${contracts.length} contracts have partial verified coverage with unresolved audit findings.`
+      : "No strict audit or canonical standard coverage is present yet.";
   const negative = uncovered
-    ? `${uncovered}/${contracts.length} contracts have no bytecode-verified audit coverage.`
+    ? `${uncovered}/${contracts.length} contracts have no strict audit or canonical standard coverage.`
     : weak
       ? `${plural(weak, "contract")} have bytecode proof but unresolved fix evidence.`
-      : "No bytecode-verified audit gap is visible in the current coverage data.";
+      : "No verified coverage gap is visible in the current coverage data.";
 
   const negativeExamples = auditRows
     .filter((row) => row.score < 0.75)
     .map((row) => {
       if (row.score <= 0) {
-        return contractExample(row.contract, "No proven bytecode/source match was found.", "audit score 0%");
+        return contractExample(
+          row.contract,
+          "No strict audit proof or exact canonical standard match was found.",
+          "audit score 0%",
+        );
       }
       return contractExample(
         row.contract,
