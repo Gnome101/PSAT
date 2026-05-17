@@ -1,16 +1,13 @@
 import { BaseEdge, getSmoothStepPath } from "@xyflow/react";
 
+import { routeOrthogonal } from "./orthogonalRouter.js";
+
 // Each edge gets a lane index (signed integer, 0 = centred on the
 // handle) for its source side and its target side. assignEdgeLanes in
 // elkLayout.js fills these from `data.sourceLane` / `data.targetLane`
 // so that multiple edges sharing one side of a node fan out across it
 // rather than stacking on top of each other.
 const LANE_SPACING = 16;
-
-// Padding from a group's edge when we have to detour around it. Big
-// enough that the wire visibly sits outside the colored border, small
-// enough that bundles don't sprawl.
-const OBSTACLE_PADDING = 20;
 
 // How far source/target can drift from the ELK-baked endpoint before
 // we give up on the polyline waypoints. A few pixels covers rounding
@@ -61,24 +58,21 @@ export function ChanneledStepEdge(props) {
   // sourceX/Y / targetX/Y, so the same routing pass handles them.
   const obstacles = data?.obstacles || [];
 
-  let centerX;
-  let centerY;
-  if (sAxis === "x" && tAxis === "x") {
-    centerY = pickClearCenter(sy, ty, sx, tx, obstacles, source, target, "y");
-  } else if (sAxis === "y" && tAxis === "y") {
-    centerY = undefined;
-    centerX = pickClearCenter(sx, tx, sy, ty, obstacles, source, target, "x");
-  }
-
-  // ELK already routed intra-group edges with full orthogonal
-  // obstacle avoidance (siblings are baked into its layered layout).
-  // When elkLayout hands those waypoints down via data.waypoints, draw
-  // a polyline through them. But the waypoints are anchored to the
-  // node positions ELK saw at layout time — if the user drags a node,
-  // sourceX/sourceY (or targetX/targetY) no longer match, and the
-  // baked path keeps pointing at the original spot. Detect that and
-  // fall back to the obstacle-aware step path so the edge moves with
-  // the node.
+  // Three render paths, in order of preference:
+  //   1. ELK-baked waypoints (intra-group edges). ELK already routed
+  //      these with full orthogonal obstacle avoidance inside the
+  //      compound group during the layered pass, so we draw straight
+  //      through them. If the user has dragged a node since layout,
+  //      the endpoint tolerance check kicks the edge into the next
+  //      branch until ELK re-runs.
+  //   2. Multi-bend orthogonal router. Picks 3 or 5 waypoints so each
+  //      segment clears the obstacle list. This is what keeps a
+  //      cross-group edge from cutting through a Safe / Timelock group
+  //      that happens to sit between its source and target columns.
+  //   3. getSmoothStepPath. Last-resort fallback when neither of the
+  //      above could find a clear route — preserves the previous
+  //      behaviour for edges where the router gives up (e.g. mixed
+  //      handle axes).
   let path;
   let labelX = (sx + tx) / 2;
   let labelY = (sy + ty) / 2;
@@ -89,9 +83,24 @@ export function ChanneledStepEdge(props) {
     && Math.abs(pts[0].y - sourceY) < ENDPOINT_TOLERANCE
     && Math.abs(pts[pts.length - 1].x - targetX) < ENDPOINT_TOLERANCE
     && Math.abs(pts[pts.length - 1].y - targetY) < ENDPOINT_TOLERANCE;
+
+  let polyline = null;
   if (waypointsStillAnchored) {
-    path = polylinePath(pts);
-    const mid = pts[Math.floor(pts.length / 2)];
+    polyline = pts;
+  } else {
+    polyline = routeOrthogonal({
+      sx, sy, tx, ty,
+      sourcePos: sourcePosition,
+      targetPos: targetPosition,
+      obstacles,
+      sourceId: source,
+      targetId: target,
+    });
+  }
+
+  if (polyline) {
+    path = polylinePath(polyline);
+    const mid = polyline[Math.floor(polyline.length / 2)];
     labelX = mid.x;
     labelY = mid.y;
   } else {
@@ -102,8 +111,6 @@ export function ChanneledStepEdge(props) {
       targetY: ty,
       sourcePosition,
       targetPosition,
-      centerX,
-      centerY,
       borderRadius: 0,
     });
     path = r[0];
@@ -139,56 +146,4 @@ function polylinePath(pts) {
     d += ` L ${pts[i].x} ${pts[i].y}`;
   }
   return d;
-}
-
-// Pick a centre value (y for a top/bottom edge, x for a left/right
-// one) such that the middle segment doesn't cut through any obstacle.
-// `perpA` / `perpB` are the source / target positions on the
-// PERPENDICULAR axis — the one the middle segment runs along.
-// `parA` / `parB` are positions on the PARALLEL axis (the one the
-// segment moves through). Returns undefined when the natural midpoint
-// is already clear, so getSmoothStepPath uses its default.
-function pickClearCenter(perpA, perpB, parA, parB, obstacles, sourceId, targetId, parAxis) {
-  if (!obstacles.length) return undefined;
-  const parMin = Math.min(parA, parB);
-  const parMax = Math.max(parA, parB);
-  const perpAxis = parAxis === "y" ? "x" : "y";
-
-  function crosses(centre) {
-    for (const o of obstacles) {
-      if (o.id === sourceId || o.id === targetId) continue;
-      // centre is on the perpendicular axis — check if it falls
-      // inside the obstacle's extent on that axis.
-      const lo = perpAxis === "x" ? o.x : o.y;
-      const hi = perpAxis === "x" ? o.x + o.w : o.y + o.h;
-      if (centre < lo || centre > hi) continue;
-      // Check parallel-axis overlap with the segment's span.
-      const oLo = parAxis === "x" ? o.x : o.y;
-      const oHi = parAxis === "x" ? o.x + o.w : o.y + o.h;
-      if (parMax < oLo || parMin > oHi) continue;
-      return true;
-    }
-    return false;
-  }
-
-  const natural = (perpA + perpB) / 2;
-  if (!crosses(natural)) return undefined;
-
-  // Candidates: just before and just past each obstacle on the
-  // perpendicular axis. The one closest to the natural midpoint that
-  // clears every obstacle wins. Two passes around the centre keep the
-  // detour as small as possible.
-  const candidates = [];
-  for (const o of obstacles) {
-    if (o.id === sourceId || o.id === targetId) continue;
-    const lo = perpAxis === "x" ? o.x : o.y;
-    const hi = perpAxis === "x" ? o.x + o.w : o.y + o.h;
-    candidates.push(lo - OBSTACLE_PADDING);
-    candidates.push(hi + OBSTACLE_PADDING);
-  }
-  candidates.sort((a, b) => Math.abs(a - natural) - Math.abs(b - natural));
-  for (const c of candidates) {
-    if (!crosses(c)) return c;
-  }
-  return undefined;
 }
