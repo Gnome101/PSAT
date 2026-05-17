@@ -771,6 +771,89 @@
   border: none !important;
 }
 
+/* Selection legend — small floating box that appears in bottom-right
+   of the canvas while a contract is selected. Swatch colors match the
+   chip variants so the user reads the legend once and learns the
+   convention. */
+.ps-selection-legend {
+  background: #0f1218;
+  border: 1px solid #334155;
+  border-radius: 4px;
+  padding: 8px 10px;
+  color: #cbd5e1;
+  font-size: 11px;
+  line-height: 1.4;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.ps-selection-legend-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ps-selection-legend-swatch {
+  display: inline-block;
+  width: 18px;
+  height: 12px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
+.ps-selection-legend-swatch--out {
+  background: #78350f;
+}
+
+.ps-selection-legend-swatch--in {
+  background: #1e3a8a;
+}
+
+/* Selection chip rendered on each related contract / group container.
+   Positioned OUTSIDE the card with a small gap so it never overlaps
+   the card border:
+     --out (warm) ABOVE the card  — "selected acts on this" / chip near
+                                    the input handle (ctrl-in = top).
+     --in  (cool) BELOW the card  — "this acts on selected" / chip near
+                                    the output handle (ctrl-out = bottom).
+   The top/bottom split also matches the old edge-chip placement, where
+   chips sat at the polyline corner near the non-selected end — that
+   corner was just outside the contract's input handle (top) for OUT
+   chips and just outside the output handle (bottom) for IN chips. */
+.ps-node-chip {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 6;
+  padding: 2px 6px;
+  font-size: 11px;
+  font-weight: 700;
+  border-radius: 2px;
+  /* Single-line so the chip never grows tall enough to invade the
+     vertical gap between rows (V_GAP = 70px in elkLayout, and a
+     2-line chip blew past that, causing chip-on-chip overlaps with
+     the row above / below). Horizontal overflow is fine — the
+     H_GAP (50px) leaves ~30px between a chip overhang and the
+     neighbor card's edge even for the longest 5-cap chips. */
+  white-space: nowrap;
+  text-align: center;
+  pointer-events: none;
+  letter-spacing: 0.02em;
+}
+
+.ps-node-chip--out {
+  bottom: calc(100% + 4px);
+  background: #78350f;
+  color: #fef3c7;
+}
+
+.ps-node-chip--in {
+  top: calc(100% + 4px);
+  background: #1e3a8a;
+  color: #dbeafe;
+}
+
 .ps-node-caps {
   display: flex;
   flex-wrap: wrap;
@@ -1989,5 +2072,104 @@
   border-radius: 50%;
   background: #a09870;
   flex-shrink: 0;
+}
+
+/* Owner-group container — a labeled box that holds every contract a
+   single principal (Safe/Timelock/EOA/proxy admin) owns. Replaces the
+   N principal→child edges that used to fan out across the canvas. The
+   container body is pointer-events:none so clicks fall through to the
+   contract children inside; only the header is interactive. */
+.ps-group-node {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  border-radius: 10px;
+  background: var(--principal-bg, rgba(20, 24, 32, 0.4));
+  border: 2px solid var(--principal-color, #64748b);
+  box-shadow:
+    inset 0 0 0 1px rgba(15, 18, 24, 0.55),
+    0 0 0 1px rgba(0, 0, 0, 0.25);
+  pointer-events: none;
+}
+
+.ps-group-node .ps-handle {
+  pointer-events: none;
+}
+
+.ps-group-selected {
+  border-color: var(--principal-color, #94a3b8);
+  border-style: solid;
+  box-shadow:
+    inset 0 0 0 1px rgba(15, 18, 24, 0.6),
+    0 0 0 1px var(--principal-color, #94a3b8);
+}
+
+.ps-group-focused {
+  border-color: #d4a017 !important;
+  border-style: solid;
+}
+
+.ps-group-header {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  padding: 9px 14px;
+  background: linear-gradient(180deg, var(--principal-header-bg-top, rgba(15, 18, 24, 0.92)) 0%, var(--principal-header-bg-bot, rgba(15, 18, 24, 0.55)) 100%);
+  border-bottom: 2px solid var(--principal-color, rgba(148, 163, 184, 0.12));
+  border-top-left-radius: 8px;
+  border-top-right-radius: 8px;
+  cursor: pointer;
+  pointer-events: auto;
+  user-select: none;
+  transition: filter 120ms ease;
+}
+
+.ps-group-header:hover {
+  filter: brightness(1.12);
+}
+
+.ps-group-header-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+}
+
+.ps-group-badge {
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  padding: 3px 9px;
+  border-radius: 4px;
+  white-space: nowrap;
+  flex-shrink: 0;
+  background: var(--principal-color, #475569);
+  color: #0f1218;
+}
+
+.ps-group-addr {
+  font-size: 11px;
+  font-family: "JetBrains Mono", monospace;
+  color: #f1f5f9;
+  flex-shrink: 0;
+}
+
+.ps-group-count {
+  font-size: 12px;
+  color: #f8fafc;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+/* React Flow stacks nodes in DOM order. Group containers go behind
+   their children so the contract nodes inside read above the dashed
+   border. */
+.react-flow__node-group {
+  z-index: 0 !important;
 }
 
