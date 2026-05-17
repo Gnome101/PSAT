@@ -399,7 +399,7 @@ def _discover_contract_inventory_pages(
     for d in all_domains:
         site_results.extend(
             _tavily_search(
-                f"site:{d} {company} contract addresses deployments smart contracts",
+                f"site:{d} {company} contract addresses deployments chains multichain bridge smart contracts",
                 max_results=12,
                 queries_used=queries_used,
                 max_queries=max_queries,

@@ -7,6 +7,100 @@ import { BalanceTable } from "./BalanceTable.jsx";
 import { LaneColumn } from "./LaneColumn.jsx";
 import { OpsLane } from "./OpsLane.jsx";
 
+const BRIDGE_EFFECT_LABELS = new Set([
+  "cross_chain_message",
+  "bridge_transfer",
+  "bridge_receive",
+  "bridge_config_update",
+  "bridge_security_config",
+]);
+
+function unique(values) {
+  return [...new Set(values.filter(Boolean))];
+}
+
+function bridgeFunctionName(fnView) {
+  return fnView.signature || fnView.name;
+}
+
+function bridgeFunctions(machine, matcher) {
+  return unique(
+    machineFunctions(machine)
+      .filter((fnView) => {
+        const effects = new Set(fnView.effectLabels || []);
+        return matcher(effects);
+      })
+      .map(bridgeFunctionName),
+  );
+}
+
+function readableBridgeLabel(value) {
+  return String(value || "").replace(/_/g, " ");
+}
+
+function BridgeFunctionBlock({ label, values }) {
+  return (
+    <div className="ps-bridge-section">
+      <div className="ps-bridge-section-label">{label}</div>
+      {values.length ? (
+        <div className="ps-bridge-function-list">
+          {values.map((value) => (
+            <span className="ps-bridge-function" key={value}>{value}</span>
+          ))}
+        </div>
+      ) : (
+        <span className="ps-bridge-empty">None detected</span>
+      )}
+    </div>
+  );
+}
+
+function BridgeContextPanel({ machine }) {
+  const bridgeContext = machine.bridge_context;
+  const allBridgeFunctions = bridgeFunctions(machine, (effects) =>
+    [...BRIDGE_EFFECT_LABELS].some((label) => effects.has(label))
+  );
+  if (!bridgeContext && allBridgeFunctions.length === 0) return null;
+
+  const protocols = bridgeContext?.protocols?.length ? bridgeContext.protocols : ["Bridge"];
+  const movement = bridgeFunctions(machine, (effects) =>
+    (effects.has("cross_chain_message") || effects.has("bridge_transfer")) && !effects.has("bridge_config_update")
+  );
+  const receives = bridgeFunctions(machine, (effects) => effects.has("bridge_receive"));
+  const routeConfig = bridgeFunctions(machine, (effects) =>
+    effects.has("bridge_config_update") && !effects.has("bridge_security_config")
+  );
+  const securityConfig = bridgeFunctions(machine, (effects) => effects.has("bridge_security_config"));
+  const upgradePath = bridgeFunctions(machine, (effects) => effects.has("implementation_update"));
+  const effectLabels = (bridgeContext?.effect_labels || []).filter(Boolean);
+
+  return (
+    <section className="ps-bridge-panel">
+      <div className="ps-bridge-panel-top">
+        <div className="ps-bridge-title">Bridge Context</div>
+        {bridgeContext?.can_change_bridge_logic && (
+          <span className="ps-bridge-status">upgrade path changes bridge</span>
+        )}
+      </div>
+      <div className="ps-bridge-chip-row">
+        {protocols.map((protocol) => (
+          <span className="ps-bridge-chip" key={protocol}>{protocol}</span>
+        ))}
+        {effectLabels.map((label) => (
+          <span className="ps-bridge-chip ps-bridge-chip-muted" key={label}>
+            {readableBridgeLabel(label)}
+          </span>
+        ))}
+      </div>
+      <BridgeFunctionBlock label="Token / message movement" values={movement} />
+      <BridgeFunctionBlock label="Receives" values={receives} />
+      <BridgeFunctionBlock label="Route config" values={routeConfig} />
+      <BridgeFunctionBlock label="Security config" values={securityConfig} />
+      <BridgeFunctionBlock label="Upgrade path" values={upgradePath} />
+    </section>
+  );
+}
+
 export function ContractMachine({
   machine,
   onSelectGuard,
@@ -22,6 +116,8 @@ export function ContractMachine({
     () => machineFunctions(machine).find((fnView) => fnView.key === highlightedFunctionKey) || null,
     [machine, highlightedFunctionKey],
   );
+  const bridgeContext = machine.bridge_context;
+  const bridgeProtocols = bridgeContext?.protocols || [];
 
   useEffect(() => {
     if (highlightedFunction) setActiveTab(tabForLane(highlightedFunction.lane));
@@ -59,6 +155,15 @@ export function ContractMachine({
           {machine.is_proxy ? <span className="ps-badge" style={{ "--badge-accent": "#9a8a6e" }}>{machine.proxy_type || "proxy"}</span> : null}
           {machine.upgrade_count != null ? <span className="ps-badge" style={{ "--badge-accent": "#8b92a8" }}>{machine.upgrade_count} upgrades</span> : null}
           <span className="ps-badge" style={{ "--badge-accent": "#6b7590" }}>{machine.totalFunctions} functions</span>
+          {bridgeContext && (
+            <>
+              {(bridgeProtocols.length ? bridgeProtocols : ["Bridge"]).map((protocol) => (
+                <span className="ps-badge" style={{ "--badge-accent": "#9e8a6a" }} key={protocol}>{protocol}</span>
+              ))}
+              {bridgeContext.has_security_config && <span className="ps-badge" style={{ "--badge-accent": "#a08a70" }}>bridge security</span>}
+              {bridgeContext.can_change_bridge_logic && <span className="ps-badge" style={{ "--badge-accent": "#d4a017" }}>upgrade path changes bridge</span>}
+            </>
+          )}
           {usdLabel && <span className="ps-badge" style={{ "--badge-accent": "#f59e0b" }}>{usdLabel}</span>}
         </div>
         {onOpenDependencyGraph && (
@@ -73,6 +178,8 @@ export function ContractMachine({
           </div>
         )}
       </header>
+
+      <BridgeContextPanel machine={machine} />
 
       <div className="ps-machine-tabs">
         {MACHINE_TABS.map((t) => (

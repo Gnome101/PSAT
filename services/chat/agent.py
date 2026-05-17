@@ -80,6 +80,12 @@ def _system_prompt(session, ctx: AgentContext) -> str:
             "explicitly — never claim 'complete takeover' or 'unilateral' "
             "control without verifying the actual gating."
         ),
+        (
+            "BRIDGE CONTEXT — when a tool result includes bridge_context, use its "
+            "protocol names, send/receive/config function names, security model, "
+            "and upgrade_context directly. Do not summarize bridge setup as a "
+            "count when concrete functions or protocol names are available."
+        ),
     ]
     if ctx.selected_address:
         try:

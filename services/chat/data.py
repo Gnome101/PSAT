@@ -151,6 +151,34 @@ def _resolve_contract(session, address: str, chain: str | None) -> Contract | No
     return rows[0]
 
 
+def _contract_bridge_context(session, contract: Contract) -> dict[str, Any] | None:
+    """Read normalized bridge context from the contract_analysis artifact.
+
+    Proxy shells often inherit analysis from their implementation child, so
+    look at the selected contract first and then the current implementation.
+    """
+    from db.queue import get_artifact
+
+    candidates = [contract]
+    if contract.implementation:
+        impl = _resolve_contract(session, contract.implementation, contract.chain)
+        if impl is not None and impl.id != contract.id:
+            candidates.append(impl)
+
+    for candidate in candidates:
+        if candidate.job_id is None:
+            continue
+        artifact = get_artifact(session, candidate.job_id, "contract_analysis")
+        if not isinstance(artifact, dict):
+            continue
+        bridge_context = artifact.get("bridge_context")
+        if isinstance(bridge_context, dict):
+            out = dict(bridge_context)
+            out["source_contract"] = candidate.address
+            return out
+    return None
+
+
 def contract_brief(session, address: str, chain: str | None = None) -> dict[str, Any]:
     """One-screen contract summary: identity, proxy status, controls, recent upgrade.
 
@@ -189,7 +217,9 @@ def contract_brief(session, address: str, chain: str | None = None) -> dict[str,
 
     self_kind = classify_address(session, contract.address, contract.chain)
 
-    return {
+    bridge_context = _contract_bridge_context(session, contract)
+
+    out: dict[str, Any] = {
         "address": contract.address,
         "chain": contract.chain,
         "name": contract.contract_name,
@@ -220,6 +250,9 @@ def contract_brief(session, address: str, chain: str | None = None) -> dict[str,
             else None
         ),
     }
+    if bridge_context is not None:
+        out["bridge_context"] = bridge_context
+    return out
 
 
 def upgrade_summary(session, address: str, chain: str | None = None) -> dict[str, Any]:
@@ -356,6 +389,16 @@ def protocol_brief(session, name: str) -> dict[str, Any]:
     ]
     contracts = session.execute(select(Contract).where(Contract.job_id.in_(job_ids))).scalars().all() if job_ids else []
     proxy_count = sum(1 for c in contracts if c.is_proxy)
+    bridge_rows = (
+        session.execute(
+            select(Contract, ContractSummary)
+            .join(ContractSummary, ContractSummary.contract_id == Contract.id)
+            .where(Contract.job_id.in_(job_ids))
+            .where(func.array_position(ContractSummary.standards, "Bridge").is_not(None))
+        ).all()
+        if job_ids
+        else []
+    )
     audit_count = session.execute(
         select(func.count(AuditReport.id)).where(AuditReport.protocol_id == proto.id)
     ).scalar_one()
@@ -364,6 +407,19 @@ def protocol_brief(session, name: str) -> dict[str, Any]:
         "name": proto.name,
         "contract_count": len(contracts),
         "proxy_count": proxy_count,
+        "bridge_count": len(bridge_rows),
+        "bridges": [
+            {
+                "address": contract.address,
+                "chain": contract.chain,
+                "name": contract.contract_name,
+                "protocols": [standard for standard in (summary.standards or []) if standard not in {"Bridge"}],
+                "is_proxy": bool(contract.is_proxy),
+                "implementation": contract.implementation,
+                "code_has_upgrade_path": bool(summary.is_upgradeable),
+            }
+            for contract, summary in bridge_rows[:20]
+        ],
         "audit_count": audit_count,
     }
 

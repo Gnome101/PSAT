@@ -333,6 +333,11 @@ def _effect_info_for_function(function: Any) -> EffectInfo:
             "contract_deployment",
             "delegatecall_execution",
             "selfdestruct_capability",
+            "cross_chain_message",
+            "bridge_transfer",
+            "bridge_receive",
+            "bridge_config_update",
+            "bridge_security_config",
         )
         for lbl in labels
     ):

@@ -36,6 +36,14 @@
   font-size: 11px;
 }
 
+.agent-context-bridge {
+  color: #facc15;
+  font-size: 11px;
+  font-weight: 650;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
 .agent-scroll {
   flex: 1;
   overflow-y: auto;
@@ -421,4 +429,3 @@
   background: rgba(239, 68, 68, 0.22) !important;
   transform: none !important;
 }
-

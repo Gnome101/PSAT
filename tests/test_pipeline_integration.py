@@ -1081,6 +1081,47 @@ def test_discovery_company_mode_advances_to_selection(monkeypatch):
     assert "contract_inventory" in stored_artifacts
 
 
+def test_discovery_inventory_rows_flatten_multichain_deployments():
+    """Grouped inventory deployments become per-chain DB rows for selection."""
+    from workers.discovery import _inventory_contract_rows
+
+    rows = _inventory_contract_rows(
+        [
+            {
+                "name": "BridgeAdapter",
+                "chains": ["ethereum", "arbitrum"],
+                "confidence": 0.92,
+                "source": ["tavily_ai_inventory"],
+                "deployments": [
+                    {"address": "0x" + "a" * 40, "chains": ["ethereum"]},
+                    {"address": "0x" + "b" * 40, "chains": ["arbitrum"]},
+                ],
+            }
+        ]
+    )
+
+    assert rows == [
+        {
+            "address": "0x" + "a" * 40,
+            "chain": "ethereum",
+            "new_sources": ["tavily_ai_inventory"],
+            "contract_name": "BridgeAdapter",
+            "confidence": 0.92,
+            "chains": ["ethereum"],
+            "discovery_url": None,
+        },
+        {
+            "address": "0x" + "b" * 40,
+            "chain": "arbitrum",
+            "new_sources": ["tavily_ai_inventory"],
+            "contract_name": "BridgeAdapter",
+            "confidence": 0.92,
+            "chains": ["arbitrum"],
+            "discovery_url": None,
+        },
+    ]
+
+
 # ===================================================================
 # 17. Static worker: process method reads discovery artifacts correctly
 # ===================================================================

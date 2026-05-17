@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
 from eth_utils.crypto import keccak
 
 from schemas.contract_analysis import (
+    BridgeContext,
+    BridgeFunctionContext,
+    BridgeUpgradeContext,
     ContractClassification,
     ControlModel,
     PausabilityAnalysis,
@@ -62,6 +65,8 @@ def _tree_has_caller_or_delegated_authority(tree: dict | None) -> bool:
 def _function_has_sensitive_sink(effect_info: dict | None) -> bool:
     if not isinstance(effect_info, dict):
         return False
+    if any(label in _BRIDGE_EFFECT_LABELS for label in effect_info.get("effect_labels") or []):
+        return True
     for sink in effect_info.get("sinks") or []:
         if isinstance(sink, dict) and sink.get("kind") in _SENSITIVE_SINK_KINDS:
             return True
@@ -270,6 +275,111 @@ _LABEL_TO_FLOW_DIRECTION = {
     "burn": "burn",
 }
 _TOTAL_SUPPLY_SELECTOR = "0x18160ddd"
+_BRIDGE_EFFECT_LABELS = frozenset(
+    {
+        "cross_chain_message",
+        "bridge_transfer",
+        "bridge_receive",
+        "bridge_config_update",
+        "bridge_security_config",
+    }
+)
+_BRIDGE_PROTOCOL_STANDARDS = frozenset({"LayerZero", "CCIP", "Wormhole", "Hyperlane", "Axelar", "Connext"})
+_CHAIN_PARAM_MARKERS = (
+    "dstchain",
+    "srcchain",
+    "destinationchain",
+    "sourcechain",
+    "remotechain",
+    "targetchain",
+    "chainselector",
+    "dsteid",
+    "srceid",
+    "destinationdomain",
+    "sourcedomain",
+    "remotedomain",
+)
+_BRIDGE_CONTEXT_MARKERS = (
+    "bridge",
+    "gateway",
+    "router",
+    "endpoint",
+    "mailbox",
+    "relayer",
+    "trustedremote",
+    "remote",
+    "peer",
+    "layerzero",
+    "lz",
+    "oapp",
+    "oft",
+    "onft",
+    "ccip",
+    "wormhole",
+    "vaa",
+    "hyperlane",
+    "interchain",
+    "axelar",
+    "connext",
+)
+_BRIDGE_CONFIG_MARKERS = (
+    "trustedremote",
+    "trusted_remote",
+    "setpeer",
+    "setendpoint",
+    "setrouter",
+    "setmailbox",
+    "setgateway",
+    "setremote",
+    "chainselector",
+    "dsteid",
+    "srceid",
+    "destinationdomain",
+    "remotedomain",
+)
+_BRIDGE_SECURITY_CONFIG_MARKERS = (
+    "dvn",
+    "uln",
+    "required_dvn",
+    "optional_dvn",
+    "requiredDVN",
+    "optionalDVN",
+    "messagelib",
+    "message_lib",
+    "sendlibrary",
+    "receivelibrary",
+    "send_library",
+    "receive_library",
+    "enforcedoptions",
+    "executor",
+    "confirmations",
+    "interchainsecuritymodule",
+    "interchain_security_module",
+    "defaultism",
+    "default_ism",
+    "ism",
+    "validatorannounce",
+    "validator_announce",
+    "multisigism",
+    "routingism",
+    "aggregationism",
+)
+_BRIDGE_ENDPOINT_CALL_MARKERS = (
+    "bridge",
+    "layerzero",
+    "lzendpoint",
+    "trustedremote",
+    "oapp",
+    "oft",
+    "onft",
+    "ccip",
+    "wormhole",
+    "mailbox",
+    "hyperlane",
+    "interchain",
+    "axelar",
+    "connext",
+)
 
 
 def _label_for_selector(selector: object) -> str | None:
@@ -289,6 +399,200 @@ def _selector_for_signature(signature: str | None) -> str | None:
     if not isinstance(signature, str) or "(" not in signature or not signature.endswith(")"):
         return None
     return "0x" + keccak(text=signature)[:4].hex()
+
+
+def _function_name_lower(function: Any) -> str:
+    return str(getattr(function, "name", "") or getattr(function, "full_name", "") or "").lower()
+
+
+def _bridge_context_text(function: Any, graph_entry: dict | None = None) -> str:
+    parts: list[str] = [
+        str(getattr(function, "name", "") or ""),
+        str(getattr(function, "full_name", "") or ""),
+        str(getattr(getattr(function, "contract", None), "name", "") or ""),
+    ]
+    for param in getattr(function, "parameters", []) or []:
+        parts.append(str(getattr(param, "name", "") or ""))
+        parts.append(str(getattr(param, "type", "") or ""))
+    for attr in ("all_state_variables_read", "all_state_variables_written"):
+        getter = getattr(function, attr, None)
+        if not callable(getter):
+            continue
+        values = getter()
+        if not isinstance(values, (list, tuple, set)):
+            continue
+        for variable in values:
+            parts.append(str(getattr(variable, "name", "") or ""))
+            parts.append(str(getattr(variable, "type", "") or ""))
+    if isinstance(graph_entry, dict):
+        for sink in graph_entry.get("sinks") or []:
+            if not isinstance(sink, dict):
+                continue
+            parts.append(str(sink.get("target") or ""))
+            parts.append(str(sink.get("selector") or ""))
+    return " ".join(parts).replace("_", "").lower()
+
+
+def _has_cross_chain_parameter(function: Any) -> bool:
+    for param in getattr(function, "parameters", []) or []:
+        name = str(getattr(param, "name", "") or "").replace("_", "").lower()
+        type_name = str(getattr(param, "type", "") or "").replace("_", "").lower()
+        if any(marker in name for marker in _CHAIN_PARAM_MARKERS):
+            return True
+        if any(
+            marker in type_name
+            for marker in ("sendparam", "messagingfee", "origin", "evm2anymessage", "any2evmmessage")
+        ):
+            return True
+    return False
+
+
+def _called_bridge_endpoint(graph_entry: dict | None) -> bool:
+    if not isinstance(graph_entry, dict):
+        return False
+    for sink in graph_entry.get("sinks") or []:
+        if not isinstance(sink, dict) or sink.get("kind") != "external_call":
+            continue
+        target = str(sink.get("target") or "").replace("_", "").lower()
+        if any(marker in target for marker in _BRIDGE_ENDPOINT_CALL_MARKERS):
+            return True
+    return False
+
+
+def _bridge_protocols_for_function(function: Any, graph_entry: dict | None = None) -> set[str]:
+    text = _bridge_context_text(function, graph_entry)
+    protocols: set[str] = set()
+
+    if any(
+        marker in text
+        for marker in (
+            "layerzero",
+            "lzreceive",
+            "lzcompose",
+            "lzendpoint",
+            "trustedremote",
+            "dsteid",
+            "srceid",
+            "dstchainid",
+            "srcchainid",
+            "sendfrom",
+            "oapp",
+            "oft",
+            "onft",
+        )
+    ):
+        protocols.add("LayerZero")
+    if any(marker in text for marker in ("ccip", "chainselector", "evm2anymessage", "any2evmmessage")):
+        protocols.add("CCIP")
+    if any(marker in text for marker in ("wormhole", "vaa", "publishmessage", "parseandverifyvm", "guardian")):
+        protocols.add("Wormhole")
+    if any(marker in text for marker in ("hyperlane", "interchain", "mailbox", "destinationdomain", "sourcedomain")):
+        protocols.add("Hyperlane")
+    if any(marker in text for marker in ("axelar", "gasservice", "expressreceive", "commandid")):
+        protocols.add("Axelar")
+    if any(marker in text for marker in ("connext", "xcall", "executeorigin", "transferid")):
+        protocols.add("Connext")
+
+    return protocols
+
+
+def _has_bridge_semantics(function: Any, graph_entry: dict | None = None) -> bool:
+    text = _bridge_context_text(function, graph_entry)
+    if _bridge_protocols_for_function(function, graph_entry):
+        return True
+    if _called_bridge_endpoint(graph_entry) and _has_cross_chain_parameter(function):
+        return True
+    if _has_cross_chain_parameter(function) and any(marker in text for marker in _BRIDGE_CONTEXT_MARKERS):
+        return True
+    name = _function_name_lower(function).replace("_", "")
+    return _has_cross_chain_parameter(function) and any(
+        marker in name
+        for marker in ("bridge", "sendfrom", "sendmessage", "dispatch", "xcall", "callremote", "sendtoken")
+    )
+
+
+def _is_bridge_receive_function(function: Any) -> bool:
+    if not _has_cross_chain_parameter(function):
+        return False
+    name = _function_name_lower(function).replace("_", "")
+    return any(
+        marker in name
+        for marker in (
+            "lzreceive",
+            "lzcompose",
+            "ccipreceive",
+            "receivepayload",
+            "anyexecute",
+            "executeorigin",
+            "handlemessage",
+            "processmessage",
+        )
+    )
+
+
+def _is_bridge_message_function(function: Any, graph_entry: dict | None = None) -> bool:
+    if _is_bridge_receive_function(function):
+        return True
+    name = _function_name_lower(function).replace("_", "")
+    if _called_bridge_endpoint(graph_entry) and _has_cross_chain_parameter(function):
+        return True
+    return _has_cross_chain_parameter(function) and any(
+        marker in name
+        for marker in ("bridge", "sendfrom", "sendmessage", "dispatch", "xcall", "callremote", "sendtoken")
+    )
+
+
+def _is_bridge_config_update(function: Any, graph_entry: dict | None = None) -> bool:
+    if not _has_bridge_semantics(function, graph_entry):
+        return False
+    text = _bridge_context_text(function, graph_entry)
+    name = _function_name_lower(function).replace("_", "")
+    writes_state = any(
+        isinstance(sink, dict) and sink.get("kind") == "state_write" for sink in (graph_entry or {}).get("sinks", [])
+    )
+    return writes_state and (
+        name.startswith(("set", "force", "configure", "update"))
+        or any(marker in text for marker in _BRIDGE_CONFIG_MARKERS)
+    )
+
+
+def _is_bridge_security_config_update(function: Any, graph_entry: dict | None = None) -> bool:
+    if not _has_bridge_semantics(function, graph_entry):
+        return False
+    text = _bridge_context_text(function, graph_entry)
+    name = _function_name_lower(function).replace("_", "")
+    writes_state = any(
+        isinstance(sink, dict) and sink.get("kind") == "state_write" for sink in (graph_entry or {}).get("sinks", [])
+    )
+    setter_name = name.startswith(("set", "force", "configure", "update"))
+    return (writes_state or setter_name) and any(
+        marker.lower().replace("_", "") in text for marker in _BRIDGE_SECURITY_CONFIG_MARKERS
+    )
+
+
+def _bridge_labels(function: Any, graph_entry: dict | None = None, labels: set[str] | None = None) -> set[str]:
+    if not _has_bridge_semantics(function, graph_entry):
+        return set()
+
+    existing = labels or set()
+    name = _function_name_lower(function).replace("_", "")
+    out: set[str] = set()
+
+    if _is_bridge_receive_function(function):
+        out.add("bridge_receive")
+    if _is_bridge_message_function(function, graph_entry):
+        out.add("cross_chain_message")
+    is_security_config = _is_bridge_security_config_update(function, graph_entry)
+    if _is_bridge_config_update(function, graph_entry) or is_security_config:
+        out.add("bridge_config_update")
+    if is_security_config:
+        out.add("bridge_security_config")
+    if existing.intersection({"asset_pull", "asset_send", "mint", "burn"}) or any(
+        marker in name
+        for marker in ("bridge", "sendfrom", "sendtoken", "transferremote", "oft", "onft", "swapout", "swapin")
+    ):
+        out.add("bridge_transfer")
+    return out
 
 
 def _callee_signature_from_ir(call_ir: Any) -> str | None:
@@ -651,6 +955,7 @@ def _effect_labels(function, graph_entry: dict | None) -> list[str]:
     # Encoded selectors: abi.encodeWithSelector with known ERC20 selectors
     labels.update(_detect_encoded_selectors(function))
     labels.update(_labels_from_external_call_sinks(graph_entry))
+    labels.update(_bridge_labels(function, graph_entry, labels))
 
     supply_change = _detect_supply_change_pattern(function)
     if supply_change:
@@ -672,7 +977,9 @@ def _effect_labels(function, graph_entry: dict | None) -> list[str]:
         labels.add("selfdestruct_capability")
 
     # Downgrade generic external_contract_call when a more specific label applies
-    if labels.intersection({"asset_pull", "asset_send", "arbitrary_external_call", "mint", "burn"}):
+    if labels.intersection(
+        {"asset_pull", "asset_send", "arbitrary_external_call", "mint", "burn", *_BRIDGE_EFFECT_LABELS}
+    ):
         labels.discard("external_contract_call")
 
     # Fallback: fires only if no more specific label matched.
@@ -762,6 +1069,16 @@ def _action_summary(effect_labels: list[str], effect_targets: list[str]) -> str:
         return "Pulls assets into the contract and mints contract balances or shares."
     if {"burn", "asset_send"}.issubset(labels):
         return "Burns contract balances or shares and sends assets out of the contract."
+    if "bridge_security_config" in labels:
+        return "Updates cross-chain bridge security or verification configuration."
+    if "bridge_config_update" in labels:
+        return "Updates cross-chain bridge or messaging configuration."
+    if "bridge_transfer" in labels:
+        return "Transfers value across chains through a bridge or messaging endpoint."
+    if "bridge_receive" in labels:
+        return "Receives and handles a cross-chain message."
+    if "cross_chain_message" in labels:
+        return "Sends or handles a cross-chain message."
     if "arbitrary_external_call" in labels:
         return "Executes arbitrary external calldata from the contract."
     if "external_contract_call" in labels:
@@ -826,6 +1143,12 @@ def _detect_contract_classification(
         for signature, info in (effects.get("functions") or {}).items():
             if not isinstance(signature, str) or not isinstance(info, dict):
                 continue
+            has_bridge_label = any(label in _BRIDGE_EFFECT_LABELS for label in info.get("effect_labels") or [])
+            if has_bridge_label:
+                standards.add("Bridge")
+                function = functions_by_signature.get(signature)
+                if function is not None:
+                    standards.update(_bridge_protocols_for_function(function, info))
             has_creation_sink = any(
                 isinstance(sink, dict) and sink.get("kind") == "contract_creation" for sink in info.get("sinks") or []
             )
@@ -835,6 +1158,12 @@ def _detect_contract_classification(
             function = functions_by_signature.get(signature)
             if function is not None:
                 evidence.append(_source_evidence(function, project_dir))
+
+    for function in functions_by_signature.values():
+        protocols = _bridge_protocols_for_function(function)
+        if protocols:
+            standards.add("Bridge")
+            standards.update(protocols)
 
     standards_list = sorted(standards)
     return {
@@ -1003,6 +1332,122 @@ def _detect_upgradeability(
         "implementation_slots": _dedupe_strings(implementation_slots),
         "admin_paths": _dedupe_strings(admin_paths),
         "evidence": evidence,
+    }
+
+
+def _bridge_function_context(function_summary: Any) -> BridgeFunctionContext:
+    return {
+        "function": str(function_summary.get("function") or ""),
+        "effect_labels": [str(label) for label in function_summary.get("effect_labels") or []],
+        "effect_targets": [str(target) for target in function_summary.get("effect_targets") or []],
+        "action_summary": str(function_summary.get("action_summary") or ""),
+        "controller_refs": [str(ref) for ref in function_summary.get("controller_refs") or []],
+    }
+
+
+def _bridge_movement_models(functions: Sequence[Any]) -> list[str]:
+    models: set[str] = set()
+    for function in functions:
+        labels = set(function.get("effect_labels") or [])
+        if "bridge_transfer" in labels:
+            if labels.intersection({"asset_pull", "burn"}):
+                models.add("outbound_value_transfer")
+            elif labels.intersection({"asset_send", "mint"}):
+                models.add("inbound_value_transfer")
+            else:
+                models.add("cross_chain_value_transfer")
+        if "cross_chain_message" in labels and "bridge_transfer" not in labels:
+            models.add("cross_chain_message")
+        if "bridge_receive" in labels:
+            models.add("remote_message_receive")
+    return sorted(models)
+
+
+def _bridge_security_models(protocols: set[str], has_security_config: bool) -> list[str]:
+    models: set[str] = set()
+    if "LayerZero" in protocols:
+        models.add("layerzero_dvn_uln_message_library")
+    if "Hyperlane" in protocols:
+        models.add("hyperlane_ism")
+    if "Wormhole" in protocols:
+        models.add("wormhole_guardian_vaa")
+    if "CCIP" in protocols:
+        models.add("ccip_router_token_pool")
+    if "Axelar" in protocols:
+        models.add("axelar_gateway")
+    if "Connext" in protocols:
+        models.add("connext_router")
+    if has_security_config and not models:
+        models.add("bridge_security_config")
+    return sorted(models)
+
+
+def _build_bridge_context(
+    classification: ContractClassification,
+    semantic_control: SemanticControlAnalysis,
+    upgradeability: UpgradeabilityAnalysis,
+) -> BridgeContext:
+    semantic_functions = semantic_control.get("semantic_functions", [])
+    bridge_functions = [
+        function
+        for function in semantic_functions
+        if any(label in _BRIDGE_EFFECT_LABELS for label in function.get("effect_labels") or [])
+    ]
+    upgrade_functions = [
+        function for function in semantic_functions if "implementation_update" in (function.get("effect_labels") or [])
+    ]
+
+    standards = set(classification.get("standards") or [])
+    protocols = {standard for standard in standards if standard in _BRIDGE_PROTOCOL_STANDARDS}
+    is_bridge = "Bridge" in standards or bool(protocols) or bool(bridge_functions)
+    has_security_config = any(
+        "bridge_security_config" in (function.get("effect_labels") or []) for function in bridge_functions
+    )
+
+    def with_label(label: str) -> list[BridgeFunctionContext]:
+        return [
+            _bridge_function_context(function)
+            for function in bridge_functions
+            if label in (function.get("effect_labels") or [])
+        ]
+
+    upgrade_context: BridgeUpgradeContext = {
+        "code_has_upgrade_path": bool(upgradeability["is_upgradeable"]),
+        "proxy_shell_detected": bool(upgradeability["is_upgradeable_proxy"]),
+        "pattern": upgradeability["pattern"],
+        "implementation_slots": list(upgradeability["implementation_slots"]),
+        "admin_paths": list(upgradeability["admin_paths"]),
+        "upgrade_functions": [_bridge_function_context(function) for function in upgrade_functions],
+        "can_change_bridge_logic": bool(is_bridge and upgradeability["is_upgradeable"]),
+    }
+
+    notes: list[str] = []
+    if not is_bridge:
+        notes.append("No bridge semantics detected in static analysis.")
+    elif upgrade_context["can_change_bridge_logic"]:
+        notes.append("Bridge behavior can change through an implementation update path detected in code.")
+    if has_security_config:
+        notes.append("Bridge security or verification configuration changes are present.")
+
+    return {
+        "is_bridge": is_bridge,
+        "protocols": sorted(protocols),
+        "movement_models": _bridge_movement_models(bridge_functions),
+        "security_models": _bridge_security_models(protocols, has_security_config),
+        "send_functions": [
+            _bridge_function_context(function)
+            for function in bridge_functions
+            if (
+                ("cross_chain_message" in (function.get("effect_labels") or []))
+                and ("bridge_receive" not in (function.get("effect_labels") or []))
+                and ("bridge_config_update" not in (function.get("effect_labels") or []))
+            )
+        ],
+        "receive_functions": with_label("bridge_receive"),
+        "config_functions": with_label("bridge_config_update"),
+        "security_config_functions": with_label("bridge_security_config"),
+        "upgrade_context": upgrade_context,
+        "notes": notes,
     }
 
 

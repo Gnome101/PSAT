@@ -367,7 +367,10 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "get_protocol_info",
-            "description": "Top-level snapshot for the current protocol: contract count, proxy count, audit count.",
+            "description": (
+                "Top-level snapshot for the current protocol: contract count, proxy count, bridge count, "
+                "bridge protocols, and audit count."
+            ),
             "parameters": {"type": "object", "properties": {}, "required": []},
         },
     },
@@ -375,7 +378,9 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "get_contract_info",
-            "description": "Identity, proxy status, controls, last upgrade for a single contract.",
+            "description": (
+                "Identity, proxy status, bridge context, controls, and last upgrade for a single contract."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {"address": _addr_param(), "chain": _chain_param()},

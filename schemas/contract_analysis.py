@@ -123,6 +123,37 @@ class UpgradeabilityAnalysis(TypedDict):
     evidence: list[Evidence]
 
 
+class BridgeFunctionContext(TypedDict):
+    function: str
+    effect_labels: list[str]
+    effect_targets: list[str]
+    action_summary: str
+    controller_refs: list[str]
+
+
+class BridgeUpgradeContext(TypedDict):
+    code_has_upgrade_path: bool
+    proxy_shell_detected: bool
+    pattern: UpgradeabilityPattern
+    implementation_slots: list[str]
+    admin_paths: list[str]
+    upgrade_functions: list[BridgeFunctionContext]
+    can_change_bridge_logic: bool
+
+
+class BridgeContext(TypedDict):
+    is_bridge: bool
+    protocols: list[str]
+    movement_models: list[str]
+    security_models: list[str]
+    send_functions: list[BridgeFunctionContext]
+    receive_functions: list[BridgeFunctionContext]
+    config_functions: list[BridgeFunctionContext]
+    security_config_functions: list[BridgeFunctionContext]
+    upgrade_context: BridgeUpgradeContext
+    notes: list[str]
+
+
 class PausabilityAnalysis(TypedDict):
     is_pausable: bool
     pause_functions: list[str]
@@ -232,6 +263,7 @@ class ContractAnalysis(TypedDict):
     contract_classification: ContractClassification
     semantic_control: SemanticControlAnalysis
     upgradeability: UpgradeabilityAnalysis
+    bridge_context: BridgeContext
     pausability: PausabilityAnalysis
     timelock: TimelockAnalysis
     audit_alignment: AuditAlignment

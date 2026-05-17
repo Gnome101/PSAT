@@ -6,6 +6,8 @@ import { ROLE_META } from "../meta.js";
 export function ContractNode({ data }) {
   const m = data.machine;
   const roleColor = (ROLE_META[m.role] || ROLE_META.utility).color;
+  const bridgeContext = m.bridge_context;
+  const bridgeProtocols = bridgeContext?.protocols || [];
   return (
     <div
       className={`ps-node${data.selected ? " ps-node-selected" : ""}${data.focused ? " ps-node-focused" : ""}`}
@@ -28,6 +30,12 @@ export function ContractNode({ data }) {
       )}
       {m.standards && m.standards.length > 0 && (
         <div className="ps-node-standards">{m.standards.join(" · ")}</div>
+      )}
+      {bridgeContext && (
+        <div className="ps-node-bridge">
+          {bridgeProtocols.join(" · ") || "Bridge"}
+          {bridgeContext.can_change_bridge_logic ? " · upgrade path changes bridge" : ""}
+        </div>
       )}
       <div className="ps-node-addr">{shortAddr(m.address)}</div>
       <div className="ps-node-role" style={{ color: roleColor }}>{(ROLE_META[m.role] || ROLE_META.utility).label.replace(/s$/, "")}</div>

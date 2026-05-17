@@ -290,7 +290,7 @@ def search_protocol_inventory(
     # the real contract-inventory source.
     hint_domain = _maybe_domain(clean_company)
     broad_results = _tavily_search(
-        f'"{clean_company}" protocol smart contract addresses deployments docs',
+        f'"{clean_company}" protocol smart contract addresses deployments chains multichain bridge docs',
         max_results=10,
         queries_used=queries_used,
         max_queries=max_queries,

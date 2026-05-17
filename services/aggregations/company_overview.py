@@ -791,6 +791,18 @@ def build_governance_view(
             capabilities.append("delegatecall")
         if "arbitrary_external_call" in all_effects:
             capabilities.append("arbitrary-call")
+        if all_effects.intersection(
+            {
+                "cross_chain_message",
+                "bridge_transfer",
+                "bridge_receive",
+                "bridge_config_update",
+                "bridge_security_config",
+            }
+        ):
+            capabilities.append("bridge")
+        if "bridge_security_config" in all_effects:
+            capabilities.append("bridge-security")
 
         contract_name = None
         if is_proxy and impl_job:
@@ -807,7 +819,23 @@ def build_governance_view(
         control_model = summary_row.control_model if summary_row else None
 
         name_lower = contract_name.lower()
-        if "bridge" in name_lower or "gateway" in name_lower:
+        bridge_standards = {"Bridge", "LayerZero", "CCIP", "Wormhole", "Hyperlane", "Axelar", "Connext"}
+        bridge_protocols = sorted(
+            standard for standard in standards if standard in bridge_standards and standard != "Bridge"
+        )
+        bridge_effects = {
+            "cross_chain_message",
+            "bridge_transfer",
+            "bridge_receive",
+            "bridge_config_update",
+            "bridge_security_config",
+        }
+        if (
+            "bridge" in name_lower
+            or "gateway" in name_lower
+            or all_effects.intersection(bridge_effects)
+            or any(standard in bridge_standards for standard in standards)
+        ):
             role = "bridge"
         elif any(e in value_effects for e in ("asset_pull", "asset_send")):
             role = "value_handler"
@@ -868,6 +896,21 @@ def build_governance_view(
             "balances": balances_list,
             "total_usd": round(total_usd, 2) if total_usd > 0 else None,
         }
+        if role == "bridge":
+            bridge_labels = sorted(all_effects.intersection(bridge_effects))
+            code_has_upgrade_path = bool(
+                (summary_row and summary_row.is_upgradeable) or "implementation_update" in all_effects
+            )
+            entry["bridge_context"] = {
+                "protocols": bridge_protocols,
+                "effect_labels": bridge_labels,
+                "has_config_update": "bridge_config_update" in all_effects,
+                "has_security_config": "bridge_security_config" in all_effects,
+                "deployed_proxy": bool(is_proxy),
+                "code_has_upgrade_path": code_has_upgrade_path,
+                "upgradeable": bool(is_proxy or code_has_upgrade_path),
+                "can_change_bridge_logic": bool(is_proxy or code_has_upgrade_path),
+            }
 
         graph_contract = lookup_contract or contract_row
         if graph_contract:

@@ -13,10 +13,12 @@ export const CONTROL_EFFECTS = new Set([
   "timelock_operation",
   "contract_deployment",
   "selfdestruct_capability",
+  "bridge_config_update",
+  "bridge_security_config",
 ]);
 
 export const INPUT_EFFECTS = new Set(["asset_pull", "mint"]);
-export const OUTPUT_EFFECTS = new Set(["asset_send", "burn"]);
+export const OUTPUT_EFFECTS = new Set(["asset_send", "burn", "bridge_transfer"]);
 
 export const INPUT_HINTS = ["deposit", "mint", "stake", "supply", "repay", "transferin", "bridgein", "join", "wrap"];
 export const OUTPUT_HINTS = ["withdraw", "redeem", "transfer", "send", "sweep", "claim", "borrow", "unstake", "burn"];

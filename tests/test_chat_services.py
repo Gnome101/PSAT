@@ -24,6 +24,7 @@ import pytest
 from sqlalchemy.orm import Session, sessionmaker
 
 from db.models import (
+    Artifact,
     AuditContractCoverage,
     AuditReport,
     Contract,
@@ -145,7 +146,76 @@ def seeded_protocol(db_session: Session):
     db_session.add_all([proxy, impl, plain, timelock])
     db_session.flush()
 
-    db_session.add(ContractSummary(contract_id=proxy.id, control_model="proxy", risk_level="medium"))
+    db_session.add(
+        ContractSummary(
+            contract_id=proxy.id,
+            control_model="proxy",
+            risk_level="medium",
+            is_upgradeable=True,
+            standards=["Bridge", "LayerZero"],
+        )
+    )
+    db_session.add(
+        Artifact(
+            job_id=impl_job.id,
+            name="contract_analysis",
+            data={
+                "schema_version": "0.1",
+                "bridge_context": {
+                    "is_bridge": True,
+                    "protocols": ["LayerZero"],
+                    "movement_models": ["cross_chain_value_transfer"],
+                    "security_models": ["layerzero_dvn_uln_message_library"],
+                    "send_functions": [
+                        {
+                            "function": "sendFrom(address,uint16,bytes,uint256)",
+                            "effect_labels": ["cross_chain_message", "bridge_transfer"],
+                            "effect_targets": [],
+                            "action_summary": "Transfers value across chains through a bridge endpoint.",
+                            "controller_refs": [],
+                        }
+                    ],
+                    "receive_functions": [],
+                    "config_functions": [
+                        {
+                            "function": "setPeer(uint32,bytes32)",
+                            "effect_labels": ["bridge_config_update"],
+                            "effect_targets": [],
+                            "action_summary": "Updates bridge peer routing.",
+                            "controller_refs": ["owner"],
+                        }
+                    ],
+                    "security_config_functions": [
+                        {
+                            "function": "setDvnConfig(uint32,address[],address[],uint8)",
+                            "effect_labels": ["bridge_config_update", "bridge_security_config"],
+                            "effect_targets": [],
+                            "action_summary": "Updates LayerZero DVN security configuration.",
+                            "controller_refs": ["owner"],
+                        }
+                    ],
+                    "upgrade_context": {
+                        "code_has_upgrade_path": True,
+                        "proxy_shell_detected": False,
+                        "pattern": "custom",
+                        "implementation_slots": ["implementation"],
+                        "admin_paths": ["upgradeTo(address)"],
+                        "upgrade_functions": [
+                            {
+                                "function": "upgradeTo(address)",
+                                "effect_labels": ["implementation_update"],
+                                "effect_targets": ["implementation"],
+                                "action_summary": "Changes implementation or upgrade control state.",
+                                "controller_refs": ["owner"],
+                            }
+                        ],
+                        "can_change_bridge_logic": True,
+                    },
+                    "notes": ["Bridge behavior can change through an implementation update path detected in code."],
+                },
+            },
+        )
+    )
 
     # Source file the agent can grep.
     db_session.add(
@@ -325,6 +395,9 @@ def test_contract_brief_and_upgrade_summary(db_session, seeded_protocol):
     # Owner controller was resolved via classify_address.
     assert brief["controllers"]["owner"]["kind"] == "timelock"
     assert brief["last_upgrade"]["new_impl"] == IMPL_ADDR
+    assert brief["bridge_context"]["protocols"] == ["LayerZero"]
+    assert brief["bridge_context"]["source_contract"] == IMPL_ADDR
+    assert brief["bridge_context"]["upgrade_context"]["can_change_bridge_logic"] is True
 
     miss = chat_data.contract_brief(db_session, "0x" + "0" * 40)
     assert "error" in miss
@@ -354,6 +427,9 @@ def test_protocol_brief_principals_addresses_and_role_holders(db_session, seeded
     brief = chat_data.protocol_brief(db_session, PROTO_NAME)
     assert brief["contract_count"] >= 4
     assert brief["audit_count"] >= 1
+    assert brief["bridge_count"] == 1
+    assert brief["bridges"][0]["protocols"] == ["LayerZero"]
+    assert brief["bridges"][0]["code_has_upgrade_path"] is True
     assert chat_data.protocol_brief(db_session, "missing-protocol")["error"]
 
     principals = chat_data.list_protocol_principals(db_session, PROTO_NAME)
@@ -394,9 +470,11 @@ def test_tool_wrappers_round_trip(db_session, seeded_protocol):
 
     contract = chat_tools._get_contract_info(db_session, ctx, address=PROXY_ADDR)
     assert contract["kind"] == "contract"
+    assert contract["bridge_context"]["protocols"] == ["LayerZero"]
 
     overview = chat_tools._get_contract_overview(db_session, ctx, address=PROXY_ADDR)
     assert overview["info"]["kind"] == "contract"
+    assert overview["info"]["bridge_context"]["upgrade_context"]["can_change_bridge_logic"] is True
     assert overview["upgrade_summary"]["impl_count"] == 1
 
     upgrades = chat_tools._get_upgrade_history(db_session, ctx, address=PROXY_ADDR)

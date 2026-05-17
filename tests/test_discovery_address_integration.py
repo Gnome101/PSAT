@@ -463,6 +463,40 @@ def test_process_address_fanout_invokes_fetch_and_creators(monkeypatch):
     assert contract.deployer == "0xc0ffee0000000000000000000000000000000001"
 
 
+def test_process_address_uses_chain_specific_etherscan_calls(monkeypatch):
+    """A chain-scoped analysis job fetches source and creator data from that chain."""
+    from utils.concurrency import RpcExecutor
+
+    RpcExecutor.reset_for_tests()
+    result = _etherscan_result()
+    _patch_discovery(monkeypatch, result)
+
+    fetch_chain_ids: list[int | None] = []
+    creator_chain_ids: list[int] = []
+
+    def fake_fetch(addr: str, *, chain_id: int | None = None) -> dict:
+        fetch_chain_ids.append(chain_id)
+        return result
+
+    def fake_batch_creators(addrs: list[str], *, chain_id: int = 1) -> dict[str, str]:
+        creator_chain_ids.append(chain_id)
+        return {addrs[0].lower(): "0xc0ffee0000000000000000000000000000000001"}
+
+    monkeypatch.setattr("workers.discovery.fetch", fake_fetch)
+    monkeypatch.setattr("workers.discovery._batch_get_creators", fake_batch_creators)
+
+    worker = DiscoveryWorker()
+    monkeypatch.setattr(worker, "update_detail", lambda *a, **kw: None)
+    session = MagicMock()
+    session.execute.return_value.scalar_one_or_none.return_value = None
+    job = _job(request={"chain": "arbitrum"})
+
+    worker._process_address(session, job)
+
+    assert fetch_chain_ids == [42161]
+    assert creator_chain_ids == [42161]
+
+
 def test_process_address_fanout_swallows_creators_exception(monkeypatch):
     """A failing creators lookup must not abort the discovery pipeline —
     parallel_get returns the exception in-place; deployer stays None."""

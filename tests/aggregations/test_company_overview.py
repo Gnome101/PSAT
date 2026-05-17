@@ -21,6 +21,7 @@ from sqlalchemy import select  # noqa: E402
 from db.models import (  # noqa: E402
     Contract,
     ContractBalance,
+    ContractSummary,
     ControlGraphEdge,
     ControlGraphNode,
     ControllerValue,
@@ -262,6 +263,75 @@ def test_build_company_overview_omits_functions_field(db_session):
     # value_effects / capabilities should still derive from the lightweight
     # ef_effects projection — pause_toggle → "pause" capability.
     assert "pause" in entry["capabilities"]
+
+
+def test_build_company_overview_bridge_context_summarizes_upgrade_control(db_session):
+    p = _add_protocol(db_session, f"bridge-context-{uuid.uuid4().hex[:8]}")
+    addr = _addr("bridge")
+    job = _add_job(db_session, address=addr, protocol_id=p.id, name="OFTAdapter")
+    contract = _add_contract(db_session, address=addr, job=job, protocol_id=p.id, contract_name="OFTAdapter")
+    db_session.add(
+        ContractSummary(
+            contract_id=contract.id,
+            control_model="ownable",
+            is_upgradeable=True,
+            is_pausable=False,
+            has_timelock=False,
+            risk_level="low",
+            is_factory=False,
+            is_nft=False,
+            standards=["Bridge", "LayerZero"],
+            source_verified=True,
+        )
+    )
+    db_session.add_all(
+        [
+            EffectiveFunction(
+                contract_id=contract.id,
+                function_name="sendFrom",
+                selector="0x11111111",
+                abi_signature="sendFrom(address,uint16,bytes,uint256)",
+                effect_labels=["cross_chain_message", "bridge_transfer"],
+                effect_targets=[],
+                action_summary="bridge transfer",
+                authority_public=False,
+                authority_roles=[],
+            ),
+            EffectiveFunction(
+                contract_id=contract.id,
+                function_name="setDvnConfig",
+                selector="0x22222222",
+                abi_signature="setDvnConfig(uint32,address[],address[],uint8)",
+                effect_labels=["bridge_config_update", "bridge_security_config"],
+                effect_targets=[],
+                action_summary="bridge security config",
+                authority_public=False,
+                authority_roles=[],
+            ),
+            EffectiveFunction(
+                contract_id=contract.id,
+                function_name="upgradeTo",
+                selector="0x3659cfe6",
+                abi_signature="upgradeTo(address)",
+                effect_labels=["implementation_update"],
+                effect_targets=[],
+                action_summary="upgrade",
+                authority_public=False,
+                authority_roles=[],
+            ),
+        ]
+    )
+    db_session.commit()
+
+    payload = build_company_overview(db_session, p.name)
+    entry = next(c for c in payload["contracts"] if c["address"] == addr)
+
+    assert entry["role"] == "bridge"
+    assert "bridge-security" in entry["capabilities"]
+    assert entry["bridge_context"]["protocols"] == ["LayerZero"]
+    assert entry["bridge_context"]["has_security_config"] is True
+    assert entry["bridge_context"]["code_has_upgrade_path"] is True
+    assert entry["bridge_context"]["can_change_bridge_logic"] is True
 
 
 def test_build_functions_for_protocol_returns_keyed_function_list(db_session):

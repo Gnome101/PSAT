@@ -131,6 +131,12 @@ export function AgentPanel({ companyName, selectedMachine, onHighlight, onFocusA
         .filter(Boolean),
     [turns],
   );
+  const selectedBridgeContext = selectedMachine?.bridge_context || null;
+  const selectedBridgeProtocols = selectedBridgeContext?.protocols?.length
+    ? selectedBridgeContext.protocols
+    : selectedBridgeContext
+      ? ["Bridge"]
+      : [];
 
   async function send(text) {
     const trimmed = (text ?? input).trim();
@@ -241,6 +247,12 @@ export function AgentPanel({ companyName, selectedMachine, onHighlight, onFocusA
             <span className="agent-context-meta"> · {selectedMachine.address?.slice(0, 8)}…</span>
           )}
         </span>
+        {selectedBridgeContext && (
+          <span className="agent-context-bridge">
+            {selectedBridgeProtocols.join(" · ")}
+            {selectedBridgeContext.can_change_bridge_logic ? " · upgrade path changes bridge" : ""}
+          </span>
+        )}
       </div>
 
       <div className="agent-scroll" ref={scrollRef} onScroll={handleScroll}>

@@ -23,6 +23,7 @@ from .predicate_artifacts import (
 from .reentrancy_pause import PauseInfo
 from .shared import _load_json, _select_subject_contract
 from .summaries import (
+    _build_bridge_context,
     _build_semantic_control_summary,
     _build_tracking_hints,
     _derive_static_risk_level,
@@ -240,6 +241,8 @@ def collect_contract_analysis_with_artifacts(
         )
     with _phase("upgradeability", durations_ms):
         upgradeability = _detect_upgradeability(subject_contract, project_dir, effects_artifact)
+    with _phase("bridge_context", durations_ms):
+        bridge_context = _build_bridge_context(classification, semantic_control, upgradeability)
     with _phase("pausability", durations_ms):
         pausability = _detect_pausability(subject_contract, project_dir, pause_info)
     with _phase("timelock", durations_ms):
@@ -279,6 +282,7 @@ def collect_contract_analysis_with_artifacts(
         "contract_classification": classification,
         "semantic_control": semantic_control,
         "upgradeability": upgradeability,
+        "bridge_context": bridge_context,
         "pausability": pausability,
         "timelock": timelock,
         "audit_alignment": audit_alignment,

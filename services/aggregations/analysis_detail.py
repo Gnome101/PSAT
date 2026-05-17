@@ -164,11 +164,16 @@ def build_analysis_detail(session: Session, run_name: str) -> dict[str, Any] | N
         if impl_job:
             _inherit_from_impl(session, payload, job, impl_job, impl_addr)
 
-    # Add subject info from contract_analysis if available
-    if isinstance(all_artifacts.get("contract_analysis"), dict):
-        subject = all_artifacts["contract_analysis"].get("subject", {})
+    # Add subject and bridge context from contract_analysis if available.
+    # Read from ``payload`` so proxy rows can use inherited impl analysis too.
+    if isinstance(payload.get("contract_analysis"), dict):
+        contract_analysis = payload["contract_analysis"]
+        subject = contract_analysis.get("subject", {})
         payload["contract_name"] = subject.get("name", payload["run_name"])
-        payload["summary"] = all_artifacts["contract_analysis"].get("summary")
+        payload["summary"] = contract_analysis.get("summary")
+        bridge_context = contract_analysis.get("bridge_context")
+        if isinstance(bridge_context, dict):
+            payload["bridge_context"] = bridge_context
 
     # Synthesis fallback for upgrade_history. Mirrors the per-artifact
     # endpoint at /api/analyses/{job}/artifact/upgrade_history. Runs after

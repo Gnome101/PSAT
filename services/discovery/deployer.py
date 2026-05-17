@@ -48,6 +48,7 @@ _MIN_SEED_SHARE = 0.05
 def _batch_get_creators(
     addresses: list[str],
     batch_size: int = 5,
+    chain_id: int = 1,
     debug: bool = False,
 ) -> dict[str, str]:
     """Look up contract creators in batches.
@@ -61,6 +62,7 @@ def _batch_get_creators(
             data = etherscan.get(
                 "contract",
                 "getcontractcreation",
+                chain_id=chain_id,
                 contractaddresses=",".join(batch),
             )
             for item in data.get("result", []):

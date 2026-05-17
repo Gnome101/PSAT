@@ -320,6 +320,271 @@ def test_semantic_function_semantics_detect_pause_and_asset_flow(tmp_path):
     assert pause["action_summary"] == "Changes the contract pause state."
 
 
+def test_layerzero_bridge_semantics_surface_as_multichain_effects(tmp_path):
+    project_dir = _write_project(
+        tmp_path,
+        "LayerZeroBridgeAdapter",
+        """
+        pragma solidity ^0.8.19;
+
+        interface IERC20 {
+            function transferFrom(address from, address to, uint256 amount) external returns (bool);
+        }
+
+        interface ILayerZeroEndpoint {
+            function send(
+                uint16 dstChainId,
+                bytes calldata destination,
+                bytes calldata payload,
+                address payable refundAddress,
+                address zroPaymentAddress,
+                bytes calldata adapterParams
+            ) external payable;
+        }
+
+        contract LayerZeroBridgeAdapter {
+            address public owner;
+            IERC20 public token;
+            ILayerZeroEndpoint public endpoint;
+            mapping(uint16 => bytes) public trustedRemoteLookup;
+            mapping(uint64 => bytes32) public receivedPayloads;
+
+            constructor(IERC20 token_, ILayerZeroEndpoint endpoint_) {
+                owner = msg.sender;
+                token = token_;
+                endpoint = endpoint_;
+            }
+
+            function setTrustedRemote(uint16 srcChainId, bytes calldata path) external {
+                require(msg.sender == owner, "not owner");
+                trustedRemoteLookup[srcChainId] = path;
+            }
+
+            function sendFrom(
+                address from,
+                uint16 dstChainId,
+                bytes calldata toAddress,
+                uint256 amount,
+                address payable refundAddress,
+                address zroPaymentAddress,
+                bytes calldata adapterParams
+            ) external payable {
+                token.transferFrom(from, address(this), amount);
+                endpoint.send{value: msg.value}(
+                    dstChainId,
+                    toAddress,
+                    abi.encode(from, amount),
+                    refundAddress,
+                    zroPaymentAddress,
+                    adapterParams
+                );
+            }
+
+            function lzReceive(
+                uint16 srcChainId,
+                bytes calldata srcAddress,
+                uint64 nonce,
+                bytes calldata payload
+            ) external {
+                require(msg.sender == address(endpoint), "bad endpoint");
+                receivedPayloads[nonce] = keccak256(abi.encode(srcChainId, srcAddress, payload));
+            }
+        }
+        """,
+        slither_output={"results": {"detectors": []}},
+    )
+
+    analysis = collect_contract_analysis(project_dir)
+    send_from = next(
+        fn for fn in analysis["semantic_control"]["semantic_functions"] if fn["function"].startswith("sendFrom(")
+    )
+    set_remote = _semantic_function(analysis, "setTrustedRemote(uint16,bytes)")
+    receive = _semantic_function(analysis, "lzReceive(uint16,bytes,uint64,bytes)")
+
+    assert {"Bridge", "LayerZero"}.issubset(set(analysis["contract_classification"]["standards"]))
+    assert {"asset_pull", "cross_chain_message", "bridge_transfer"}.issubset(set(send_from["effect_labels"]))
+    assert send_from["action_summary"] == "Transfers value across chains through a bridge or messaging endpoint."
+    assert "bridge_config_update" in set_remote["effect_labels"]
+    assert "cross_chain_message" not in set_remote["effect_labels"]
+    assert set_remote["action_summary"] == "Updates cross-chain bridge or messaging configuration."
+    assert {"cross_chain_message", "bridge_receive"}.issubset(set(receive["effect_labels"]))
+
+
+def test_bridge_context_includes_upgradeability_for_bridge_logic(tmp_path):
+    project_dir = _write_project(
+        tmp_path,
+        "UpgradeableLayerZeroBridge",
+        """
+        pragma solidity ^0.8.19;
+
+        interface ILayerZeroEndpoint {
+            function send(
+                uint16 dstChainId,
+                bytes calldata destination,
+                bytes calldata payload,
+                address payable refundAddress,
+                address zroPaymentAddress,
+                bytes calldata adapterParams
+            ) external payable;
+        }
+
+        contract UpgradeableLayerZeroBridge {
+            address public owner;
+            address public implementation;
+            ILayerZeroEndpoint public endpoint;
+            mapping(uint16 => bytes) public trustedRemoteLookup;
+
+            constructor(ILayerZeroEndpoint endpoint_) {
+                owner = msg.sender;
+                endpoint = endpoint_;
+            }
+
+            function upgradeTo(address newImplementation) external {
+                require(msg.sender == owner, "not owner");
+                implementation = newImplementation;
+            }
+
+            function sendFrom(
+                address from,
+                uint16 dstChainId,
+                bytes calldata toAddress,
+                uint256 amount,
+                address payable refundAddress,
+                address zroPaymentAddress,
+                bytes calldata adapterParams
+            ) external payable {
+                endpoint.send{value: msg.value}(
+                    dstChainId,
+                    toAddress,
+                    abi.encode(from, amount),
+                    refundAddress,
+                    zroPaymentAddress,
+                    adapterParams
+                );
+            }
+
+            fallback() external payable {
+                address impl = implementation;
+                assembly {
+                    calldatacopy(0, 0, calldatasize())
+                    let result := delegatecall(gas(), impl, 0, calldatasize(), 0, 0)
+                    returndatacopy(0, 0, returndatasize())
+                    switch result
+                    case 0 { revert(0, returndatasize()) }
+                    default { return(0, returndatasize()) }
+                }
+            }
+        }
+        """,
+        slither_output={"results": {"detectors": []}},
+    )
+
+    analysis = collect_contract_analysis(project_dir)
+    bridge_context = analysis["bridge_context"]
+    upgrade_context = bridge_context["upgrade_context"]
+
+    assert bridge_context["is_bridge"] is True
+    assert bridge_context["protocols"] == ["LayerZero"]
+    assert "cross_chain_value_transfer" in bridge_context["movement_models"]
+    assert any(fn["function"].startswith("sendFrom(") for fn in bridge_context["send_functions"])
+    assert upgrade_context["code_has_upgrade_path"] is True
+    assert upgrade_context["can_change_bridge_logic"] is True
+    assert "upgradeTo(address)" in upgrade_context["admin_paths"]
+    assert any(fn["function"] == "upgradeTo(address)" for fn in upgrade_context["upgrade_functions"])
+    assert (
+        "Bridge behavior can change through an implementation update path detected in code." in bridge_context["notes"]
+    )
+
+
+def test_layerzero_dvn_security_config_surfaces_as_bridge_security(tmp_path):
+    project_dir = _write_project(
+        tmp_path,
+        "LayerZeroDvnConfig",
+        """
+        pragma solidity ^0.8.19;
+
+        contract LayerZeroDvnConfig {
+            struct UlnConfig {
+                address[] requiredDVNs;
+                address[] optionalDVNs;
+                uint8 optionalDVNThreshold;
+            }
+
+            address public owner;
+            mapping(uint32 => UlnConfig) internal ulnConfigs;
+
+            constructor() {
+                owner = msg.sender;
+            }
+
+            function setDvnConfig(
+                uint32 dstEid,
+                address[] calldata requiredDvns,
+                address[] calldata optionalDvns,
+                uint8 optionalThreshold
+            ) external {
+                require(msg.sender == owner, "not owner");
+                UlnConfig storage cfg = ulnConfigs[dstEid];
+                delete cfg.requiredDVNs;
+                delete cfg.optionalDVNs;
+                for (uint256 i = 0; i < requiredDvns.length; i++) {
+                    cfg.requiredDVNs.push(requiredDvns[i]);
+                }
+                for (uint256 i = 0; i < optionalDvns.length; i++) {
+                    cfg.optionalDVNs.push(optionalDvns[i]);
+                }
+                cfg.optionalDVNThreshold = optionalThreshold;
+            }
+        }
+        """,
+        slither_output={"results": {"detectors": []}},
+    )
+
+    analysis = collect_contract_analysis(project_dir)
+    set_config = _semantic_function(analysis, "setDvnConfig(uint32,address[],address[],uint8)")
+
+    assert {"Bridge", "LayerZero"}.issubset(set(analysis["contract_classification"]["standards"]))
+    assert {"bridge_config_update", "bridge_security_config"}.issubset(set(set_config["effect_labels"]))
+    assert set_config["action_summary"] == "Updates cross-chain bridge security or verification configuration."
+
+
+def test_hyperlane_ism_security_config_surfaces_as_bridge_security(tmp_path):
+    project_dir = _write_project(
+        tmp_path,
+        "HyperlaneSecuredApp",
+        """
+        pragma solidity ^0.8.19;
+
+        interface IInterchainSecurityModule {
+            function moduleType() external view returns (uint8);
+        }
+
+        contract HyperlaneSecuredApp {
+            address public owner;
+            IInterchainSecurityModule public interchainSecurityModule;
+
+            constructor(IInterchainSecurityModule ism) {
+                owner = msg.sender;
+                interchainSecurityModule = ism;
+            }
+
+            function setInterchainSecurityModule(IInterchainSecurityModule ism) external {
+                require(msg.sender == owner, "not owner");
+                interchainSecurityModule = ism;
+            }
+        }
+        """,
+        slither_output={"results": {"detectors": []}},
+    )
+
+    analysis = collect_contract_analysis(project_dir)
+    set_ism = _semantic_function(analysis, "setInterchainSecurityModule(IInterchainSecurityModule)")
+
+    assert {"Bridge", "Hyperlane"}.issubset(set(analysis["contract_classification"]["standards"]))
+    assert {"bridge_config_update", "bridge_security_config"}.issubset(set(set_ism["effect_labels"]))
+    assert set_ism["action_summary"] == "Updates cross-chain bridge security or verification configuration."
+
+
 def test_controller_tracking_falls_back_to_state_only_without_events(tmp_path):
     project_dir = _write_project(
         tmp_path,

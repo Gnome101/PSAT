@@ -320,13 +320,13 @@ def get_contract_name(address: str) -> str | None:
     return name
 
 
-def get_source(address: str) -> dict:
+def get_source(address: str, chain_id: int = 1) -> dict:
     """Fetch verified source code for a contract address. Returns the first result."""
-    data = get("contract", "getsourcecode", address=address)
+    data = get("contract", "getsourcecode", chain_id=chain_id, address=address)
     result = data["result"][0]
 
     if not result.get("SourceCode"):
-        raise RuntimeError(f"No verified source code for {address}")
+        raise RuntimeError(f"No verified source code for {address} on chain_id={chain_id}")
 
     return result
 

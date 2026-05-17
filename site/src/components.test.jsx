@@ -25,6 +25,7 @@ import ProductHero from "./ProductHero.jsx";
 import ProtocolLogo from "./ProtocolLogo.jsx";
 import ProtocolRadar from "./ProtocolRadar.jsx";
 import HeroMesh from "./HeroMesh.jsx";
+import SummaryTab from "./tabs/SummaryTab.jsx";
 
 import { computeProtocolScore } from "./protocolScore.js";
 import { setFetchHandler } from "./test/fetchMock.js";
@@ -270,6 +271,40 @@ describe("ProtocolRadar", () => {
     // 6 axis labels (Authority, Audits, Upgrades, Pause, Safes, Data)
     expect(screen.getByText(/Authority/i)).toBeInTheDocument();
     expectNoCrash();
+  });
+});
+
+describe("SummaryTab", () => {
+  it("shows bridge protocol and function names instead of bridge counts", () => {
+    const detail = {
+      address: "0x1111111111111111111111111111111111111111",
+      summary: {
+        control_model: "proxy",
+        static_risk_level: "medium",
+        standards: ["Bridge", "LayerZero"],
+      },
+      bridge_context: {
+        is_bridge: true,
+        protocols: ["LayerZero"],
+        movement_models: ["cross_chain_value_transfer"],
+        security_models: ["layerzero_dvn_uln_message_library"],
+        send_functions: [{ function: "sendFrom(address,uint16,bytes,uint256)" }],
+        receive_functions: [{ function: "lzReceive(uint32,bytes32,bytes)" }],
+        config_functions: [{ function: "setPeer(uint32,bytes32)" }],
+        security_config_functions: [{ function: "setDvnConfig(uint32,address[],address[],uint8)" }],
+        upgrade_context: {
+          can_change_bridge_logic: true,
+          upgrade_functions: [{ function: "upgradeTo(address)" }],
+          implementation_slots: ["implementation"],
+        },
+      },
+    };
+    render(<SummaryTab detail={detail} />);
+    expect(screen.getByText("Bridge Context")).toBeInTheDocument();
+    expect(screen.getByText("LayerZero")).toBeInTheDocument();
+    expect(screen.getByText("sendFrom(address,uint16,bytes,uint256)")).toBeInTheDocument();
+    expect(screen.getByText("upgradeTo(address)")).toBeInTheDocument();
+    expect(screen.queryByText("Bridge Protocols")).not.toBeInTheDocument();
   });
 });
 

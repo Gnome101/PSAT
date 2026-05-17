@@ -88,6 +88,25 @@ describe("AgentPanel", () => {
     // Suggestion list is rendered on first mount before any messages.
     expect(screen.getByText(/Who controls upgrades\?/i)).toBeInTheDocument();
   });
+
+  it("surfaces selected bridge context in the agent header", () => {
+    render(
+      <AgentPanel
+        companyName="bridge-protocol"
+        selectedMachine={{
+          name: "LayerZeroBridge",
+          address: "0x1111111111111111111111111111111111111111",
+          bridge_context: {
+            protocols: ["LayerZero"],
+            can_change_bridge_logic: true,
+          },
+        }}
+        onHighlight={() => {}}
+        onFocusAddress={() => {}}
+      />,
+    );
+    expect(screen.getByText("LayerZero · upgrade path changes bridge")).toBeInTheDocument();
+  });
 });
 
 describe("MarkdownBubble", () => {

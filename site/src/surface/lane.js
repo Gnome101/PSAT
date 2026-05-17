@@ -32,8 +32,12 @@ export function toneForFunction(fn, lane) {
   if (effects.has("implementation_update") || effects.has("delegatecall_execution")) return "#9b8a9e";
   if (effects.has("ownership_transfer")) return "#9e8a8d";
   if (effects.has("role_management") || effects.has("authority_update") || effects.has("hook_update")) return "#7a8098";
+  if (effects.has("bridge_security_config")) return "#a08a70";
+  if (effects.has("bridge_config_update")) return "#8a92a0";
   if (effects.has("pause_toggle")) return "#998a6a";
   if (effects.has("timelock_operation")) return "#8a7e6a";
+  if (effects.has("bridge_transfer")) return "#8aa06a";
+  if (effects.has("bridge_receive") || effects.has("cross_chain_message")) return "#6a8fa0";
   if (effects.has("asset_pull") || effects.has("mint")) return "#6a9e94";
   if (effects.has("asset_send") || effects.has("burn")) return "#9a8a6e";
   return LANE_META[lane].tone;
@@ -46,6 +50,11 @@ export function compactActionSummary(fn) {
   if (effects.has("ownership_transfer")) return "changes owner";
   if (effects.has("authority_update")) return "changes authority";
   if (effects.has("hook_update")) return "changes hook";
+  if (effects.has("bridge_security_config")) return "bridge security config";
+  if (effects.has("bridge_config_update")) return "bridge route config";
+  if (effects.has("bridge_transfer")) return "bridges value";
+  if (effects.has("bridge_receive")) return "receives remote message";
+  if (effects.has("cross_chain_message")) return "cross-chain message";
   if (effects.has("pause_toggle")) return "pause control";
 
   if (effects.has("asset_pull") || effects.has("mint")) return "moves value in";
@@ -58,12 +67,15 @@ export function lanePriority(fn) {
   if (effects.has("implementation_update") || effects.has("delegatecall_execution")) return 0;
   if (effects.has("ownership_transfer")) return 1;
   if (effects.has("role_management") || effects.has("authority_update") || effects.has("hook_update")) return 2;
-  if (effects.has("pause_toggle")) return 3;
-  if (effects.has("timelock_operation")) return 4;
-  if (effects.has("asset_pull") || effects.has("mint")) return 5;
-  if (effects.has("asset_send") || effects.has("burn")) return 6;
-  if (effects.has("arbitrary_external_call") || effects.has("external_contract_call")) return 7;
-  return 9;
+  if (effects.has("bridge_security_config") || effects.has("bridge_config_update")) return 3;
+  if (effects.has("pause_toggle")) return 4;
+  if (effects.has("timelock_operation")) return 5;
+  if (effects.has("bridge_transfer")) return 6;
+  if (effects.has("asset_pull") || effects.has("mint")) return 7;
+  if (effects.has("asset_send") || effects.has("burn")) return 8;
+  if (effects.has("cross_chain_message") || effects.has("bridge_receive")) return 9;
+  if (effects.has("arbitrary_external_call") || effects.has("external_contract_call")) return 10;
+  return 11;
 }
 
 export function categorizeOps(items) {
