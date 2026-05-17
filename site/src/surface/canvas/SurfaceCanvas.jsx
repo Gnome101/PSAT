@@ -19,6 +19,28 @@ import { PrincipalTourNav } from "./PrincipalTourNav.jsx";
 const nodeTypes = { contract: ContractNode, principal: PrincipalNode, group: GroupNode };
 const edgeTypes = { channeled: ChanneledStepEdge };
 
+// Selection-time legend. Renders only while a contract is selected so
+// the chip-color convention (warm = selected acts outward, cool =
+// other acts on selected) doesn't have to be memorised — the legend
+// is right there with the chips it explains. Uses "acts on" because
+// the edges represent any directed relationship (controls / calls /
+// sends value / owns / proxies-to); the chip text spells out which
+// specifically.
+function SelectionLegend() {
+  return (
+    <div className="ps-selection-legend">
+      <div className="ps-selection-legend-row">
+        <span className="ps-selection-legend-swatch ps-selection-legend-swatch--out" />
+        <span>selected acts on this contract</span>
+      </div>
+      <div className="ps-selection-legend-row">
+        <span className="ps-selection-legend-swatch ps-selection-legend-swatch--in" />
+        <span>this contract acts on selected</span>
+      </div>
+    </div>
+  );
+}
+
 export function SurfaceCanvas({ machines, fundFlows, principals, selectedAddress, focusAddress, focusedAddress, highlightedAddresses, onSelectMachine, onSelectPrincipal, principalTour, onTourGo, onTourBack }) {
   const [initNodes, setInitNodes] = useState([]);
   const [initEdges, setInitEdges] = useState([]);
@@ -206,6 +228,11 @@ export function SurfaceCanvas({ machines, fundFlows, principals, selectedAddress
         {principalTour && principalTour.principals.length > 1 && (
           <Panel position="top-right">
             <PrincipalTourNav tour={principalTour} onGo={onTourGo} onBack={onTourBack} />
+          </Panel>
+        )}
+        {selectedAddress && (
+          <Panel position="top-center">
+            <SelectionLegend />
           </Panel>
         )}
       </ReactFlow>

@@ -131,7 +131,11 @@ export function ChanneledStepEdge(props) {
       {useOverlayLabel && (
         <EdgeLabelRenderer>
           <div
-            className="ps-edge-label"
+            className={
+              data.selectedEnd === "source"
+                ? "ps-edge-label ps-edge-label--out"
+                : "ps-edge-label ps-edge-label--in"
+            }
             style={{
               transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)`,
             }}

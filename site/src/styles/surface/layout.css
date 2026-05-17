@@ -785,9 +785,15 @@
 /* Selection-time edge labels render in EdgeLabelRenderer (HTML
    overlay) so no SVG edge can paint over them. position:absolute is
    required by React Flow's overlay; the transform is injected by the
-   edge component to place the label at its target corner. Styling
-   matches the SVG label this replaces (opaque dark bg, bold light
-   text, ~2px radius) — only the paint layer changed. */
+   edge component to place the label at its target corner.
+
+   Two direction variants tint the chip so you can read who-controls-
+   whom at a glance instead of having to recall the position
+   convention (above = selected controls this contract, etc.):
+     --out   selected -> other (selected acts on this contract)
+     --in    other -> selected (this contract acts on selected)
+   Warm/cool pairing was picked to be pre-attentive without clashing
+   with the existing edge palette (#7fc4b6 value, #94a3b8 control). */
 .ps-edge-label {
   position: absolute;
   pointer-events: none;
@@ -798,6 +804,55 @@
   padding: 4px 7px;
   border-radius: 2px;
   white-space: nowrap;
+}
+
+.ps-edge-label--out {
+  background: #78350f;
+  color: #fef3c7;
+}
+
+.ps-edge-label--in {
+  background: #1e3a8a;
+  color: #dbeafe;
+}
+
+/* Selection legend — small floating box that appears in bottom-right
+   of the canvas while a contract is selected. Swatch colors match the
+   chip variants so the user reads the legend once and learns the
+   convention. */
+.ps-selection-legend {
+  background: #0f1218;
+  border: 1px solid #334155;
+  border-radius: 4px;
+  padding: 8px 10px;
+  color: #cbd5e1;
+  font-size: 11px;
+  line-height: 1.4;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.ps-selection-legend-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ps-selection-legend-swatch {
+  display: inline-block;
+  width: 18px;
+  height: 12px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
+.ps-selection-legend-swatch--out {
+  background: #78350f;
+}
+
+.ps-selection-legend-swatch--in {
+  background: #1e3a8a;
 }
 
 .ps-node-caps {
