@@ -590,6 +590,7 @@ def backfill_historical_impl_contracts(
     protocol_id: int,
     chain: str | None,
     impl_addrs: set[str],
+    parent_proxy_sources: list[str] | None,
 ) -> None:
     """Ensure a Contract row exists for each historical impl address.
 
@@ -597,7 +598,17 @@ def backfill_historical_impl_contracts(
     artifact's events should be present as a Contract row so the audit
     coverage matcher can link audits whose scope names a past impl.
 
-    For each address, three cases:
+    ``parent_proxy_sources`` is the discovery_sources of the proxy whose
+    upgrade history produced these impls. If the parent doesn't assert
+    ownership (only low-confidence sources, e.g. ``dapp_crawl``), the
+    impls are not stamped with ``protocol_id`` — orphan Contract rows
+    are created so the coverage matcher still has names to resolve, but
+    the protocol's inventory is not polluted. The whole point: a foreign
+    proxy (EigenLayer, OP-Stack) that snuck into inventory via a low-
+    confidence source must not multiply itself into N "owned" impls. See
+    services/discovery/source_confidence.py.
+
+    For each address, three cases (when ownership IS asserted):
       1. No Contract row exists → create one tagged
          ``discovery_source='upgrade_history'`` with Etherscan-resolved
          name. Normal path for newly-surfaced impls.
@@ -609,6 +620,10 @@ def backfill_historical_impl_contracts(
          silently stomping another protocol's inventory would be worse
          than an unresolved coverage link.
 
+    When ownership is NOT asserted, branch (1) drops ``protocol_id``
+    from the new row and branch (2) becomes a no-op (orphan adoption
+    is the leak we're closing). Branch (3) is unchanged.
+
     Etherscan name resolution uses the shared ``get_contract_info`` cache,
     so re-analyzing a protocol re-hits only new impls. Per-address errors
     are swallowed so one flaky lookup doesn't wreck the whole backfill.
@@ -616,10 +631,14 @@ def backfill_historical_impl_contracts(
     from sqlalchemy import select
 
     from db.models import Contract
+    from services.discovery.source_confidence import asserts_ownership
     from utils.etherscan import get_contract_info, parallel_get
 
     if not impl_addrs:
         return
+
+    owns = asserts_ownership(parent_proxy_sources)
+    owning_protocol_id = protocol_id if owns else None
 
     # Match the natural (address, chain) uniqueness grain. Cross-chain
     # protocols (rare but real — CREATE2 / deterministic deployments can
@@ -658,12 +677,19 @@ def backfill_historical_impl_contracts(
             if existing.protocol_id is None or existing.protocol_id == protocol_id:
                 was_orphan = existing.protocol_id is None
                 had_no_tag = "upgrade_history" not in (existing.discovery_sources or [])
-                if was_orphan:
+                # Without ownership assertion from the parent, don't
+                # adopt orphans into this protocol — that's exactly the
+                # leak we're closing. The tag append still happens so
+                # the source trail is preserved for later corroboration.
+                if was_orphan and owns:
                     existing.protocol_id = protocol_id
                 if had_no_tag:
                     existing.discovery_sources = list(existing.discovery_sources or []) + ["upgrade_history"]
                 adopted += 1
-                if was_orphan or had_no_tag:
+                # Only schedule coverage refresh when the row is actually
+                # in our protocol — refresh on an orphan is wasted work
+                # since the matcher filters by protocol_id.
+                if owns and (was_orphan or had_no_tag):
                     refresh_ids.append(existing.id)
             else:
                 logger.warning(
@@ -678,7 +704,7 @@ def backfill_historical_impl_contracts(
         name = name_results.get(addr)
 
         new_row = Contract(
-            protocol_id=protocol_id,
+            protocol_id=owning_protocol_id,
             address=addr,
             chain=chain,
             contract_name=name or "UnknownImpl",
@@ -690,7 +716,10 @@ def backfill_historical_impl_contracts(
         session.add(new_row)
         created += 1
         session.flush()
-        refresh_ids.append(new_row.id)
+        # Same reasoning as above — coverage refresh only fires for rows
+        # that actually belong to the protocol.
+        if owns:
+            refresh_ids.append(new_row.id)
 
     if created or adopted:
         session.commit()

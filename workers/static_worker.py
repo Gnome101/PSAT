@@ -485,11 +485,17 @@ def _finalize_upgrade_history(
                 stats["proxies_skipped_no_contract"],
             )
             if contract_row.protocol_id is not None and stats["impl_addrs"]:
+                # parent_proxy_sources gates ownership: when the subject
+                # proxy only has low-confidence sources (e.g. dapp_crawl),
+                # the impls land as orphans so a foreign proxy doesn't
+                # multiply itself into N "owned" rows. See
+                # services/discovery/source_confidence.py.
                 backfill_historical_impl_contracts(
                     session,
                     protocol_id=contract_row.protocol_id,
                     chain=contract_row.chain,
                     impl_addrs=stats["impl_addrs"],
+                    parent_proxy_sources=contract_row.discovery_sources,
                 )
         except Exception as exc:
             record_degraded(
