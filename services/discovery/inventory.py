@@ -12,7 +12,9 @@ from __future__ import annotations
 from collections import Counter, defaultdict
 from typing import Any
 
-from .chain_resolver import resolve_unknown_chains
+from utils.chains import canonical_chain, canonical_chain_list
+
+from .chain_resolver import resolve_unknown_chains, validate_claimed_chains
 from .deployer import expand_from_deployers
 from .inventory_domain import (
     CHAIN_SORT_ORDER,
@@ -67,7 +69,8 @@ def _collapse_unknown_chain_entries(entries: list[dict[str, Any]]) -> dict[str, 
     """Merge unknown-chain evidence per address while preserving multi-chain evidence."""
     by_address: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for entry in entries:
-        by_address[entry["address"]].append(entry)
+        chain = canonical_chain(entry.get("chain")) or "unknown"
+        by_address[entry["address"]].append({**entry, "chain": chain})
 
     grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for address, items in by_address.items():
@@ -86,7 +89,9 @@ def _sorted_chains(chains: set[str]) -> list[str]:
 
 
 def _select_chain_summary(evidence: list[dict[str, Any]]) -> tuple[str, list[str]]:
-    specific = _sorted_chains({str(item["chain"]) for item in evidence if item.get("chain") != "unknown"})
+    specific = _sorted_chains(
+        {chain for item in evidence if (chain := (canonical_chain(item.get("chain")) or "unknown")) != "unknown"}
+    )
     if specific:
         if len(specific) == 1:
             return specific[0], specific
@@ -110,15 +115,16 @@ def _select_name(evidence: list[dict[str, Any]]) -> tuple[str | None, list[str]]
 def _determine_sources(evidence: list[dict[str, Any]]) -> list[str]:
     """Derive the source list from evidence kinds present for an address."""
     _KIND_TO_SOURCE = {
-        "official_inventory_table": "tavily_ai_inventory",
-        "official_inventory_link": "tavily_ai_inventory",
-        "official_inventory_text": "tavily_ai_inventory",
+        "official_inventory_table": "ai_inventory",
+        "official_inventory_link": "ai_inventory",
+        "official_inventory_text": "ai_inventory",
+        "exa_deep_research": "exa_deep_research",
         "deployer_expansion": "deployer_expansion",
     }
     sources: list[str] = []
     seen: set[str] = set()
     for item in evidence:
-        source = _KIND_TO_SOURCE.get(item.get("kind", ""), "tavily_ai_inventory")
+        source = _KIND_TO_SOURCE.get(item.get("kind", ""), "ai_inventory")
         if source not in seen:
             seen.add(source)
             sources.append(source)
@@ -215,7 +221,7 @@ def _group_multi_deployments(contracts: list[dict[str, Any]]) -> list[dict[str, 
 
         for contract in group:
             dep: dict[str, Any] = {"address": contract["address"]}
-            dep_chains = contract.get("chains", ["unknown"])
+            dep_chains = canonical_chain_list(contract.get("chains", ["unknown"])) or ["unknown"]
             dep["chains"] = dep_chains
             for ch in dep_chains:
                 if ch not in seen_chains:
@@ -232,7 +238,7 @@ def _group_multi_deployments(contracts: list[dict[str, Any]]) -> list[dict[str, 
                     all_source_ids.append(sid)
                     seen_source_ids.add(sid)
 
-        base["chains"] = all_chains
+        base["chains"] = canonical_chain_list(all_chains) or []
         base["confidence"] = max_confidence
         base["source_ids"] = all_source_ids
         base["deployments"] = deployments
@@ -268,7 +274,7 @@ def search_protocol_inventory(
     if limit < 1:
         raise ValueError("limit must be >= 1")
 
-    requested_chain = chain.lower().strip() if isinstance(chain, str) and chain.strip() else None
+    requested_chain = canonical_chain(chain) if isinstance(chain, str) and chain.strip() else None
     errors: list[dict[str, Any]] = []
     notes: list[str] = []
     queries_used = [0]
@@ -376,7 +382,7 @@ def search_protocol_inventory(
     # Resolve unknown chains before activity ranking (activity needs correct chain_id).
     def _primary_chain(c: dict[str, Any]) -> str:
         chains = c.get("chains", [])
-        return chains[0] if chains else "unknown"
+        return (canonical_chain(chains[0]) if chains else None) or "unknown"
 
     unknown_count = sum(1 for c in contracts if _primary_chain(c) == "unknown")
     if unknown_count:
@@ -388,6 +394,13 @@ def search_protocol_inventory(
         except Exception as exc:
             _debug_log(debug, f"Chain resolution failed: {exc!r}")
             notes.append(f"Chain resolution failed: {exc}")
+
+    if any("exa_deep_research" in (c.get("source") or []) for c in contracts):
+        try:
+            contracts = validate_claimed_chains(contracts, source_names=("exa_deep_research",), debug=debug)
+        except Exception as exc:
+            _debug_log(debug, f"Claimed-chain sanity check failed: {exc!r}")
+            notes.append(f"Claimed-chain sanity check failed: {exc}")
 
     # Activity ranking intentionally does NOT run here. The worker
     # pipeline runs the single authoritative ranking in the selection

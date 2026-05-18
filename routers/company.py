@@ -5,10 +5,12 @@ from __future__ import annotations
 import logging
 import time
 import uuid
+from collections.abc import Iterable
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Response
-from sqlalchemy import select
+from sqlalchemy import or_, select
+from sqlalchemy.orm import aliased
 
 from db.models import AuditContractCoverage, AuditReport, Contract, Protocol
 from db.queue import get_artifact
@@ -27,6 +29,47 @@ from . import deps
 
 router = APIRouter()
 logger = logging.getLogger("routers.company")
+
+
+def _coverage_key(chain: str | None, address: str | None) -> tuple[str, str] | None:
+    chain_key = (chain or "").lower()
+    address_key = (address or "").lower()
+    if not chain_key or not address_key:
+        return None
+    return (chain_key, address_key)
+
+
+def _is_reusable_verified_coverage(row: Any) -> bool:
+    return (
+        str(getattr(row, "equivalence_status", "") or "").lower() == "proven"
+        and str(getattr(row, "match_type", "") or "").lower() == "reviewed_commit"
+        and str(getattr(row, "proof_kind", "") or "").lower() != "cited_only"
+    )
+
+
+def _inherit_verified_dependency_coverage(
+    *,
+    inherited_pairs: Iterable[Any],
+    target_contract_ids_by_key: dict[tuple[str, str], set[int]],
+    coverage_by_contract: dict[int, list[Any]],
+    audits_by_id: dict[int, Any],
+) -> list[Any]:
+    inherited_rows: list[Any] = []
+    for row, audit, covered_contract, source_protocol in inherited_pairs:
+        if not _is_reusable_verified_coverage(row):
+            continue
+        key = _coverage_key(getattr(covered_contract, "chain", None), getattr(covered_contract, "address", None))
+        target_ids = target_contract_ids_by_key.get(key) if key else None
+        if not target_ids:
+            continue
+        audits_by_id[audit.id] = audit
+        setattr(row, "_coverage_source", "inherited")
+        setattr(row, "_inherited_from_protocol", source_protocol.name)
+        setattr(row, "_inherited_contract_address", covered_contract.address)
+        for target_id in target_ids:
+            coverage_by_contract.setdefault(target_id, []).append(row)
+        inherited_rows.append(row)
+    return inherited_rows
 
 
 def _log_endpoint(route: str, *, company: str, started: float, **extras: Any) -> None:
@@ -312,6 +355,43 @@ def company_audit_coverage(company_name: str) -> dict[str, Any]:
         for row in coverage_rows:
             coverage_by_contract.setdefault(row.contract_id, []).append(row)
 
+        # Reuse strict proofs already established for the same deployed
+        # contract under another protocol. This lets dependency rows such as
+        # Lido/WETH/LayerZero carry their own verified audits when they appear
+        # in a dependent protocol, without crediting heuristic matches.
+        target_contract_ids_by_key: dict[tuple[str, str], set[int]] = {}
+        for c in contracts:
+            if key := _coverage_key(c.chain, c.address):
+                target_contract_ids_by_key.setdefault(key, set()).add(c.id)
+            if c.is_proxy and (key := _coverage_key(c.chain, c.implementation)):
+                target_contract_ids_by_key.setdefault(key, set()).add(c.id)
+
+        inherited_rows: list[AuditContractCoverage] = []
+        if target_contract_ids_by_key:
+            CoveredContract = aliased(Contract)
+            inherited_pairs = session.execute(
+                select(AuditContractCoverage, AuditReport, CoveredContract, Protocol)
+                .join(CoveredContract, AuditContractCoverage.contract_id == CoveredContract.id)
+                .join(AuditReport, AuditContractCoverage.audit_report_id == AuditReport.id)
+                .join(Protocol, AuditContractCoverage.protocol_id == Protocol.id)
+                .where(
+                    AuditContractCoverage.protocol_id != protocol_row.id,
+                    AuditContractCoverage.equivalence_status == "proven",
+                    AuditContractCoverage.match_type == "reviewed_commit",
+                    or_(
+                        AuditContractCoverage.proof_kind.is_(None),
+                        AuditContractCoverage.proof_kind != "cited_only",
+                    ),
+                    CoveredContract.address.in_({addr for _chain, addr in target_contract_ids_by_key}),
+                )
+            ).all()
+            inherited_rows = _inherit_verified_dependency_coverage(
+                inherited_pairs=inherited_pairs,
+                target_contract_ids_by_key=target_contract_ids_by_key,
+                coverage_by_contract=coverage_by_contract,
+                audits_by_id=audits_by_id,
+            )
+
         def _sort_key(row: Any) -> tuple:
             audit = audits_by_id.get(row.audit_report_id)
             date = (audit.date if audit else None) or ""
@@ -336,9 +416,17 @@ def company_audit_coverage(company_name: str) -> dict[str, Any]:
                             entries.append(e)
                             seen_audit_ids.add(e.audit_report_id)
             entries = sorted(entries, key=_sort_key, reverse=True)
-            matching = [
-                _audit_brief(audits_by_id[e.audit_report_id], e) for e in entries if e.audit_report_id in audits_by_id
-            ]
+            matching = []
+            for e in entries:
+                audit = audits_by_id.get(e.audit_report_id)
+                if audit is None:
+                    continue
+                brief = _audit_brief(audit, e)
+                if getattr(e, "_coverage_source", None) == "inherited":
+                    brief["coverage_source"] = "inherited"
+                    brief["inherited_from_protocol"] = getattr(e, "_inherited_from_protocol", None)
+                    brief["inherited_contract_address"] = getattr(e, "_inherited_contract_address", None)
+                matching.append(brief)
             # Inventory-only entries (discovered but never analyzed) have no
             # name and no audits — they contribute nothing to the coverage
             # view and otherwise inflate the payload (~67% of rows for a
@@ -370,6 +458,6 @@ def company_audit_coverage(company_name: str) -> dict[str, Any]:
         outcome="success",
         contract_count=len(coverage),
         audit_count=len(audit_rows),
-        coverage_row_count=len(coverage_rows),
+        coverage_row_count=len(coverage_rows) + len(inherited_rows),
     )
     return result

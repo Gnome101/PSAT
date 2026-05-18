@@ -13,7 +13,7 @@ import inspect
 import logging
 from typing import Any, cast
 
-from sqlalchemy import select
+from sqlalchemy import func, null, select
 from sqlalchemy.orm import Session
 
 from db.models import Contract, Job, JobStage
@@ -172,6 +172,7 @@ def _sync_audit_reports_to_db(session: Session, protocol_id: int, reports: list[
         url = str(report.get("url") or "").strip()
         if not url or not auditor or not title:
             continue
+        classified_commits = report.get("classified_commits") or None
 
         stmt = pg_insert(AuditReport).values(
             protocol_id=protocol_id,
@@ -184,6 +185,9 @@ def _sync_audit_reports_to_db(session: Session, protocol_id: int, reports: list[
             source_url=report.get("source_url"),
             # Needed by services/audits/source_equivalence for GitHub lookup.
             source_repo=report.get("source_repo"),
+            reviewed_commits=report.get("reviewed_commits") or None,
+            referenced_repos=report.get("referenced_repos") or None,
+            classified_commits=classified_commits if classified_commits is not None else null(),
         )
         stmt = stmt.on_conflict_do_update(
             constraint="uq_audit_report_protocol_url",
@@ -194,11 +198,17 @@ def _sync_audit_reports_to_db(session: Session, protocol_id: int, reports: list[
                 "date": stmt.excluded.date,
                 "confidence": stmt.excluded.confidence,
                 "source_url": stmt.excluded.source_url,
-                "source_repo": stmt.excluded.source_repo,
+                "source_repo": func.coalesce(stmt.excluded.source_repo, AuditReport.source_repo),
+                "reviewed_commits": func.coalesce(stmt.excluded.reviewed_commits, AuditReport.reviewed_commits),
+                "referenced_repos": func.coalesce(stmt.excluded.referenced_repos, AuditReport.referenced_repos),
+                "classified_commits": func.coalesce(stmt.excluded.classified_commits, AuditReport.classified_commits),
             },
         )
         session.execute(stmt)
     session.commit()
+    # Core upserts do not synchronize SQLAlchemy's identity map. Keep the
+    # worker/test session consistent for callers that read audit rows next.
+    session.expire_all()
 
 
 class DiscoveryWorker(BaseWorker):
@@ -236,15 +246,37 @@ class DiscoveryWorker(BaseWorker):
             if isinstance(_raw, dict):
                 prev_inventory = _raw
 
-        self.update_detail(session, job, f"Discovering contracts for {company}")
+        self.update_detail(session, job, f"Discovering contracts + audits for {company}")
         logger.info("Discovery started for job %s: company=%s, chain=%s", job.id, company, chain)
-        inventory = search_protocol_inventory(company, chain=chain)
+
+        # Premium+Deps unified discovery (see services/discovery/run_discovery.py).
+        # Runs audit + address pipelines in one call, including Deep Research seeds,
+        # dependency two-pass for BoringVault-class components, and SPA-bait overrides.
+        from services.discovery.run_discovery import run_discovery
+
+        try:
+            unified = run_discovery(company, chain=chain)
+            inventory = unified["addresses"]
+            audit_result_raw: dict | None = unified["audits"]
+            discovery_meta = unified["meta"]
+        except Exception as exc:
+            record_degraded(
+                phase="unified_discovery",
+                exc=exc,
+                context={"company": company, "chain": chain},
+                include_traceback=True,
+            )
+            logger.warning("Job %s: unified discovery failed, falling back to legacy search: %s", job.id, exc)
+            inventory = search_protocol_inventory(company, chain=chain)
+            audit_result_raw = None
+            discovery_meta = {"fallback": True, "error": str(exc)}
 
         # Merge with previous inventory if available
         if prev_inventory and isinstance(prev_inventory, dict):
             inventory = merge_inventory(prev_inventory, inventory)
 
         store_artifact(session, job.id, "contract_inventory", data=inventory)
+        store_artifact(session, job.id, "discovery_meta", data=discovery_meta)
 
         # Resolve to a DefiLlama family slug FIRST so the Protocol upsert is
         # keyed on a stable canonical id. Without this, the same protocol
@@ -265,7 +297,7 @@ class DiscoveryWorker(BaseWorker):
         session.commit()
 
         # --- Audit report discovery ---
-        self.update_detail(session, job, f"Discovering audit reports for {company}")
+        self.update_detail(session, job, f"Persisting audit reports for {company}")
         prev_audits: dict | None = None
         if prev_job:
             _raw_audits = get_artifact(session, prev_job.id, "audit_reports")
@@ -273,10 +305,13 @@ class DiscoveryWorker(BaseWorker):
                 prev_audits = _raw_audits
 
         try:
-            audit_result = search_audit_reports(
-                company,
-                official_domain=inventory.get("official_domain"),
-            )
+            if audit_result_raw is None:
+                # Legacy fallback path (unified discovery failed above)
+                audit_result_raw = search_audit_reports(
+                    company,
+                    official_domain=inventory.get("official_domain"),
+                )
+            audit_result = audit_result_raw
             if prev_audits:
                 audit_result = merge_audit_reports(prev_audits, audit_result)
             store_artifact(session, job.id, "audit_reports", data=audit_result)
@@ -285,13 +320,14 @@ class DiscoveryWorker(BaseWorker):
             if audit_count:
                 logger.info("Job %s: found %d audit report(s) for %s", job.id, audit_count, company)
         except Exception as exc:
+            session.rollback()
             record_degraded(
                 phase="audit_discovery",
                 exc=exc,
                 context={"company": company},
                 include_traceback=True,
             )
-            logger.warning("Job %s: audit report discovery failed: %s", job.id, exc)
+            logger.warning("Job %s: audit report persistence failed: %s", job.id, exc)
 
         inventory_contracts = [e for e in inventory.get("contracts", []) if isinstance(e, dict)]
         bulk_entries = _inventory_contract_rows(inventory_contracts)
@@ -305,7 +341,7 @@ class DiscoveryWorker(BaseWorker):
         # already in the table from a prior source gains this one as
         # corroboration rather than being dropped.
         # Build the bulk payload in one pass. Inventory entries carry their
-        # own ``source`` list (e.g. ``["tavily_ai_inventory", "deployer_expansion"]``)
+        # own ``source`` list (e.g. ``["ai_inventory", "deployer_expansion"]``)
         # when multiple inventory signals agreed; preserve that granularity
         # so ranking sees the richer corroboration story.
         # One SELECT for all existing rows + a single bulk add for new ones —

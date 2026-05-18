@@ -79,6 +79,8 @@ jobs:
             ENVIO_API_TOKEN="${{ secrets.ENVIO_API_TOKEN }}" \
             TAVILY_API_KEY="${{ secrets.TAVILY_API_KEY }}" \
             PSAT_TAVILY_CACHE="1" \
+            EXA_API_KEY="${{ secrets.EXA_API_KEY }}" \
+            PSAT_EXA_CACHE="1" \
             OPEN_ROUTER_KEY="${{ secrets.OPEN_ROUTER_KEY }}" \
             GITHUB_TOKEN="${{ secrets.PROTOCOL_GITHUB_TOKEN }}" \
             ARTIFACT_STORAGE_ENDPOINT="${{ secrets.ARTIFACT_STORAGE_ENDPOINT }}" \

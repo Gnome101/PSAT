@@ -14,6 +14,8 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from utils.chains import canonical_chain, canonical_chain_list
+
 from .models import (
     Artifact,
     Base,
@@ -181,8 +183,11 @@ def bulk_upsert_discovered_contracts(
     norm_entries: list[tuple[str, str | None, dict[str, Any]]] = []
     for entry in entries:
         address = str(entry["address"]).lower()
-        chain = entry.get("chain")
-        norm_entries.append((address, chain, entry))
+        chain = canonical_chain(entry.get("chain"))
+        clean_entry = dict(entry)
+        clean_entry["chain"] = chain
+        clean_entry["chains"] = canonical_chain_list(entry.get("chains"))
+        norm_entries.append((address, chain, clean_entry))
 
     # One round-trip for every existing row across the requested (address, chain) tuples.
     # We can't use a single tuple-IN against a composite key efficiently in SQLAlchemy
@@ -266,6 +271,8 @@ def upsert_discovered_contract(
     upserts into one transaction.
     """
     normalized = address.lower()
+    chain = canonical_chain(chain)
+    chains = canonical_chain_list(chains)
     existing = session.execute(
         select(Contract).where(
             Contract.address == normalized,

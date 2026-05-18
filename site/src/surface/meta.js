@@ -177,7 +177,7 @@ export const ROLE_META = {
   governance:    { label: "Governance",     color: "#8a6a9e", defaultOn: true },
   bridge:        { label: "Bridges",        color: "#9e8a6a", defaultOn: true },
   factory:       { label: "Factories",      color: "#6a9e8a", defaultOn: true },
-  utility:       { label: "Utilities",      color: "#7a7a7a", defaultOn: false },
+  utility:       { label: "Utilities",      color: "#7a7a7a", defaultOn: true },
 };
 export const ALL_ROLES = Object.keys(ROLE_META);
 

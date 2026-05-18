@@ -1150,6 +1150,90 @@ def test_company_overview_basic(db_session, api_client):
         db_session.commit()
 
 
+@patch("routers.deps.SessionLocal")
+def test_company_audit_coverage_reuses_strict_dependency_rows(mock_session_cls):
+    client = _make_client()
+    mock_session = MagicMock()
+    _mock_session_ctx(mock_session_cls, mock_session)
+
+    target_addr = "0x" + "2" * 40
+    protocol = SimpleNamespace(id=1, name="etherfi")
+    target_contract = SimpleNamespace(
+        id=10,
+        address=target_addr,
+        chain="ethereum",
+        contract_name="Vault",
+        is_proxy=False,
+        implementation=None,
+    )
+    dep_protocol = SimpleNamespace(id=2, name="lido")
+    dep_contract = SimpleNamespace(id=20, address=target_addr, chain="ethereum")
+    dep_audit = SimpleNamespace(id=30, auditor="Sigma Prime", title="Lido Token Review", date="2024-11-01")
+    cited_audit = SimpleNamespace(id=31, auditor="Noisy", title="Cited Only", date="2024-12-01")
+    heuristic_audit = SimpleNamespace(id=32, auditor="Heuristic", title="Name Match", date="2024-10-01")
+
+    def coverage_row(audit, *, match_type="reviewed_commit", proof_kind="clean", status="proven"):
+        return SimpleNamespace(
+            contract_id=dep_contract.id,
+            audit_report_id=audit.id,
+            protocol_id=dep_protocol.id,
+            matched_name="Vault",
+            match_type=match_type,
+            match_confidence="high",
+            covered_from_block=None,
+            covered_to_block=None,
+            equivalence_status=status,
+            equivalence_reason=None,
+            equivalence_checked_at=None,
+            proof_kind=proof_kind,
+            matched_commit_sha="a" * 40,
+        )
+
+    class Result:
+        def __init__(self, *, scalar=None, scalars=None, rows=None):
+            self._scalar = scalar
+            self._scalars = scalars or []
+            self._rows = rows
+
+        def scalar_one_or_none(self):
+            return self._scalar
+
+        def scalars(self):
+            return self
+
+        def all(self):
+            return self._rows if self._rows is not None else self._scalars
+
+    mock_session.execute.side_effect = [
+        Result(scalar=protocol),
+        Result(scalars=[target_contract]),
+        Result(scalars=[]),
+        Result(scalars=[]),
+        Result(
+            rows=[
+                (coverage_row(dep_audit), dep_audit, dep_contract, dep_protocol),
+                (coverage_row(cited_audit, proof_kind="cited_only"), cited_audit, dep_contract, dep_protocol),
+                (coverage_row(heuristic_audit, match_type="direct"), heuristic_audit, dep_contract, dep_protocol),
+            ]
+        ),
+    ]
+
+    response = client.get("/api/company/etherfi/audit_coverage")
+    assert response.status_code == 200
+    body = response.json()
+
+    assert body["audit_count"] == 0
+    vault = body["coverage"][0]
+    assert vault["contract_name"] == "Vault"
+    assert vault["audit_count"] == 1
+    assert vault["last_audit"]["auditor"] == "Sigma Prime"
+    assert vault["last_audit"]["match_type"] == "reviewed_commit"
+    assert vault["last_audit"]["equivalence_status"] == "proven"
+    assert vault["last_audit"]["coverage_source"] == "inherited"
+    assert vault["last_audit"]["inherited_from_protocol"] == "lido"
+    assert vault["last_audit"]["inherited_contract_address"] == target_addr
+
+
 # ============================================================================
 # 10. Proxy subscription endpoints
 # ============================================================================
