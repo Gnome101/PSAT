@@ -40,14 +40,24 @@ export default function ProtocolSurface({
   // (vitest, e2e) still embed functions on each contract entry, so
   // fall back to those when neither prop is provided.
   const [companyData, setCompanyData] = useState(initialData);
-  const initialFunctionData = useMemo(() => {
-    if (initialFunctions && typeof initialFunctions === "object") return initialFunctions;
-    if (!initialData?.contracts) return {};
-    return Object.fromEntries(
-      initialData.contracts.filter((c) => c.address).map((c) => [c.address, c.functions || []])
-    );
-  }, [initialData, initialFunctions]);
-  const [functionData, setFunctionData] = useState(initialFunctionData);
+  // Derive functionData from props so a CompanyOverview-supplied
+  // initialFunctions that arrives AFTER mount (its /functions fetch
+  // resolves after /api/company) flows in. The previous
+  // useState(initialFunctionData) seeded once and never resynced, so
+  // the embedded surface stayed permanently empty on hard refresh.
+  // Precedence: prop > locally fetched > inline-on-contract fixtures.
+  const [locallyFetched, setLocallyFetched] = useState(null);
+  const functionData = useMemo(() => {
+    if (initialFunctions && Object.keys(initialFunctions).length > 0) return initialFunctions;
+    if (locallyFetched && Object.keys(locallyFetched).length > 0) return locallyFetched;
+    const source = companyData?.contracts || initialData?.contracts;
+    if (Array.isArray(source) && source.some((c) => Array.isArray(c.functions))) {
+      return Object.fromEntries(
+        source.filter((c) => c.address).map((c) => [c.address, c.functions || []]),
+      );
+    }
+    return {};
+  }, [initialFunctions, locallyFetched, companyData, initialData]);
   const [functionsLoading, setFunctionsLoading] = useState(false);
   const [selectedGuard, setSelectedGuard] = useState(null);
   const [selectedMachine, setSelectedMachine] = useState(null);
@@ -228,17 +238,9 @@ export default function ProtocolSurface({
           if (cancelled) return;
           setCompanyData(d);
           // Older / mocked /api/company responses still embed functions
-          // on contract entries (e2e fixtures, legacy backend). Use them
-          // when present so the /functions fetch's failure is harmless.
-          const embedded = (d?.contracts || []).filter(
-            (c) => c.address && Array.isArray(c.functions),
-          );
-          if (embedded.length > 0) {
-            setFunctionData((prev) => {
-              if (prev && Object.keys(prev).length > 0) return prev;
-              return Object.fromEntries(embedded.map((c) => [c.address, c.functions]));
-            });
-          }
+          // on contract entries (e2e fixtures, legacy backend). The
+          // functionData memo picks those up from companyData.contracts;
+          // no explicit copy needed here.
         })
         .catch((err) => { if (!cancelled) setError(err.message || "Failed to load surface"); });
     }
@@ -262,7 +264,7 @@ export default function ProtocolSurface({
           if (cancelled) return;
           const incoming = d && typeof d === "object" && d.functions;
           if (incoming && Object.keys(incoming).length > 0) {
-            setFunctionData(incoming);
+            setLocallyFetched(incoming);
           }
           setFunctionsLoading(false);
         })
