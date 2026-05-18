@@ -308,14 +308,26 @@ class ResolutionWorker(BaseWorker):
                     runtime=runtime,
                     default_rpc_url=rpc_url,
                 )
-                store_artifact(session, job.id, "bridge_runtime_context", data=runtime)
-                logger.info(
-                    "Job %s: stored bridge runtime context for %s with %d route(s)",
-                    job.id,
-                    contract_row.address,
-                    len(runtime.get("routes") or []),
-                )
+            store_artifact(session, job.id, "bridge_runtime_context", data=runtime)
+            logger.info(
+                "Job %s: stored bridge runtime context for %s status=%s route_count=%d",
+                job.id,
+                contract_row.address,
+                runtime.get("status", "unknown"),
+                len(runtime.get("routes") or []),
+            )
         except Exception as exc:
+            runtime = {
+                "status": "error",
+                "protocol": (standards[0] if standards else "Bridge"),
+                "protocols": standards,
+                "routes": [],
+                "reason": str(exc),
+            }
+            try:
+                store_artifact(session, job.id, "bridge_runtime_context", data=runtime)
+            except Exception:
+                logger.debug("Job %s: failed to store bridge runtime error artifact", job.id, exc_info=True)
             record_degraded(
                 phase="bridge_runtime_context",
                 exc=exc,

@@ -7,10 +7,20 @@ export function ContractNode({ data }) {
   const m = data.machine;
   const roleColor = (ROLE_META[m.role] || ROLE_META.utility).color;
   const bridgeContext = m.bridge_context;
-  const bridgeProtocols = bridgeContext?.protocols || [];
+  const staticBridgeContext = m.bridge_static_context;
+  const protocolStandards = new Set(["LayerZero", "CCIP", "Wormhole", "Hyperlane", "Axelar", "Connext", "OP Stack"]);
+  const bridgeProtocols = [
+    ...new Set([
+      ...(bridgeContext?.protocols || []),
+      bridgeContext?.protocol,
+      ...(staticBridgeContext?.protocols || []),
+      ...(m.standards || []).filter((standard) => protocolStandards.has(standard)),
+    ].filter(Boolean)),
+  ];
   const activeBridge = bridgeContext?.status === "resolved" && bridgeContext?.routes?.length > 0;
+  const bridgeCandidate = activeBridge || Boolean(staticBridgeContext?.is_bridge || staticBridgeContext?.protocols?.length);
   const visibleStandards = (m.standards || []).filter((standard) => (
-    activeBridge || !["Bridge", "LayerZero", "CCIP", "Wormhole", "Hyperlane", "Axelar", "Connext"].includes(standard)
+    bridgeCandidate || !["Bridge", "LayerZero", "CCIP", "Wormhole", "Hyperlane", "Axelar", "Connext"].includes(standard)
   ));
   const chip = data.selectionChip;
   return (
@@ -42,11 +52,10 @@ export function ContractNode({ data }) {
       {visibleStandards.length > 0 && (
         <div className="ps-node-standards">{visibleStandards.join(" · ")}</div>
       )}
-      {activeBridge && (
+      {bridgeCandidate && (
         <div className="ps-node-bridge">
           {bridgeProtocols.join(" · ") || "Bridge"}
-          {" · active routes "}
-          {bridgeContext.routes.length}
+          {activeBridge ? ` · active routes ${bridgeContext.routes.length}` : " · static bridge"}
         </div>
       )}
       <div className="ps-node-addr">{shortAddr(m.address)}</div>

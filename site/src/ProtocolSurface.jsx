@@ -93,7 +93,6 @@ export default function ProtocolSurface({
   const [error, setError] = useState(null);
   const [headerCollapsed, setHeaderCollapsed] = useState(true);
   const [dependencyGraphMachine, setDependencyGraphMachine] = useState(null);
-  const [bridgeRuntimeByAddress, setBridgeRuntimeByAddress] = useState({});
 
   // Right sidebar mode: "detail" (default), "agent", "audits",
   // "monitoring", or "upgrades".
@@ -275,58 +274,10 @@ export default function ProtocolSurface({
     };
   }, [companyName, initialData, initialFunctions]);
 
-  const companyDataWithBridgeRuntime = useMemo(() => {
-    if (!companyData) return null;
-    return {
-      ...companyData,
-      contracts: (companyData.contracts || []).map((contract) => {
-        const address = contract.address?.toLowerCase();
-        const runtime = address ? bridgeRuntimeByAddress[address]?.data : null;
-        if (runtime?.status === "resolved" && Array.isArray(runtime.routes) && runtime.routes.length > 0) {
-          return { ...contract, bridge_context: runtime };
-        }
-        if (
-          contract.bridge_context?.status === "resolved" &&
-          Array.isArray(contract.bridge_context.routes) &&
-          contract.bridge_context.routes.length > 0
-        ) {
-          return contract;
-        }
-        const { bridge_context: _staticBridgeContext, ...withoutStaticContext } = contract;
-        return withoutStaticContext;
-      }),
-    };
-  }, [companyData, bridgeRuntimeByAddress]);
-
   const allMachines = useMemo(
-    () => (companyDataWithBridgeRuntime ? buildMachines(companyDataWithBridgeRuntime, functionData, { functionsLoading }) : []),
-    [companyDataWithBridgeRuntime, functionData, functionsLoading]
+    () => (companyData ? buildMachines(companyData, functionData, { functionsLoading }) : []),
+    [companyData, functionData, functionsLoading]
   );
-
-  useEffect(() => {
-    const address = selectedMachine?.address?.toLowerCase();
-    const isBridgeCandidate = selectedMachine?.bridge_context || selectedMachine?.bridge_static_context || selectedMachine?.role === "bridge";
-    if (!companyName || !address || !isBridgeCandidate || bridgeRuntimeByAddress[address]) return undefined;
-    let cancelled = false;
-    setBridgeRuntimeByAddress((prev) => ({ ...prev, [address]: { loading: true } }));
-    fetch(`/api/company/${encodeURIComponent(companyName)}/bridge_runtime/${encodeURIComponent(address)}`)
-      .then((r) => (r.ok ? r.json() : null))
-      .then((data) => {
-        if (cancelled) return;
-        setBridgeRuntimeByAddress((prev) => ({
-          ...prev,
-          [address]: { loading: false, data: data || { status: "unresolved", routes: [] } },
-        }));
-      })
-      .catch((error) => {
-        if (cancelled) return;
-        setBridgeRuntimeByAddress((prev) => ({
-          ...prev,
-          [address]: { loading: false, error: error?.message || "bridge runtime unavailable" },
-        }));
-      });
-    return () => { cancelled = true; };
-  }, [bridgeRuntimeByAddress, companyName, selectedMachine?.address, selectedMachine?.bridge_static_context, selectedMachine?.standards]);
 
   useEffect(() => {
     const address = selectedMachine?.address?.toLowerCase();
@@ -343,15 +294,15 @@ export default function ProtocolSurface({
   // the score-only consumer. The buildMachines call above already
   // consumes the keyed map directly.
   const companyDataWithFunctions = useMemo(() => {
-    if (!companyDataWithBridgeRuntime) return null;
-    if (!functionData || Object.keys(functionData).length === 0) return companyDataWithBridgeRuntime;
+    if (!companyData) return null;
+    if (!functionData || Object.keys(functionData).length === 0) return companyData;
     return {
-      ...companyDataWithBridgeRuntime,
-      contracts: (companyDataWithBridgeRuntime.contracts || []).map((c) =>
+      ...companyData,
+      contracts: (companyData.contracts || []).map((c) =>
         c.address && functionData[c.address] ? { ...c, functions: functionData[c.address] } : c
       ),
     };
-  }, [companyDataWithBridgeRuntime, functionData]);
+  }, [companyData, functionData]);
 
   const machines = useMemo(
     () => allMachines.filter((m) => enabledRoles.has(m.role || "utility")),

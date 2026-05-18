@@ -9,7 +9,7 @@
 
 import React from "react";
 import { describe, it, expect, beforeEach } from "vitest";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 import ProtocolSurface from "./ProtocolSurface.jsx";
@@ -133,6 +133,67 @@ describe("ProtocolSurface — machine selection", () => {
     await waitFor(() => {
       expect(document.querySelector(".react-flow")).toBeInTheDocument();
     });
+    expectNoCrash();
+  });
+
+  it("shows static bridge context without fetching bridge runtime on click", async () => {
+    const bridgeAddress = "0x3d320286e014c3e1ce99af6d6b00f0c1d63e3000";
+    render(
+      <ProtocolSurface
+        companyName="etherfi"
+        embedded
+        initialData={{
+          contracts: [
+            {
+              address: bridgeAddress,
+              name: "MembershipManager",
+              role: "bridge",
+              standards: ["Bridge", "LayerZero"],
+              job_id: "membership-job",
+              bridge_static_context: {
+                is_bridge: true,
+                protocols: ["LayerZero"],
+                movement_models: ["cross_chain_value_transfer"],
+                security_models: ["layerzero_dvn_uln_message_library"],
+                send_functions: [],
+                receive_functions: [],
+                config_functions: [],
+                security_config_functions: [],
+              },
+            },
+          ],
+          ownership_hierarchy: [],
+          fund_flows: [],
+          resolved_principals: [],
+        }}
+        initialFunctions={{
+          [bridgeAddress]: [
+            {
+              function: "send(uint32,bytes32)",
+              selector: "0x11111111",
+              effect_labels: ["cross_chain_message"],
+              action_summary: "Sends a cross-chain message.",
+              authority_public: false,
+              principals: [],
+            },
+          ],
+        }}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(document.querySelector(".ps-node")).toBeInTheDocument();
+    });
+    fireEvent.click(document.querySelector(".ps-node"));
+
+    await waitFor(() => {
+      expect(screen.getByText("Bridge Context")).toBeInTheDocument();
+      expect(screen.getByText("cross_chain_value_transfer")).toBeInTheDocument();
+    });
+    const bridgeRuntimeCalls = globalThis.fetch.mock.calls.filter(([input]) =>
+      String(input?.url || input).includes("/bridge_runtime/")
+    );
+    expect(bridgeRuntimeCalls).toHaveLength(0);
     expectNoCrash();
   });
 });

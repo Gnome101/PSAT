@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import logging
 import time
-import uuid
 from collections.abc import Iterable
 from typing import Any
 
@@ -13,7 +12,6 @@ from sqlalchemy import or_, select
 from sqlalchemy.orm import aliased
 
 from db.models import AuditContractCoverage, AuditReport, Contract, Protocol
-from db.queue import get_artifact
 from services.aggregations import CompanyNotFound, build_company_overview
 from services.aggregations.company_overview import (
     all_addresses_for_protocol,
@@ -21,9 +19,6 @@ from services.aggregations.company_overview import (
     resolve_company_jobs,
 )
 from services.audits.serializers import _audit_brief, _audit_report_to_dict
-from services.bridges.chains import rpc_url_for_runtime_chain
-from services.bridges.peer_analysis import annotate_bridge_peer_analysis
-from services.bridges.runtime import resolve_bridge_runtime
 
 from . import deps
 
@@ -172,12 +167,7 @@ def company_functions(company_name: str, response: Response) -> dict[str, Any]:
 
 @router.get("/api/company/{company_name}/bridge_runtime/{address}")
 def company_bridge_runtime(company_name: str, address: str, response: Response) -> dict[str, Any]:
-    """Resolve live bridge configuration for one selected contract.
-
-    This is intentionally lazy. Bridge runtime config needs live eth_call reads
-    and can touch endpoint libraries/DVN config, so it should not be bundled
-    into the baseline company payload.
-    """
+    """Return pipeline-produced bridge runtime for one contract."""
     response.headers["Cache-Control"] = "private, max-age=30, stale-while-revalidate=120"
     started = time.monotonic()
     target = deps._normalize_address_or_400(address)
@@ -204,65 +194,31 @@ def company_bridge_runtime(company_name: str, address: str, response: Response) 
                 outcome="contract_not_found",
             )
             raise HTTPException(status_code=404, detail="Contract not found")
-        persisted_runtime = None
-        job_id = contract.get("job_id")
-        if isinstance(job_id, str):
-            try:
-                artifact = get_artifact(session, uuid.UUID(job_id), "bridge_runtime_context")
-            except (ValueError, TypeError):
-                artifact = None
-            if isinstance(artifact, dict) and artifact.get("status") == "resolved":
-                persisted_runtime = annotate_bridge_peer_analysis(session, artifact)
-        if persisted_runtime is not None:
+        runtime = contract.get("bridge_context")
+        if isinstance(runtime, dict):
             _log_endpoint(
                 "/api/company/{name}/bridge_runtime/{address}",
                 company=company_name,
                 started=started,
                 outcome="persisted",
-                route_count=len(persisted_runtime.get("routes") or []),
+                route_count=len(runtime.get("routes") or []),
             )
-            return persisted_runtime
-        if not (contract.get("bridge_context") or contract.get("bridge_static_context")):
+            return runtime
+        if contract.get("bridge_static_context"):
             _log_endpoint(
                 "/api/company/{name}/bridge_runtime/{address}",
                 company=company_name,
                 started=started,
-                outcome="not_bridge",
+                outcome="not_materialized",
             )
-            raise HTTPException(status_code=404, detail="Bridge context not available for contract")
-
-        functions_by_address = build_functions_for_protocol(session, company_name)
-
-    runtime_rpc_url = rpc_url_for_runtime_chain(contract.get("chain"), deps.DEFAULT_RPC_URL)
-    try:
-        if not runtime_rpc_url:
-            runtime = {
-                "status": "unresolved",
-                "reason": f"No RPC URL configured for chain {contract.get('chain') or 'unknown'}.",
-                "routes": [],
-            }
-        else:
-            runtime = resolve_bridge_runtime(
-                rpc_url=runtime_rpc_url,
-                contract=contract,
-                functions=functions_by_address.get(target) or [],
-            )
-    except Exception as exc:
-        runtime = {
-            "status": "error",
-            "reason": str(exc),
-            "routes": [],
-        }
-    with deps.SessionLocal() as session:
-        runtime = annotate_bridge_peer_analysis(session, runtime)
-    _log_endpoint(
-        "/api/company/{name}/bridge_runtime/{address}",
-        company=company_name,
-        started=started,
-        outcome=runtime.get("status", "unknown"),
-        route_count=len(runtime.get("routes") or []),
-    )
-    return runtime
+            raise HTTPException(status_code=404, detail="Bridge runtime not materialized by resolution worker")
+        _log_endpoint(
+            "/api/company/{name}/bridge_runtime/{address}",
+            company=company_name,
+            started=started,
+            outcome="not_bridge",
+        )
+        raise HTTPException(status_code=404, detail="Bridge context not available for contract")
 
 
 @router.get("/api/company/{company_name}/audits")

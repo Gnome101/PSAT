@@ -248,6 +248,82 @@ class TestProcessHappyPath:
         assert len(add_calls) >= 2  # at least one node + one edge
 
 
+class TestBridgeRuntimeContext:
+    def test_stores_unresolved_runtime_artifact(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        worker = ResolutionWorker()
+        session = MagicMock()
+        session.execute.return_value.scalars.return_value = []
+        job = _job()
+        contract_row = SimpleNamespace(id=42, address=TARGET_ADDRESS, chain="ethereum", contract_name="LayerZeroApp")
+        contract_analysis = {
+            "summary": {"standards": ["Bridge", "LayerZero"]},
+            "bridge_context": {"is_bridge": True, "protocols": ["LayerZero"]},
+        }
+        runtime = {
+            "status": "unresolved",
+            "protocol": "LayerZero",
+            "protocols": ["LayerZero"],
+            "reason": "No endpoint address was found.",
+            "routes": [],
+        }
+        stored: dict[str, Any] = {}
+
+        monkeypatch.setattr("workers.resolution_worker.resolve_bridge_runtime", lambda **_kw: runtime)
+        monkeypatch.setattr(
+            "workers.resolution_worker.store_artifact",
+            lambda _s, _j, name, data=None, **_kw: stored.setdefault(name, data),
+        )
+        monkeypatch.setattr(
+            "workers.resolution_worker.queue_bridge_peer_analysis",
+            lambda *_args, **_kw: pytest.fail("unresolved runtime should not queue peer analysis"),
+        )
+
+        worker._resolve_bridge_runtime_context(
+            session,
+            cast(Any, job),
+            cast(Any, contract_row),
+            contract_analysis,
+            cast(Any, _minimal_snapshot()),
+            "https://rpc.example",
+        )
+
+        assert stored["bridge_runtime_context"]["status"] == "unresolved"
+        assert stored["bridge_runtime_context"]["reason"] == "No endpoint address was found."
+
+    def test_stores_error_runtime_artifact(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        worker = ResolutionWorker()
+        session = MagicMock()
+        session.execute.return_value.scalars.return_value = []
+        job = _job()
+        contract_row = SimpleNamespace(id=42, address=TARGET_ADDRESS, chain="ethereum", contract_name="LayerZeroApp")
+        contract_analysis = {
+            "summary": {"standards": ["Bridge", "LayerZero"]},
+            "bridge_context": {"is_bridge": True, "protocols": ["LayerZero"]},
+        }
+        stored: dict[str, Any] = {}
+
+        def raise_runtime(**_kw: Any) -> dict[str, Any]:
+            raise RuntimeError("rpc unavailable")
+
+        monkeypatch.setattr("workers.resolution_worker.resolve_bridge_runtime", raise_runtime)
+        monkeypatch.setattr(
+            "workers.resolution_worker.store_artifact",
+            lambda _s, _j, name, data=None, **_kw: stored.setdefault(name, data),
+        )
+
+        worker._resolve_bridge_runtime_context(
+            session,
+            cast(Any, job),
+            cast(Any, contract_row),
+            contract_analysis,
+            cast(Any, _minimal_snapshot()),
+            "https://rpc.example",
+        )
+
+        assert stored["bridge_runtime_context"]["status"] == "error"
+        assert stored["bridge_runtime_context"]["reason"] == "rpc unavailable"
+
+
 # ---------------------------------------------------------------------------
 # 2. Proxy address override
 # ---------------------------------------------------------------------------

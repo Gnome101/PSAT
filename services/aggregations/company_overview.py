@@ -49,6 +49,7 @@ from db.models import (
     TvlSnapshot,
     UpgradeEvent,
 )
+from db.queue import _artifact_row_to_value, get_artifact
 from services.bridges.peer_analysis import annotate_bridge_peer_analysis
 from services.governance.principals import _build_company_function_entry
 
@@ -725,16 +726,33 @@ def build_governance_view(
     contracts: list[dict[str, Any]] = []
     owner_groups: dict[str, list[dict]] = {}
     bridge_runtime_by_job_id: dict[Any, dict[str, Any]] = {}
+    bridge_static_by_job_id: dict[Any, dict[str, Any] | None] = {}
     job_ids = [job.id for job in jobs]
     if job_ids:
-        for job_id, data in session.execute(
-            select(Artifact.job_id, Artifact.data).where(
+        for artifact in session.execute(
+            select(Artifact).where(
                 Artifact.job_id.in_(job_ids),
                 Artifact.name == "bridge_runtime_context",
             )
-        ).all():
+        ).scalars():
+            job_id = artifact.job_id
+            try:
+                data = _artifact_row_to_value(artifact)
+            except Exception:
+                data = None
             if isinstance(data, dict):
                 bridge_runtime_by_job_id[job_id] = data
+
+    def bridge_static_context_for(job_id: Any | None) -> dict[str, Any] | None:
+        if job_id is None:
+            return None
+        if job_id not in bridge_static_by_job_id:
+            artifact = get_artifact(session, job_id, "contract_analysis")
+            context = artifact.get("bridge_context") if isinstance(artifact, dict) else None
+            bridge_static_by_job_id[job_id] = (
+                context if isinstance(context, dict) and context.get("is_bridge") else None
+            )
+        return bridge_static_by_job_id[job_id]
 
     for job in jobs:
         request = job.request if isinstance(job.request, dict) else {}
@@ -858,15 +876,33 @@ def build_governance_view(
             "bridge_security_config",
         }
         has_bridge_effects = bool(all_effects.intersection(bridge_effects))
-        persisted_bridge_context = bridge_runtime_by_job_id.get(job.id)
-        has_active_bridge_runtime = bool(
-            isinstance(persisted_bridge_context, dict)
-            and persisted_bridge_context.get("status") == "resolved"
-            and persisted_bridge_context.get("routes")
+        bridge_artifact_job_id = impl_job.id if impl_job else job.id
+        persisted_bridge_context = bridge_runtime_by_job_id.get(bridge_artifact_job_id) or bridge_runtime_by_job_id.get(
+            job.id
         )
-        if "bridge" in name_lower or "gateway" in name_lower or has_bridge_effects or is_op_stack_bridge_name:
-            role = "bridge"
-        elif has_active_bridge_runtime:
+        has_bridge_runtime = isinstance(persisted_bridge_context, dict)
+        may_have_static_bridge_context = bool(
+            any(standard in bridge_standards for standard in standards)
+            or "bridge" in name_lower
+            or "gateway" in name_lower
+            or has_bridge_effects
+            or is_op_stack_bridge_name
+            or has_bridge_runtime
+        )
+        static_bridge_context = (
+            (bridge_static_context_for(bridge_artifact_job_id) or bridge_static_context_for(job.id))
+            if may_have_static_bridge_context
+            else None
+        )
+        has_static_bridge_context = bool(static_bridge_context)
+        if (
+            has_static_bridge_context
+            or "bridge" in name_lower
+            or "gateway" in name_lower
+            or has_bridge_effects
+            or is_op_stack_bridge_name
+            or has_bridge_runtime
+        ):
             role = "bridge"
         elif any(e in value_effects for e in ("asset_pull", "asset_send")):
             role = "value_handler"
@@ -878,8 +914,20 @@ def build_governance_view(
             role = "factory"
         else:
             role = "utility"
-        if has_active_bridge_runtime and "bridge" not in capabilities:
+        if role == "bridge" and "bridge" not in capabilities:
             capabilities.append("bridge")
+        static_security_functions = (
+            static_bridge_context.get("security_config_functions") if static_bridge_context else None
+        )
+        if (
+            role == "bridge"
+            and "bridge-security" not in capabilities
+            and (
+                (static_bridge_context or {}).get("has_security_config")
+                or (isinstance(static_security_functions, list) and bool(static_security_functions))
+            )
+        ):
+            capabilities.append("bridge-security")
 
         balance_contract = lookup_contract or contract_row
         balances_list = []
@@ -934,7 +982,9 @@ def build_governance_view(
             code_has_upgrade_path = bool(
                 (summary_row and summary_row.is_upgradeable) or "implementation_update" in all_effects
             )
-            if bridge_labels or "bridge" in name_lower or "gateway" in name_lower or is_op_stack_bridge_name:
+            if static_bridge_context:
+                entry["bridge_static_context"] = static_bridge_context
+            elif bridge_labels or "bridge" in name_lower or "gateway" in name_lower or is_op_stack_bridge_name:
                 entry["bridge_static_context"] = {
                     "protocols": bridge_protocols,
                     "effect_labels": bridge_labels,
@@ -945,7 +995,7 @@ def build_governance_view(
                     "upgradeable": bool(is_proxy or code_has_upgrade_path),
                     "can_change_bridge_logic": bool(is_proxy or code_has_upgrade_path),
                 }
-            if has_active_bridge_runtime and isinstance(persisted_bridge_context, dict):
+            if isinstance(persisted_bridge_context, dict):
                 entry["bridge_context"] = annotate_bridge_peer_analysis(session, persisted_bridge_context)
 
         graph_contract = lookup_contract or contract_row

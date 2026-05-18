@@ -385,6 +385,64 @@ def test_build_company_overview_does_not_promote_static_bridge_standard_only(db_
     assert "bridge_static_context" not in entry
 
 
+def test_build_company_overview_preserves_contract_analysis_bridge_context(db_session):
+    p = _add_protocol(db_session, f"bridge-analysis-{uuid.uuid4().hex[:8]}")
+    addr = _addr("membership")
+    job = _add_job(db_session, address=addr, protocol_id=p.id, name="MembershipManager")
+    contract = _add_contract(db_session, address=addr, job=job, protocol_id=p.id, contract_name="MembershipManager")
+    db_session.add(
+        ContractSummary(
+            contract_id=contract.id,
+            control_model="role_control",
+            is_upgradeable=False,
+            is_pausable=False,
+            has_timelock=False,
+            risk_level="low",
+            is_factory=False,
+            is_nft=False,
+            standards=["Bridge", "LayerZero"],
+            source_verified=True,
+        )
+    )
+    db_session.add(
+        Artifact(
+            job_id=job.id,
+            name="contract_analysis",
+            data={
+                "bridge_context": {
+                    "is_bridge": True,
+                    "protocols": ["LayerZero"],
+                    "movement_models": ["cross_chain_value_transfer"],
+                    "security_models": ["layerzero_dvn_uln_message_library"],
+                    "send_functions": [],
+                    "receive_functions": [],
+                    "config_functions": [],
+                    "security_config_functions": [],
+                    "upgrade_context": {
+                        "code_has_upgrade_path": False,
+                        "proxy_shell_detected": False,
+                        "pattern": "none",
+                        "implementation_slots": [],
+                        "admin_paths": [],
+                        "upgrade_functions": [],
+                        "can_change_bridge_logic": False,
+                    },
+                    "notes": [],
+                }
+            },
+        )
+    )
+    db_session.commit()
+
+    payload = build_company_overview(db_session, p.name)
+    entry = next(c for c in payload["contracts"] if c["address"] == addr)
+
+    assert entry["role"] == "bridge"
+    assert "bridge" in entry["capabilities"]
+    assert entry["bridge_static_context"]["protocols"] == ["LayerZero"]
+    assert entry["bridge_static_context"]["movement_models"] == ["cross_chain_value_transfer"]
+
+
 def test_build_company_overview_surfaces_persisted_active_bridge_runtime(db_session):
     p = _add_protocol(db_session, f"bridge-runtime-{uuid.uuid4().hex[:8]}")
     addr = _addr("lz")
@@ -433,6 +491,48 @@ def test_build_company_overview_surfaces_persisted_active_bridge_runtime(db_sess
     assert "bridge" in entry["capabilities"]
     assert entry["bridge_context"]["status"] == "resolved"
     assert entry["bridge_context"]["routes"][0]["peer_analysis"]["status"] == "not_queued"
+
+
+def test_build_company_overview_surfaces_unresolved_bridge_runtime(db_session):
+    p = _add_protocol(db_session, f"bridge-unresolved-{uuid.uuid4().hex[:8]}")
+    addr = _addr("lz-unresolved")
+    job = _add_job(db_session, address=addr, protocol_id=p.id, name="OFTAdapter")
+    contract = _add_contract(db_session, address=addr, job=job, protocol_id=p.id, contract_name="OFTAdapter")
+    db_session.add(
+        ContractSummary(
+            contract_id=contract.id,
+            control_model="ownable",
+            is_upgradeable=False,
+            is_pausable=False,
+            has_timelock=False,
+            risk_level="low",
+            is_factory=False,
+            is_nft=False,
+            standards=[],
+            source_verified=True,
+        )
+    )
+    db_session.add(
+        Artifact(
+            job_id=job.id,
+            name="bridge_runtime_context",
+            data={
+                "status": "unresolved",
+                "protocol": "LayerZero",
+                "protocols": ["LayerZero"],
+                "reason": "No endpoint address was found.",
+                "routes": [],
+            },
+        )
+    )
+    db_session.commit()
+
+    payload = build_company_overview(db_session, p.name)
+    entry = next(c for c in payload["contracts"] if c["address"] == addr)
+
+    assert entry["role"] == "bridge"
+    assert entry["bridge_context"]["status"] == "unresolved"
+    assert entry["bridge_context"]["reason"] == "No endpoint address was found."
 
 
 def test_build_functions_for_protocol_returns_keyed_function_list(db_session):
