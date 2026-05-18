@@ -3,6 +3,8 @@ import json
 import sys
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 fetcher = importlib.import_module("services.discovery.fetch")
@@ -36,6 +38,26 @@ STANDARD_JSON_RESULT = {
         "}}"
     ),
 }
+
+
+def test_fetch_uses_explicit_chain_id_without_unknown_chain_fallback(monkeypatch):
+    calls = []
+
+    def fake_get_source(address, chain_id=1):
+        calls.append((address, chain_id))
+        return STANDARD_JSON_RESULT
+
+    monkeypatch.setattr(fetcher, "get_source", fake_get_source)
+
+    assert fetcher.chain_id_for_chain(None) == 1
+    assert fetcher.chain_id_for_chain("mainnet") == 1
+    assert fetcher.chain_id_for_chain("base") == 8453
+    assert fetcher.chain_id_for_chain("fantom") is None
+    assert fetcher.fetch("0x" + "1" * 40, chain="base") is STANDARD_JSON_RESULT
+    assert calls == [("0x" + "1" * 40, 8453)]
+    with pytest.raises(RuntimeError, match="Unsupported Etherscan chain"):
+        fetcher.fetch("0x" + "2" * 40, chain="fantom")
+    assert calls == [("0x" + "1" * 40, 8453)]
 
 
 def test_parse_sources_preserves_standard_json_paths():

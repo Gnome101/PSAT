@@ -130,7 +130,7 @@ def _call_supports_kwarg(fn: Any, name: str) -> bool:
     return any(param.kind == inspect.Parameter.VAR_KEYWORD or param.name == name for param in params)
 
 
-def _chain_id_for_request(request: dict[str, Any]) -> int:
+def _chain_id_for_request(request: dict[str, Any]) -> int | None:
     raw_chain_id = request.get("chain_id")
     if isinstance(raw_chain_id, int) and raw_chain_id > 0:
         return raw_chain_id
@@ -138,14 +138,25 @@ def _chain_id_for_request(request: dict[str, Any]) -> int:
 
 
 def _fetch_for_request(address: str, request: dict[str, Any]) -> dict:
+    chain = request.get("chain") if isinstance(request.get("chain"), str) else None
+    chain_id = _chain_id_for_request(request)
+    if chain and chain_id is None:
+        raise RuntimeError(f"Unsupported Etherscan chain for source fetch: {chain}")
     if _call_supports_kwarg(fetch, "chain_id"):
-        return fetch(address, chain_id=_chain_id_for_request(request))
+        if _call_supports_kwarg(fetch, "chain"):
+            return fetch(address, chain=chain, chain_id=chain_id)
+        return fetch(address, chain_id=chain_id)
+    if _call_supports_kwarg(fetch, "chain"):
+        return fetch(address, chain=chain)
     return fetch(address)
 
 
 def _creators_for_request(address: str, request: dict[str, Any]) -> dict[str, str]:
+    chain_id = _chain_id_for_request(request)
+    if chain_id is None:
+        raise RuntimeError(f"Unsupported Etherscan chain for deployer lookup: {request.get('chain')}")
     if _call_supports_kwarg(_batch_get_creators, "chain_id"):
-        return _batch_get_creators([address], chain_id=_chain_id_for_request(request))
+        return _batch_get_creators([address], chain_id=chain_id)
     return _batch_get_creators([address])
 
 

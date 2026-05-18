@@ -74,6 +74,44 @@ def test_queue_bridge_peer_analysis_queues_distinct_chain_peer(db_session) -> No
     assert "bridge_runtime" in peer_contract.discovery_sources
 
 
+def test_queue_bridge_peer_analysis_skips_unsupported_chain_peer(db_session) -> None:
+    source_addr = _addr()
+    peer_addr = _addr()
+    source_job = Job(
+        id=uuid.uuid4(),
+        address=source_addr,
+        status=JobStatus.completed,
+        stage=JobStage.done,
+        request={"address": source_addr, "chain": "ethereum"},
+    )
+    db_session.add(source_job)
+    db_session.flush()
+    source_contract = Contract(address=source_addr, chain="ethereum", job_id=source_job.id)
+    db_session.add(source_contract)
+    db_session.commit()
+
+    queued = queue_bridge_peer_analysis(
+        db_session,
+        source_job=source_job,
+        source_contract=source_contract,
+        runtime={
+            "status": "resolved",
+            "protocol": "LayerZero",
+            "routes": [{"chain": "fantom", "peer": peer_addr, "peer_address": peer_addr}],
+        },
+        default_rpc_url="https://eth-mainnet.g.alchemy.com/v2/test-key",
+    )
+
+    route_status = queued["routes"][0]["peer_analysis"]
+    assert route_status["status"] == "unsupported_chain"
+    assert route_status["chain"] == "fantom"
+    assert route_status["chain_id"] is None
+    assert route_status["rpc_url_available"] is False
+    assert "job_id" not in route_status
+    assert db_session.query(Job).filter(Job.address == peer_addr.lower()).count() == 0
+    assert db_session.query(Contract).filter(Contract.address == peer_addr.lower()).count() == 0
+
+
 def test_annotate_bridge_peer_analysis_reports_existing_peer_status(db_session) -> None:
     peer_addr = _addr()
     job = Job(

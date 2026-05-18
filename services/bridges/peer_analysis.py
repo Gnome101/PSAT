@@ -121,6 +121,16 @@ def queue_bridge_peer_analysis(
         peer = peer.lower()
         peer_rpc = rpc_url_for_chain(chain, default_rpc_url)
         peer_chain_id = chain_id_for_chain(chain)
+        if peer_chain_id is None or not peer_rpc:
+            route["peer_analysis"] = {
+                "status": "unsupported_chain" if peer_chain_id is None else "missing_rpc",
+                "address": peer,
+                "chain": chain,
+                "chain_id": peer_chain_id,
+                "rpc_url_available": bool(peer_rpc),
+            }
+            updated_routes.append(route)
+            continue
         row = upsert_discovered_contract(
             session,
             address=peer,

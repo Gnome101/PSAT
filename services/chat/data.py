@@ -29,6 +29,7 @@ from db.models import (
     Protocol,
     UpgradeEvent,
 )
+from services.bridges.chains import rpc_url_for_runtime_chain
 from services.bridges.peer_analysis import annotate_bridge_peer_analysis
 from services.bridges.runtime import resolve_bridge_runtime
 
@@ -224,13 +225,18 @@ def _active_bridge_context(
 ) -> dict[str, Any] | None:
     if static_context is None:
         return None
+    runtime_rpc_url = rpc_url_for_runtime_chain(
+        contract.chain, os.getenv("ETH_RPC", "https://ethereum-rpc.publicnode.com")
+    )
+    if not runtime_rpc_url:
+        return None
     controller_values = {
         key: value.get("value") or value.get("address") if isinstance(value, dict) else None
         for key, value in controllers.items()
     }
     try:
         resolved = resolve_bridge_runtime(
-            rpc_url=os.getenv("ETH_RPC", "https://ethereum-rpc.publicnode.com"),
+            rpc_url=runtime_rpc_url,
             contract={
                 "address": contract.address,
                 "chain": contract.chain,

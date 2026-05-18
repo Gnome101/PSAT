@@ -585,6 +585,46 @@ def test_hyperlane_ism_security_config_surfaces_as_bridge_security(tmp_path):
     assert set_ism["action_summary"] == "Updates cross-chain bridge security or verification configuration."
 
 
+def test_guardian_admin_contract_is_not_classified_as_wormhole_bridge(tmp_path):
+    project_dir = _write_project(
+        tmp_path,
+        "GuardianAdmin",
+        """
+        pragma solidity ^0.8.19;
+
+        contract GuardianAdmin {
+            address public guardian;
+            bool public paused;
+
+            constructor() {
+                guardian = msg.sender;
+            }
+
+            modifier onlyGuardian() {
+                require(msg.sender == guardian, "not guardian");
+                _;
+            }
+
+            function setGuardian(address nextGuardian) external onlyGuardian {
+                guardian = nextGuardian;
+            }
+
+            function pause() external onlyGuardian {
+                paused = true;
+            }
+        }
+        """,
+        slither_output={"results": {"detectors": []}},
+    )
+
+    analysis = collect_contract_analysis(project_dir)
+    standards = set(analysis["contract_classification"]["standards"])
+
+    assert "Bridge" not in standards
+    assert "Wormhole" not in standards
+    assert analysis["bridge_context"]["is_bridge"] is False
+
+
 def test_controller_tracking_falls_back_to_state_only_without_events(tmp_path):
     project_dir = _write_project(
         tmp_path,

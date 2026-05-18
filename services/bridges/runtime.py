@@ -17,7 +17,13 @@ from typing import Any
 from eth_abi.abi import decode, encode
 from eth_utils.crypto import keccak
 
-from services.bridges.chains import chain_id_for_chain, display_name_for_chain, hyperlane_domain_entries
+from services.bridges.chains import (
+    chain_id_for_chain,
+    chain_name_for_chain_id,
+    display_name_for_chain,
+    hyperlane_domain_entries,
+    normalize_chain_name,
+)
 from utils.rpc import rpc_batch_request, rpc_request
 
 ZERO_ADDRESS = "0x" + "0" * 40
@@ -745,6 +751,7 @@ def resolve_op_stack_runtime(
     other_bridge = _first_address(rpc_url, address, ["otherBridge()", "OTHER_BRIDGE()"])
     paused_out = _call(rpc_url, address, "paused()", output_types=["bool"])
     l2_chain_out = _call(rpc_url, address, "l2ChainId()", output_types=["uint256"])
+    l2_chain_id = int(l2_chain_out[0]) if l2_chain_out else None
 
     relationships = [
         item
@@ -764,18 +771,18 @@ def resolve_op_stack_runtime(
         )
         if item is not None
     ]
-    route_chain = "optimism"
+    route_chain = chain_name_for_chain_id(l2_chain_id) or normalize_chain_name(contract.get("chain"))
     routes = [
         _finalize_route(
             {
                 "chain": route_chain,
-                "network": "OP Stack",
+                "network": display_name_for_chain(route_chain) or "OP Stack",
                 "chain_type": "evm",
                 "route_type": "op_stack_canonical_bridge",
                 "peer": other_bridge,
                 "peer_address": other_bridge,
                 "peer_source": "otherBridge()" if other_bridge else None,
-                "l2_chain_id": int(l2_chain_out[0]) if l2_chain_out else None,
+                "l2_chain_id": l2_chain_id,
                 "portal": portal or address if "portal" in name.lower() else portal,
                 "messenger": messenger,
                 "system_config": system_config,

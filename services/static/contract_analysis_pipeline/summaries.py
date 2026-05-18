@@ -484,7 +484,7 @@ def _bridge_protocols_for_function(function: Any, graph_entry: dict | None = Non
         protocols.add("LayerZero")
     if any(marker in text for marker in ("ccip", "chainselector", "evm2anymessage", "any2evmmessage")):
         protocols.add("CCIP")
-    if any(marker in text for marker in ("wormhole", "vaa", "publishmessage", "parseandverifyvm", "guardian")):
+    if any(marker in text for marker in ("wormhole", "vaa", "publishmessage", "parseandverifyvm")):
         protocols.add("Wormhole")
     if any(marker in text for marker in ("hyperlane", "interchain", "mailbox", "destinationdomain", "sourcedomain")):
         protocols.add("Hyperlane")
@@ -1160,8 +1160,8 @@ def _detect_contract_classification(
                 evidence.append(_source_evidence(function, project_dir))
 
     for function in functions_by_signature.values():
-        protocols = _bridge_protocols_for_function(function)
-        if protocols:
+        if _has_bridge_semantics(function):
+            protocols = _bridge_protocols_for_function(function)
             standards.add("Bridge")
             standards.update(protocols)
 

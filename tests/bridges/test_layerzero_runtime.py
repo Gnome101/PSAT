@@ -6,6 +6,7 @@ from typing import Any
 from eth_abi.abi import encode
 
 from services.bridges import runtime
+from services.bridges.chains import chain_name_for_chain_id, rpc_url_for_runtime_chain
 
 
 def _encoded_bytes32(value: str) -> str:
@@ -49,6 +50,20 @@ def test_read_layerzero_registry_dedupes_and_sorts(tmp_path: Path) -> None:
         {"eid": 30101, "network": "ethereum-mainnet", "chain": "ethereum", "chain_type": "evm"},
         {"eid": 30184, "network": "base-mainnet", "chain": "base", "chain_type": "evm"},
     )
+
+
+def test_runtime_rpc_url_uses_selected_chain_without_unknown_fallback() -> None:
+    default_rpc = "https://eth-mainnet.g.alchemy.com/v2/test-key"
+
+    assert rpc_url_for_runtime_chain("base", default_rpc) == "https://base-mainnet.g.alchemy.com/v2/test-key"
+    assert rpc_url_for_runtime_chain("fantom", default_rpc) is None
+    assert rpc_url_for_runtime_chain(None, default_rpc) == default_rpc
+
+
+def test_chain_name_for_chain_id_maps_known_op_stack_chains() -> None:
+    assert chain_name_for_chain_id(8453) == "base"
+    assert chain_name_for_chain_id(10) == "optimism"
+    assert chain_name_for_chain_id(99999999) is None
 
 
 def test_layerzero_runtime_uses_registry_entries_for_peer_discovery(monkeypatch) -> None:
@@ -249,6 +264,42 @@ def test_hyperlane_runtime_resolves_router_peer_and_ism(monkeypatch) -> None:
     assert resolved["policies"][0]["module_type"] == 3
     assert resolved["routes"][0]["peer_address"] == peer
     assert resolved["routes"][0]["chain"] == "base"
+
+
+def test_op_stack_runtime_uses_l2_chain_id_for_route_chain(monkeypatch) -> None:
+    portal = "0x" + "11" * 20
+    remote_bridge = "0x" + "22" * 20
+
+    def fake_call(
+        _rpc_url: str,
+        address: str,
+        signature: str,
+        arg_types: list[str] | None = None,
+        args: list[Any] | None = None,
+        output_types: list[str] | None = None,
+    ) -> tuple[Any, ...] | None:
+        if address != portal:
+            return None
+        if signature == "l2ChainId()":
+            return (8453,)
+        if signature == "otherBridge()":
+            return (remote_bridge,)
+        return None
+
+    monkeypatch.setattr(runtime, "_call", fake_call)
+    monkeypatch.setattr(runtime, "_first_address", lambda *_args, **_kwargs: None)
+
+    resolved = runtime.resolve_op_stack_runtime(
+        rpc_url="https://rpc.invalid",
+        contract={"address": portal, "name": "OptimismPortal"},
+        functions=[],
+    )
+
+    route = resolved["routes"][0]
+    assert route["chain"] == "base"
+    assert route["chain_id"] == 8453
+    assert route["chain_display_name"] == "Base"
+    assert route["l2_chain_id"] == 8453
 
 
 def test_wormhole_runtime_reports_protocol_specific_unsupported() -> None:

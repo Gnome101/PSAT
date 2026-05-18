@@ -62,6 +62,7 @@ CHAIN_SORT_ORDER = {"ethereum": 0, "arbitrum": 1, "optimism": 2, "polygon": 3, "
 # Etherscan v2 chain IDs for chains the inventory pipeline can discover.
 CHAIN_IDS: dict[str, int] = {
     "ethereum": 1,
+    "mainnet": 1,
     "arbitrum": 42161,
     "optimism": 10,
     "polygon": 137,

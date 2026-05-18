@@ -61,6 +61,19 @@ def chain_id_for_chain(chain: str | None, default: int | None = None) -> int | N
     return info.chain_id if info and info.chain_id is not None else default
 
 
+def chain_name_for_chain_id(chain_id: int | None) -> str | None:
+    if chain_id is None:
+        return None
+    seen: set[str] = set()
+    for info in CHAIN_REGISTRY.values():
+        if info.name in seen:
+            continue
+        seen.add(info.name)
+        if info.chain_id == chain_id:
+            return info.name
+    return None
+
+
 def display_name_for_chain(chain: str | None) -> str | None:
     info = chain_info(chain)
     return info.display_name if info else chain
@@ -107,3 +120,10 @@ def rpc_url_for_chain(chain: str | None, default_rpc_url: str | None = None) -> 
     if not api_key:
         return None
     return f"https://{info.alchemy_slug}.g.alchemy.com/v2/{api_key}"
+
+
+def rpc_url_for_runtime_chain(chain: str | None, default_rpc_url: str | None = None) -> str | None:
+    """Return an RPC for live reads without inventing Ethereum for explicit chains."""
+    if isinstance(chain, str) and chain.strip():
+        return rpc_url_for_chain(chain, default_rpc_url)
+    return default_rpc_url or os.getenv("ETH_RPC")

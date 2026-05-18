@@ -19,6 +19,7 @@ from services.aggregations.company_overview import (
     resolve_company_jobs,
 )
 from services.audits.serializers import _audit_brief, _audit_report_to_dict
+from services.bridges.chains import rpc_url_for_runtime_chain
 from services.bridges.peer_analysis import annotate_bridge_peer_analysis
 from services.bridges.runtime import resolve_bridge_runtime
 
@@ -189,12 +190,20 @@ def company_bridge_runtime(company_name: str, address: str, response: Response) 
 
         functions_by_address = build_functions_for_protocol(session, company_name)
 
+    runtime_rpc_url = rpc_url_for_runtime_chain(contract.get("chain"), deps.DEFAULT_RPC_URL)
     try:
-        runtime = resolve_bridge_runtime(
-            rpc_url=deps.DEFAULT_RPC_URL,
-            contract=contract,
-            functions=functions_by_address.get(target) or [],
-        )
+        if not runtime_rpc_url:
+            runtime = {
+                "status": "unresolved",
+                "reason": f"No RPC URL configured for chain {contract.get('chain') or 'unknown'}.",
+                "routes": [],
+            }
+        else:
+            runtime = resolve_bridge_runtime(
+                rpc_url=runtime_rpc_url,
+                contract=contract,
+                functions=functions_by_address.get(target) or [],
+            )
     except Exception as exc:
         runtime = {
             "status": "error",
