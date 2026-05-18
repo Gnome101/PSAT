@@ -448,14 +448,33 @@ class DiscoveryWorker(BaseWorker):
             existing.deployer = deployer
             existing.remappings = remappings or []
             existing.source_verified = True
-            if not existing.protocol_id and job.protocol_id:
+            # An analysis job inherits ``protocol_id`` from its parent
+            # (selection or resolution-dependency); arriving here doesn't
+            # itself prove the contract belongs to the protocol. WETH9
+            # pulled in as a dependency of a confirmed etherfi contract
+            # is still WETH9, not an etherfi contract. Honor the
+            # ownership gate: only adopt the orphan when its discovery
+            # trail already asserts ownership.
+            from services.discovery.source_confidence import asserts_ownership
+
+            if not existing.protocol_id and job.protocol_id and asserts_ownership(existing.discovery_sources):
                 existing.protocol_id = job.protocol_id
         else:
+            # Same gate as the adopt branch above — protocol_id only
+            # sticks when the job's discovery_sources include a high-
+            # confidence ownership signal. Resolution-dependency jobs
+            # (e.g., a dependency of a confirmed contract) typically
+            # don't, so they land as orphans even though the job itself
+            # carries a protocol_id from its parent.
+            from services.discovery.source_confidence import asserts_ownership
+
+            request_sources = request.get("discovery_sources") or []
+            owning_protocol_id = job.protocol_id if asserts_ownership(request_sources) else None
             contract = Contract(
                 job_id=job.id,
                 address=address.lower(),
                 chain=request.get("chain"),
-                protocol_id=job.protocol_id,
+                protocol_id=owning_protocol_id,
                 contract_name=contract_name,
                 compiler_version=result.get("CompilerVersion", ""),
                 language="vyper" if is_vyper_result(result) else "solidity",
