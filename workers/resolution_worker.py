@@ -444,8 +444,12 @@ class ResolutionWorker(BaseWorker):
                         dep_impl_by_addr = {}
 
                 for row in dep_rows:
-                    dep_addr = row.dependency_address.lower()
                     rel = row.relationship_type
+                    if rel not in ("implementation", "proxy", "beacon"):
+                        continue
+                    dep_addr = (row.dependency_address or "").lower()
+                    if not dep_addr:
+                        continue
                     structurally_linked = False
                     if rel == "implementation":
                         structurally_linked = parent_impl is not None and parent_impl == dep_addr
@@ -454,7 +458,7 @@ class ResolutionWorker(BaseWorker):
                         structurally_linked = (
                             dep_impl is not None and parent_addr_lower is not None and dep_impl == parent_addr_lower
                         )
-                    elif rel == "beacon":
+                    else:  # rel == "beacon"
                         structurally_linked = parent_beacon is not None and parent_beacon == dep_addr
                     if structurally_linked:
                         structural_rel_by_addr[dep_addr] = rel
