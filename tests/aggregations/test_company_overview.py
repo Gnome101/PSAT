@@ -622,6 +622,7 @@ def _normalize_prefetch(result: dict) -> dict:
             cid: sorted((d["address"], d["resolved_type"], repr(d["details"])) for d in rows)
             for cid, rows in result["fp_governance_rows"].items()
         },
+        "fp_in_contract_principals": {cid: sorted(addrs) for cid, addrs in result["fp_in_contract_principals"].items()},
         "upgrade_events_count": dict(result["upgrade_events_count"]),
         "upgrade_events_last": dict(result["upgrade_events_last"]),
         "balances": {cid: sorted(bal_key(b) for b in rows) for cid, rows in result["balances"].items()},
@@ -804,3 +805,271 @@ def test_prefetch_child_tables_parallel_sequential_parity(db_session):
     assert norm["fp_governance_rows"][contract_a.id], "fp_governance_rows missing for contract A"
     assert norm["upgrade_events_count"][contract_a.id] == 2
     assert norm["upgrade_events_last"][contract_a.id]["block"] == 22345
+
+
+def test_fund_flows_principal_requires_authorization_edge(db_session):
+    """A bare ``ControlGraphNode`` row pointing at another in-protocol
+    contract must NOT produce a ``type=principal`` fund_flow on its own.
+
+    Regression for the etherfi/WstETH overreach: the in-contract pass of
+    ``_build_flows_and_principals`` walks ``ControlGraphNode`` rows and
+    emits ``type=principal`` for every in-protocol address it finds —
+    with no ``relation`` / ``resolved_type`` / ``depth`` filter. CGN
+    rows include transitive lineage (e.g. EtherFi's contracts pull in
+    Lido's WstETH via ``WithdrawalQueueERC721 -> WstETH -> Lido stETH``),
+    so unrelated tokens get falsely surfaced as principals controlling
+    every contract whose graph happens to traverse them.
+
+    Real authorization should be evidenced by a ``ControlGraphEdge`` with
+    a meaningful ``relation`` (controller_value, direct_owner, …) — the
+    node row alone is not sufficient. The non-contract pass at
+    ``company_overview.py:1063-1072`` already filters by
+    ``resolved_type``; the in-contract pass needs an equivalent guard.
+    """
+    p = _add_protocol(db_session, f"principal-overreach-{uuid.uuid4().hex[:8]}")
+
+    target_addr = _addr("target")
+    token_addr = _addr("token")
+
+    target_job = _add_job(db_session, address=target_addr, protocol_id=p.id, name="LiquidityPool")
+    token_job = _add_job(db_session, address=token_addr, protocol_id=p.id, name="WstETH")
+    target_contract = _add_contract(
+        db_session, address=target_addr, job=target_job, protocol_id=p.id, contract_name="LiquidityPool"
+    )
+    _add_contract(db_session, address=token_addr, job=token_job, protocol_id=p.id, contract_name="WstETH")
+
+    # Only seed a CGN row — the kind that gets written for any address
+    # in the resolved control graph, including transitive nodes. No CV,
+    # no owner, no ControlGraphEdge with an authorization relation. A
+    # real principal would also have an edge; this row by itself is
+    # lineage, not authorization.
+    db_session.add(
+        ControlGraphNode(
+            contract_id=target_contract.id,
+            address=token_addr.lower(),
+            resolved_type="contract",
+            depth=2,
+        )
+    )
+    db_session.commit()
+
+    payload = build_company_overview(db_session, p.name)
+    fund_flows = payload["fund_flows"]
+
+    overreach = [
+        f
+        for f in fund_flows
+        if f["from"] == token_addr.lower() and f["to"] == target_addr.lower() and f["type"] == "principal"
+    ]
+    assert overreach == [], (
+        "A ControlGraphNode row without any authorization edge must not "
+        "produce a type=principal fund_flow. Found spurious overreach: "
+        f"{overreach}"
+    )
+
+
+def test_fund_flows_principal_emitted_for_in_contract_function_principal(db_session):
+    """Positive complement to the CGN-overreach pin above: when an
+    in-protocol contract holds an actual ``FunctionPrincipal`` row on
+    the target's function, the principal flow **is** emitted.
+
+    The post-fix in-contract pass at company_overview.py:1122-1128
+    iterates ``fp_in_contract_principals`` (the prefetch projection at
+    :419-464) rather than walking raw CGN rows. Without this test the
+    only coverage of the new code path is the negative
+    test_fund_flows_principal_requires_authorization_edge above, which
+    deliberately seeds *no* FP row — so the success branch never runs
+    and the fix could regress silently to "always empty".
+
+    Concretely: the target's ``transferFrom`` is gated by a
+    ``FunctionPrincipal`` row pointing at the authority contract. That
+    is the authoritative per-function access-control record the
+    capability resolver writes; an in-protocol address only appears
+    here if it can actually call the function. The principal flow
+    ``authority -> target`` must be in fund_flows.
+    """
+    p = _add_protocol(db_session, f"principal-positive-{uuid.uuid4().hex[:8]}")
+
+    target_addr = _addr("target")
+    authority_addr = _addr("authority")
+
+    target_job = _add_job(db_session, address=target_addr, protocol_id=p.id, name="Vault")
+    authority_job = _add_job(db_session, address=authority_addr, protocol_id=p.id, name="Operator")
+    target_contract = _add_contract(
+        db_session, address=target_addr, job=target_job, protocol_id=p.id, contract_name="Vault"
+    )
+    _add_contract(db_session, address=authority_addr, job=authority_job, protocol_id=p.id, contract_name="Operator")
+
+    ef = EffectiveFunction(
+        contract_id=target_contract.id,
+        function_name="transferFrom",
+        selector="0x23b872dd",
+        abi_signature="transferFrom(address,address,uint256)",
+        authority_public=False,
+    )
+    db_session.add(ef)
+    db_session.commit()
+    db_session.refresh(ef)
+
+    db_session.add(
+        FunctionPrincipal(
+            function_id=ef.id,
+            address=authority_addr.lower(),
+            resolved_type=None,
+            origin="semantic_capability:finite_set",
+            principal_type="controller",
+        )
+    )
+    db_session.commit()
+
+    payload = build_company_overview(db_session, p.name)
+    fund_flows = payload["fund_flows"]
+
+    principal_flow = [
+        f
+        for f in fund_flows
+        if f["from"] == authority_addr.lower() and f["to"] == target_addr.lower() and f["type"] == "principal"
+    ]
+    assert principal_flow, (
+        "Expected a type=principal fund_flow from authority -> target when a "
+        "FunctionPrincipal row links them. Got fund_flows="
+        f"{[f for f in fund_flows if f['to'] == target_addr.lower()]}"
+    )
+
+
+def test_fund_flows_controller_requires_authorization_relation(db_session):
+    """A ControllerValue row pointing at another in-protocol contract
+    must NOT produce a ``type=controller`` fund_flow unless the storage
+    variable actually denotes authorization.
+
+    Sibling of the WstETH/CGN overreach, narrower blast radius.
+    ``_build_flows_and_principals`` (company_overview.py:1019-1023)
+    walks the contract entry's ``controllers`` dict, which is populated
+    at lines 752-753 from *every* ControllerValue row regardless of
+    semantics. CV rows include any address-typed tracked state variable
+    (per ``tracking_plan._is_address_like_read_spec``):
+
+      - real authorizers (``owner``, ``admin``, ``governor``)
+      - money-routing targets (``treasury``, ``feeRecipient``)
+      - external deps (``weth``, ``oracle``, ``priceFeed``, ``swapRouter``)
+      - composability anchors (``vault``, ``pool``, ``stEth``)
+
+    Emitting ``type=controller`` for the latter three categories falsely
+    asserts that an integration target authorizes its consumer. Both
+    ``cv.controller_id`` (state-var name) and ``cv.resolved_type`` are
+    visible to the loop — a real fix would gate on one of them.
+    """
+    p = _add_protocol(db_session, f"controller-overreach-{uuid.uuid4().hex[:8]}")
+
+    target_addr = _addr("target")
+    token_addr = _addr("token")
+
+    target_job = _add_job(db_session, address=target_addr, protocol_id=p.id, name="LiquidityPool")
+    token_job = _add_job(db_session, address=token_addr, protocol_id=p.id, name="WstETH")
+    target_contract = _add_contract(
+        db_session, address=target_addr, job=target_job, protocol_id=p.id, contract_name="LiquidityPool"
+    )
+    _add_contract(db_session, address=token_addr, job=token_job, protocol_id=p.id, contract_name="WstETH")
+
+    # A CV row of the form an integration variable produces — controller_id
+    # is a non-authorization name (so the owner-substring heuristic does
+    # not false-positive and confuse the bug isolation), value resolves to
+    # an in-protocol contract, and resolved_type matches what
+    # ``classify_resolved_address`` writes for a regular token.
+    db_session.add(
+        ControllerValue(
+            contract_id=target_contract.id,
+            controller_id="wstEth",
+            value=token_addr.lower(),
+            resolved_type="contract",
+            source="wstEth()",
+        )
+    )
+    db_session.commit()
+
+    payload = build_company_overview(db_session, p.name)
+    fund_flows = payload["fund_flows"]
+
+    overreach = [
+        f
+        for f in fund_flows
+        if f["from"] == token_addr.lower() and f["to"] == target_addr.lower() and f["type"] == "controller"
+    ]
+    assert overreach == [], (
+        "An integration ControllerValue (e.g. wstEth(), weth(), oracle(), "
+        "treasury()) must not be reported as a type=controller fund_flow. "
+        f"Found: {overreach}"
+    )
+
+
+def test_owner_detection_prefers_active_owner_over_pending_owner(db_session):
+    """The active owner — not pendingOwner — must be returned as the
+    contract's ``owner`` field.
+
+    Regression for the substring-match heuristic at
+    company_overview.py:749-755:
+
+        if "owner" in cv.controller_id.lower() and cv.value and ...:
+            owner = cv.value.lower()
+
+    ``"owner" in "pendingowner"`` is True, ``"owner" in "previousowner"``
+    is True, ``"owner" in "roleowner"`` is True. Combined with
+    last-write-wins assignment (no precedence), the chosen ``owner`` is
+    whichever owner-substring CV row the iteration sees last. For any
+    OpenZeppelin Ownable2Step contract (canonical post-2022 pattern,
+    both ``owner()`` and ``pendingOwner()`` exist as tracked state
+    variables), this routinely latches onto the not-yet-accepted
+    pending owner.
+
+    The wrong ``owner`` then cascades into:
+      - ``_build_ownership_hierarchy`` — groups under the wrong principal
+      - the controls_value/controls flow at line 1011-1017 — wrong source
+      - the ``!= owner`` filter at line 1022 — fails to exclude the real
+        owner from controller-flow emission, double-emitting an edge
+    """
+    p = _add_protocol(db_session, f"owner-pending-{uuid.uuid4().hex[:8]}")
+
+    target_addr = _addr("target")
+    real_owner_addr = _addr("realowner")
+    pending_owner_addr = _addr("pendingowner")
+
+    target_job = _add_job(db_session, address=target_addr, protocol_id=p.id, name="Vault")
+    target_contract = _add_contract(
+        db_session, address=target_addr, job=target_job, protocol_id=p.id, contract_name="Vault"
+    )
+
+    # ``owner()`` inserted first, ``pendingOwner()`` second. Postgres
+    # returns rows in physical (insertion) order absent an ORDER BY, so
+    # the buggy last-wins iteration assigns owner = pendingOwner.
+    db_session.add(
+        ControllerValue(
+            contract_id=target_contract.id,
+            controller_id="owner",
+            value=real_owner_addr.lower(),
+            resolved_type="safe",
+            source="owner()",
+        )
+    )
+    db_session.add(
+        ControllerValue(
+            contract_id=target_contract.id,
+            controller_id="pendingOwner",
+            value=pending_owner_addr.lower(),
+            resolved_type="eoa",
+            source="pendingOwner()",
+        )
+    )
+    db_session.commit()
+
+    payload = build_company_overview(db_session, p.name)
+    target_entry = next(c for c in payload["contracts"] if c["address"] == target_addr)
+
+    # Sanity: both CV rows reached the entry — proves the bug is in the
+    # owner heuristic, not in data loading.
+    assert "owner" in target_entry["controllers"], "owner CV row should be in controllers dict"
+    assert "pendingOwner" in target_entry["controllers"], "pendingOwner CV row should be in controllers dict"
+
+    assert target_entry["owner"] == real_owner_addr.lower(), (
+        "owner() must take precedence over pendingOwner(). "
+        f"Expected {real_owner_addr.lower()}, got {target_entry['owner']}."
+    )

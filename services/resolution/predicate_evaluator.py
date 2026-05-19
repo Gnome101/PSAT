@@ -326,7 +326,7 @@ def _evaluate_leaf(leaf: LeafPredicate, ctx: EvaluationContext) -> CapabilityExp
         return _resolve_external_bool(leaf, ctx)
 
     if kind == "signature_auth":
-        signer = _resolve_signer_from_leaf(leaf)
+        signer = _resolve_signer_from_leaf(leaf, ctx)
         return CapabilityExpr.signature_witness(signer)
 
     if kind == "comparison":
@@ -1388,12 +1388,23 @@ def _first_hint_value(descriptor: SetDescriptor, key: str) -> Any:
     return None
 
 
-def _resolve_signer_from_leaf(leaf: LeafPredicate) -> CapabilityExpr:
+def _resolve_signer_from_leaf(
+    leaf: LeafPredicate,
+    ctx: EvaluationContext | None = None,
+) -> CapabilityExpr:
     """For a signature_auth leaf, the principal is whoever signed.
     Find the operand that's NOT the signature_recovery source — that
     operand identifies the expected signer, which becomes a
     capability that the resolver-side check verifies the signature
-    against."""
+    against.
+
+    State-variable signers consult ``ctx.state_var_values`` so persisted
+    ``ControllerValue`` rows surface as concrete signers — mirrors the
+    sibling ``_resolve_equality_principal`` branch. Without this lookup,
+    every signature-gated function whose signer is a state variable
+    wraps an empty ``finite_set``, and the writer emits zero
+    ``FunctionPrincipal`` rows of ``principal_type=signature_witness``.
+    """
     operands = leaf.get("operands") or []
     signers = [op for op in operands if op["source"] != "signature_recovery"]
     if len(signers) != 1:
@@ -1401,6 +1412,17 @@ def _resolve_signer_from_leaf(leaf: LeafPredicate) -> CapabilityExpr:
     op = signers[0]
 
     if op["source"] == "state_variable":
+        sv_name = _state_var_lookup_key(cast(dict[str, Any], op))
+        if ctx is not None and sv_name and sv_name in ctx.state_var_values:
+            value = ctx.state_var_values[sv_name]
+            if isinstance(value, str) and value.startswith("0x") and len(value) == 42:
+                if _is_zero_address(value):
+                    return CapabilityExpr.finite_set([], quality="exact", confidence="enumerable")
+                return CapabilityExpr.finite_set(
+                    [value],
+                    quality="exact",
+                    confidence="enumerable",
+                )
         return CapabilityExpr.finite_set(
             [],
             quality="lower_bound",
