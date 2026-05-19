@@ -49,6 +49,17 @@ _SELECT_STRUCTURAL_ORPHANS = sa.text(
     --   * impl edge → parent.implementation == orphan.address
     --   * proxy edge → orphan.implementation == parent.address
     --   * beacon edge → parent.beacon == orphan.address
+    --
+    -- Fourth branch: the "proxy of a HIGH impl" case. Impls typically
+    -- don't record their own proxy in ``contract_dependencies`` (impl
+    -- bytecode doesn't reference its proxy shell), so the proxy-edge
+    -- branch above can't match a proxy whose impl is HIGH-owned but
+    -- whose impl never analysed itself. We catch that case by checking
+    -- the orphan's stored ``implementation`` field directly. To avoid
+    -- adopting arbitrary forks / per-user clones (EIP-1167 minimal
+    -- proxies, ERC-6551 token-bound accounts), require the orphan to
+    -- *also* be referenced by some HIGH-owned contract of the same
+    -- protocol — i.e. the protocol actually integrates with this proxy.
     SELECT
         orphan.id              AS orphan_id,
         array_agg(DISTINCT parent.protocol_id) AS parent_protocols
@@ -66,6 +77,16 @@ _SELECT_STRUCTURAL_ORPHANS = sa.text(
             AND lower(orphan.implementation) = parent.address)
         OR (cd.relationship_type = 'beacon'
             AND lower(parent.beacon) = orphan.address)
+        OR (
+            orphan.is_proxy = true
+            AND orphan.implementation IS NOT NULL
+            AND (
+                SELECT impl.protocol_id
+                FROM contracts AS impl
+                WHERE lower(impl.address) = lower(orphan.implementation)
+                LIMIT 1
+            ) = parent.protocol_id
+        )
       )
     GROUP BY orphan.id
     """

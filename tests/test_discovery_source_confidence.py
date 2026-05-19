@@ -634,6 +634,201 @@ class TestStructuralAdoptionAtWorker:
 
 
 @requires_postgres
+class TestProxyOfHighImplRuntimeAdoption:
+    """Runtime counterpart to the migration's fourth branch. When
+    ``static_worker._resolve_proxy`` classifies a contract as a proxy
+    and sets its ``.implementation``, an orphan proxy whose impl is
+    HIGH-owned by some protocol P AND which is referenced by some
+    HIGH-owned-by-P contract gets adopted into P on the spot.
+
+    The migration's same branch only fires once at deploy time on
+    populated data — useless for the live preview workflow where the
+    DB starts empty. The runtime check closes that gap so the live
+    pipeline actually fixes the false negative ``0x8f08`` shape
+    (a proxy whose impl is etherfi-owned but which isn't directly
+    on inventory)."""
+
+    def test_orphan_proxy_with_high_impl_gets_adopted(self, db_session, seed_protocol, monkeypatch):
+        """End-to-end runtime path: proxy is orphan, impl is HIGH-owned,
+        proxy is referenced by another HIGH-owned protocol contract →
+        ``_resolve_proxy`` adopts the proxy and tags it
+        ``structural_adoption``."""
+        from db.models import Contract, ContractDependency, Job, JobStage, JobStatus
+        from workers.static_worker import StaticWorker
+
+        impl_addr = _addr(0xF000)
+        proxy_addr = _addr(0xF001)
+        ref_addr = _addr(0xF002)
+
+        # HIGH-owned impl (e.g. ether.fi's LRTSquaredCore via deployer_expansion).
+        db_session.add(
+            Contract(
+                address=impl_addr,
+                chain="ethereum",
+                protocol_id=seed_protocol,
+                contract_name="HighImpl",
+                discovery_sources=["deployer_expansion"],
+            )
+        )
+        # A second HIGH-owned contract that references the orphan proxy
+        # in its dep graph — the "protocol actually integrates with this
+        # proxy" signal that distinguishes a real protocol-internal
+        # proxy from an EIP-1167 minimal-proxy clone or ERC-6551 TBA.
+        ref_contract = Contract(
+            address=ref_addr,
+            chain="ethereum",
+            protocol_id=seed_protocol,
+            contract_name="RefContract",
+            discovery_sources=["ai_inventory"],
+        )
+        db_session.add(ref_contract)
+        db_session.flush()
+        db_session.add(
+            ContractDependency(
+                contract_id=ref_contract.id,
+                dependency_address=proxy_addr,
+                relationship_type="proxy",
+                source=["dynamic"],
+            )
+        )
+
+        # The orphan proxy + a Job representing its analysis. The Job FK
+        # has to point at a real row for the inner SELECT-then-update
+        # to land.
+        proxy_job = Job(
+            id=uuid.uuid4(),
+            stage=JobStage.static,
+            status=JobStatus.processing,
+            request={"rpc_url": "rpc"},
+        )
+        db_session.add(proxy_job)
+        db_session.flush()
+        db_session.add(
+            Contract(
+                address=proxy_addr,
+                chain="ethereum",
+                protocol_id=None,
+                contract_name="OrphanProxy",
+                discovery_sources=None,
+                job_id=proxy_job.id,
+            )
+        )
+        db_session.commit()
+
+        # Stub the classifier so ``_resolve_proxy`` returns the proxy
+        # verdict with the HIGH impl as its implementation.
+        monkeypatch.setattr(
+            "services.discovery.classifier.classify_single",
+            lambda address, rpc_url: {
+                "address": address,
+                "type": "proxy",
+                "proxy_type": "eip1967",
+                "implementation": impl_addr,
+            },
+        )
+        # No-op the artifact + child-job side effects — we're testing
+        # the adoption behaviour, not the cascade.
+        monkeypatch.setattr(
+            "workers.static_worker.store_artifact",
+            lambda *a, **kw: None,
+        )
+        monkeypatch.setattr(
+            "workers.static_worker.create_job",
+            lambda *a, **kw: type("J", (), {"id": "child"})(),
+        )
+
+        from types import SimpleNamespace
+
+        # The worker needs ``job.request`` to be a dict and ``job.id`` to
+        # exist; everything else accessed in ``_resolve_proxy`` is mocked.
+        worker_job = SimpleNamespace(
+            id=proxy_job.id, address=proxy_addr, name="OrphanProxy", request={"rpc_url": "rpc"}
+        )
+        StaticWorker()._resolve_proxy(db_session, worker_job, proxy_addr, "OrphanProxy")
+        db_session.commit()
+
+        adopted = db_session.query(Contract).filter_by(address=proxy_addr).one()
+        assert adopted.protocol_id == seed_protocol, (
+            "orphan proxy whose impl is HIGH-owned and which a HIGH "
+            "protocol contract references should be adopted at runtime"
+        )
+        assert "structural_adoption" in (adopted.discovery_sources or [])
+
+    def test_orphan_proxy_with_high_impl_stays_orphan_when_unreferenced(self, db_session, seed_protocol, monkeypatch):
+        """Safety filter: an orphan proxy whose impl is HIGH-owned but
+        which no HIGH-owned-same-protocol contract references must NOT
+        be adopted. ERC-6551 TBA / fork shape. The runtime check must
+        respect the same safety filter the migration's fourth branch
+        uses, or it'd re-open a leak the migration carefully closes."""
+        from db.models import Contract, Job, JobStage, JobStatus
+        from workers.static_worker import StaticWorker
+
+        impl_addr = _addr(0xF100)
+        stranger_proxy = _addr(0xF101)
+
+        db_session.add(
+            Contract(
+                address=impl_addr,
+                chain="ethereum",
+                protocol_id=seed_protocol,
+                contract_name="HighImpl2",
+                discovery_sources=["deployer_expansion"],
+            )
+        )
+        proxy_job = Job(
+            id=uuid.uuid4(),
+            stage=JobStage.static,
+            status=JobStatus.processing,
+            request={"rpc_url": "rpc"},
+        )
+        db_session.add(proxy_job)
+        db_session.flush()
+        # Stranger proxy: HIGH impl, but no HIGH protocol contract
+        # references it in contract_dependencies.
+        db_session.add(
+            Contract(
+                address=stranger_proxy,
+                chain="ethereum",
+                protocol_id=None,
+                contract_name="StrangerFork",
+                discovery_sources=None,
+                job_id=proxy_job.id,
+            )
+        )
+        db_session.commit()
+
+        monkeypatch.setattr(
+            "services.discovery.classifier.classify_single",
+            lambda address, rpc_url: {
+                "address": address,
+                "type": "proxy",
+                "proxy_type": "eip1967",
+                "implementation": impl_addr,
+            },
+        )
+        monkeypatch.setattr("workers.static_worker.store_artifact", lambda *a, **kw: None)
+        monkeypatch.setattr(
+            "workers.static_worker.create_job",
+            lambda *a, **kw: type("J", (), {"id": "child"})(),
+        )
+
+        from types import SimpleNamespace
+
+        worker_job = SimpleNamespace(
+            id=proxy_job.id, address=stranger_proxy, name="StrangerFork", request={"rpc_url": "rpc"}
+        )
+        StaticWorker()._resolve_proxy(db_session, worker_job, stranger_proxy, "StrangerFork")
+        db_session.commit()
+
+        row = db_session.query(Contract).filter_by(address=stranger_proxy).one()
+        assert row.protocol_id is None, (
+            "stranger proxy was adopted just because its impl happens to be "
+            "HIGH-owned — the 'must be referenced by HIGH protocol' filter "
+            "is missing from the runtime check"
+        )
+
+
+@requires_postgres
 class TestStructuralOrphanMigration:
     """The migration walks every orphan, checks for structural edges from
     HIGH-owned contracts, and adopts when there's exactly one matching
@@ -830,6 +1025,123 @@ class TestStructuralOrphanMigration:
         assert offending == [], (
             "third-party proxy was surfaced as a structural-orphan candidate by relationship_type "
             "alone — this is the Lido stETH leak the corrected SELECT must prevent"
+        )
+
+    def test_migration_adopts_proxy_of_high_impl_when_referenced(self, db_session, seed_protocol, migration_module):
+        """The fourth SQL branch: an orphan that's a proxy whose
+        ``.implementation`` points to a HIGH-owned contract, AND is
+        referenced by some HIGH-owned-by-same-protocol contract via
+        any dep edge. Closes the case where the impl doesn't carry a
+        back-edge to its proxy in ``contract_dependencies`` (impls
+        typically don't reference their own proxy)."""
+        from db.models import Contract, ContractDependency
+
+        # The HIGH impl (e.g., etherfi's LRTSquaredCore — discovered via
+        # deployer_expansion).
+        impl_addr = _addr(0xAA10)
+        db_session.add(
+            Contract(
+                address=impl_addr,
+                chain="ethereum",
+                protocol_id=seed_protocol,
+                contract_name="HighImpl",
+                discovery_sources=["deployer_expansion"],
+            )
+        )
+        # An orphan proxy whose .implementation is the HIGH impl. Its
+        # impl is not in any dep edge from a HIGH parent — impls
+        # normally don't record their proxy as a dep.
+        proxy_addr = _addr(0xBB10)
+        db_session.add(
+            Contract(
+                address=proxy_addr,
+                chain="ethereum",
+                protocol_id=None,
+                contract_name="ProxyOfHighImpl",
+                is_proxy=True,
+                implementation=impl_addr,
+            )
+        )
+        # Another HIGH-owned contract in the same protocol that
+        # references the proxy — this is the "protocol actually
+        # integrates with the proxy" signal that distinguishes a real
+        # protocol-internal proxy from a per-user clone / fork.
+        referencing_addr = _addr(0xCC10)
+        ref_contract = Contract(
+            address=referencing_addr,
+            chain="ethereum",
+            protocol_id=seed_protocol,
+            contract_name="RefContract",
+            discovery_sources=["ai_inventory"],
+        )
+        db_session.add(ref_contract)
+        db_session.flush()
+        db_session.add(
+            ContractDependency(
+                contract_id=ref_contract.id,
+                dependency_address=proxy_addr,
+                relationship_type="proxy",
+                source=["dynamic"],
+            )
+        )
+        db_session.commit()
+
+        rows = db_session.execute(migration_module._SELECT_STRUCTURAL_ORPHANS).fetchall()
+        adopted = 0
+        for orphan_id, parent_protocols in rows:
+            unique = [pid for pid in (parent_protocols or []) if pid is not None]
+            if len(unique) == 1:
+                db_session.execute(migration_module._ADOPT_ORPHAN, {"pid": unique[0], "id": orphan_id})
+                adopted += 1
+        db_session.commit()
+
+        assert adopted >= 1
+        row = db_session.query(Contract).filter_by(address=proxy_addr).one()
+        assert row.protocol_id == seed_protocol
+        assert "structural_adoption" in (row.discovery_sources or [])
+
+    def test_migration_skips_proxy_of_high_impl_without_protocol_reference(
+        self, db_session, seed_protocol, migration_module
+    ):
+        """Safety filter for the fourth branch: a proxy whose ``.implementation``
+        is HIGH-owned BUT which no HIGH-owned-by-same-protocol contract
+        references must NOT be adopted. This is the ERC-6551 token-bound-
+        account / fork-of-protocol shape: someone else's proxy that
+        happens to share code with a protocol's impl, but isn't actually
+        part of the protocol's contract surface."""
+        from db.models import Contract
+
+        impl_addr = _addr(0xAA11)
+        db_session.add(
+            Contract(
+                address=impl_addr,
+                chain="ethereum",
+                protocol_id=seed_protocol,
+                contract_name="HighImpl2",
+                discovery_sources=["deployer_expansion"],
+            )
+        )
+        # Orphan proxy points to HIGH impl, but NO contract in the same
+        # protocol references this proxy → must stay orphan.
+        stranger_proxy = _addr(0xBB11)
+        db_session.add(
+            Contract(
+                address=stranger_proxy,
+                chain="ethereum",
+                protocol_id=None,
+                contract_name="ForeignFork",
+                is_proxy=True,
+                implementation=impl_addr,
+            )
+        )
+        db_session.commit()
+
+        rows = db_session.execute(migration_module._SELECT_STRUCTURAL_ORPHANS).fetchall()
+        surfaced_ids = {r[0] for r in rows}
+        stranger_row = db_session.query(Contract).filter_by(address=stranger_proxy).one()
+        assert stranger_row.id not in surfaced_ids, (
+            "fork / TBA-style proxy was surfaced for adoption — the "
+            "'must be referenced by HIGH protocol contract' filter is missing"
         )
 
     def test_migration_skips_cross_protocol_collisions(self, db_session, seed_protocol, migration_module):

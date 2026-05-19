@@ -1038,6 +1038,69 @@ class StaticWorker(BaseWorker):
             contract_row.admin = admin
             session.commit()
 
+            # Proxy-of-HIGH-impl runtime adoption — counterpart to the
+            # migration's fourth branch, fired at the moment we learn
+            # the proxy's impl. Closes the gap where a proxy is
+            # cascade-discovered without HIGH evidence on the proxy
+            # itself, but its impl IS HIGH-owned (e.g. ether.fi's
+            # ``LRTSquaredCore`` impl pointed at by ``0x8f08…``). Safety
+            # filter: require the proxy to also be referenced by some
+            # HIGH-owned contract of the same protocol — keeps
+            # arbitrary forks / EIP-1167 clones / ERC-6551 TBAs out.
+            # See services/discovery/source_confidence.py + the
+            # adopt-structural-orphans migration for the data model.
+            # This is a best-effort runtime fast-path; the migration
+            # is the safety net for any orphan this lookup misses, so
+            # transient DB errors are logged + swallowed rather than
+            # failing the analysis.
+            contract_proto_id = getattr(contract_row, "protocol_id", None)
+            contract_addr = (getattr(contract_row, "address", None) or "").lower() or None
+            if contract_proto_id is None and impl_address and contract_addr:
+                from db.models import ContractDependency
+
+                try:
+                    impl_row = session.execute(
+                        sa_select(Contract).where(Contract.address == impl_address.lower()).limit(1)
+                    ).scalar_one_or_none()
+                except Exception as exc:
+                    logger.debug(
+                        "Job %s: structural-adoption impl lookup failed: %s", job.id, exc
+                    )
+                    impl_row = None
+                if impl_row is not None and getattr(impl_row, "protocol_id", None) is not None:
+                    try:
+                        referenced_by_same_protocol = session.execute(
+                            sa_select(ContractDependency.id)
+                            .join(Contract, Contract.id == ContractDependency.contract_id)
+                            .where(
+                                ContractDependency.dependency_address == contract_addr,
+                                Contract.protocol_id == impl_row.protocol_id,
+                            )
+                            .limit(1)
+                        ).scalar_one_or_none()
+                    except Exception as exc:
+                        logger.debug(
+                            "Job %s: structural-adoption dep-reference lookup failed: %s",
+                            job.id,
+                            exc,
+                        )
+                        referenced_by_same_protocol = None
+                    if referenced_by_same_protocol is not None:
+                        contract_row.protocol_id = impl_row.protocol_id
+                        merged_sources = list(getattr(contract_row, "discovery_sources", None) or [])
+                        if "structural_adoption" not in merged_sources:
+                            merged_sources.append("structural_adoption")
+                        contract_row.discovery_sources = merged_sources
+                        session.commit()
+                        logger.info(
+                            "Job %s: structurally adopted proxy %s into protocol %s "
+                            "(impl %s is HIGH-owned, proxy referenced by same protocol)",
+                            job.id,
+                            contract_addr,
+                            impl_row.protocol_id,
+                            impl_address,
+                        )
+
         store_artifact(
             session,
             job.id,
