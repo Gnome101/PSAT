@@ -5,31 +5,6 @@ import ELK from "elkjs/lib/elk.bundled.js";
 
 const elk = new ELK();
 
-// Filter for intra-group edges. The canvas data tags every flow with
-// the same baseline capabilities (`upgradeable`, `pause`,
-// `delegatecall`) — those describe the source contract's attributes,
-// not the relationship between two specific contracts, so filtering on
-// them is a no-op. The actual relationship-level signals are:
-//   - flowType "controller" / "controls_value" / "controls" — an
-//     explicitly named control relationship
-//   - the `ownership` capability — true ownership between siblings
-//   - the `value-in` capability — this contract receives value from
-//     the other, the more meaningful half of value flow
-// Plain "principal" flows whose only caps are source-attribute tags
-// don't add info beyond what group containment already encodes (the
-// Safe owns all its children), so they drop. Cross-group bundles are
-// NOT filtered — at the macro view we still want every connection
-// counted.
-function isHighSignalIntraEdge(e) {
-  // Proxy→impl edges (added by the byName loop without a data field)
-  // are structurally important — always keep.
-  if (!e.data) return true;
-  const t = e.data.flowType;
-  if (t === "controller" || t === "controls_value" || t === "controls") return true;
-  const caps = e.data.capabilities || [];
-  return caps.includes("ownership") || caps.includes("value-in");
-}
-
 // Every principal (Safe / Timelock / EOA / proxy admin) that owns at
 // least this many contracts becomes a group container. We default to 1
 // — a Safe that touches a single contract still gets a labeled box,
@@ -442,28 +417,25 @@ export function buildGraphLayout(machines, fundFlows, principals) {
 
   const aggregatedCrossEdges = aggregateEdges(crossGroupEdges, contractToGroup, principalList, sorted);
 
-  // Filter intra-group edges down to high-signal ones (control
-  // effects, value transfers, proxy→impl) before aggregation. With 15
-  // children each touching ~10 others, the interior reads as
-  // spaghetti when every read/view flow gets a line. Keeping only the
-  // structurally meaningful edges drops it to a manageable handful
-  // per contract without losing what someone auditing the protocol
-  // cares about.
+  // Aggregate intra-group edges the same way we do cross-group ones.
+  // aggregateEdges' endpoint() resolves a contract to its group when
+  // given a populated contractToGroup — which would collapse every
+  // child↔child pair into a same-group self-loop and drop the whole
+  // batch. Handing it an empty map preserves the raw contract
+  // addresses so each (childA, childB) pair collapses to one bundle,
+  // mirroring the outside-the-groups view.
   //
-  // Then aggregate the remaining intra-group edges the same way we
-  // do cross-group ones. aggregateEdges' endpoint() resolves a
-  // contract to its group when given a populated contractToGroup —
-  // which would collapse every child↔child pair into a same-group
-  // self-loop and drop the whole batch. Handing it an empty map
-  // preserves the raw contract addresses so each (childA, childB)
-  // pair collapses to one bundle with a count label, mirroring the
-  // outside-the-groups view.
+  // No additional capability/flow-type filter is applied: upstream FP
+  // gating on `type=principal` / `type=controller` flows already
+  // removed the CGN/CV over-reach that was the dominant intra-group
+  // spaghetti. Filtering further here on a cap whitelist would now
+  // hide legitimate authorization edges whose caps happen to be
+  // source-attribute tags (`upgradeable`, `pause`, `delegatecall`).
   const NO_GROUP_RESOLVE = new Map();
   const aggregatedIntraByGroup = new Map();
   const intraGroupRendered = [];
   for (const [groupAddr, list] of intraGroupEdgesByGroup) {
-    const filtered = list.filter(isHighSignalIntraEdge);
-    const aggregated = aggregateEdges(filtered, NO_GROUP_RESOLVE, principalList, sorted);
+    const aggregated = aggregateEdges(list, NO_GROUP_RESOLVE, principalList, sorted);
     aggregatedIntraByGroup.set(groupAddr, aggregated);
     for (const e of aggregated) {
       intraGroupRendered.push({

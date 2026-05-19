@@ -296,6 +296,7 @@ def _prefetch_child_tables(
         "controller_values": {},
         "ef_effects": {},
         "fp_governance_rows": {},
+        "fp_in_contract_principals": {},
         "upgrade_events_count": {},
         "upgrade_events_last": {},
         "balances": {},
@@ -438,6 +439,50 @@ def _prefetch_child_tables(
             rows += 1
         return local, rows
 
+    def _fp_in_contract_principals(s: Session) -> tuple[dict[int, set[str]], int]:
+        """Per-contract set of in-protocol-contract addresses that hold
+        call authority on at least one ``EffectiveFunction``.
+
+        Replaces the bare ``ControlGraphNode`` walk that previously drove
+        in-contract ``type=principal`` flows. CGN rows include the full
+        recursive graph (transitive lineage like
+        ``WithdrawalQueueERC721 -> WstETH -> Lido stETH``), so emitting a
+        principal flow for every in-protocol CGN match falsely surfaced
+        tokens that EtherFi composes with as principals controlling
+        EtherFi contracts. ``FunctionPrincipal`` is the authoritative
+        per-function access-control record — an address only appears here
+        if the capability resolver determined it can actually call a
+        function.
+
+        ``signature_witness`` is excluded because a signer of a message
+        is not a caller. NULL ``principal_type`` is included so legacy
+        rows pre-dating the typed writer still count.
+        """
+        local: dict[int, set[str]] = {}
+        rows = 0
+        for cid, addr in s.execute(
+            select(
+                EffectiveFunction.contract_id,
+                func.lower(FunctionPrincipal.address),
+            )
+            .join(FunctionPrincipal, FunctionPrincipal.function_id == EffectiveFunction.id)
+            .where(
+                EffectiveFunction.contract_id.in_(id_list),
+                FunctionPrincipal.address.is_not(None),
+                func.lower(FunctionPrincipal.address).in_(contract_addr_subq),
+                or_(
+                    FunctionPrincipal.principal_type != "signature_witness",
+                    FunctionPrincipal.principal_type.is_(None),
+                ),
+            )
+            .distinct()
+        ).all():
+            if not addr:
+                continue
+            local.setdefault(cid, set()).add(addr)
+            rows += 1
+        return local, rows
+
     def _upgrade_count(s: Session) -> tuple[dict[int, int], int]:
         local: dict[int, int] = {}
         for cid, count in s.execute(
@@ -514,6 +559,7 @@ def _prefetch_child_tables(
         ("balances", "balances", _balances),
         ("ef_effects", "ef_effects", _ef_effects),
         ("fp_governance_rows", "fp_governance_rows", _fp_governance),
+        ("fp_in_contract_principals", "fp_in_contract_principals", _fp_in_contract_principals),
         ("upgrade_events_count", "upgrade_events_count", _upgrade_count),
         ("upgrade_events_last", "upgrade_events_last", _upgrade_last),
     ]
@@ -558,6 +604,31 @@ def _prefetch_child_tables(
 
 _PRINCIPAL_TYPES = frozenset({"contract", "safe", "timelock", "eoa", "proxy_admin"})
 _PRINCIPAL_TYPES_SQL = ("contract", "safe", "timelock", "eoa", "proxy_admin")
+
+# ControllerValue.controller_id values that denote a contract's *active*
+# owner. The substring heuristic ``"owner" in controller_id.lower()`` used
+# to drive this and false-positives on ``pendingOwner``, ``previousOwner``,
+# ``roleOwner``, ``ownerFee``, etc. Combined with last-write-wins
+# assignment in the CV iteration, OZ Ownable2Step contracts (both
+# ``owner()`` and ``pendingOwner()`` tracked) routinely latched the
+# not-yet-accepted pending owner — and the wrong owner cascaded into the
+# ownership hierarchy and the controls/controls_value fund flow.
+#
+# Exact whitelist instead. Covers the canonical Ownable variants: bare
+# state-var name (``owner`` / ``_owner``) and the prefixed
+# ``state_variable:`` form the tracker emits today.
+_ACTIVE_OWNER_CONTROLLER_IDS = frozenset(
+    {
+        "owner",
+        "_owner",
+        "state_variable:owner",
+        "state_variable:_owner",
+    }
+)
+
+
+def _is_active_owner_controller(controller_id: str | None) -> bool:
+    return (controller_id or "").lower() in _ACTIVE_OWNER_CONTROLLER_IDS
 
 
 def _trim_control_graph(nodes: list[dict[str, Any]], edges: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
@@ -738,6 +809,7 @@ def build_governance_view(
     balances_by_cid: dict[int, list[Any]] = children["balances"]
     cgn_by_cid: dict[int, list[ControlGraphNode]] = children["cgn"]
     cge_by_cid: dict[int, list[ControlGraphEdge]] = children["cge"]
+    fp_in_contract_by_cid: dict[int, set[str]] = children["fp_in_contract_principals"]
     principal_lookup = _build_principal_lookup(contracts_by_job_id, controller_values_by_cid, cgn_by_cid)
 
     contracts: list[dict[str, Any]] = []
@@ -771,7 +843,7 @@ def build_governance_view(
         if lookup_contract:
             for cv in controller_values_by_cid.get(lookup_contract.id, []):
                 controllers[cv.controller_id] = cv.value
-                if "owner" in cv.controller_id.lower() and cv.value and cv.value.startswith("0x"):
+                if _is_active_owner_controller(cv.controller_id) and cv.value and cv.value.startswith("0x"):
                     owner = cv.value.lower()
 
         upgrade_count = upgrade_events_count_by_cid.get(contract_row.id) if contract_row else None
@@ -937,6 +1009,7 @@ def build_governance_view(
         fp_governance_by_cid,
         cgn_by_cid,
         cge_by_cid,
+        fp_in_contract_by_cid,
         principal_lookup,
     )
 
@@ -985,6 +1058,7 @@ def _build_flows_and_principals(
     fp_governance_by_cid: dict[int, list[dict[str, Any]]],
     cgn_by_cid: dict[int, list[ControlGraphNode]],
     cge_by_cid: dict[int, list[ControlGraphEdge]],
+    fp_in_contract_by_cid: dict[int, set[str]],
     principal_lookup: dict[str, dict[str, Any]],
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     contract_addrs = {c["address"].lower() for c in contracts if c["address"]}
@@ -1027,6 +1101,12 @@ def _build_flows_and_principals(
         if not c["address"]:
             continue
         target = c["address"].lower()
+        lookup_c = lookup_contract_by_entry.get(target)
+        # In-protocol contract addresses that hold actual call authority
+        # on this target's EffectiveFunctions. Same authoritative signal
+        # (FunctionPrincipal) drives both the controller-flow gate and
+        # the principal-flow emit below.
+        fp_principals: set[str] = fp_in_contract_by_cid.get(lookup_c.id, set()) if lookup_c else set()
 
         if c.get("owner") and c["owner"] in contract_addrs:
             flow_type = (
@@ -1036,18 +1116,36 @@ def _build_flows_and_principals(
             )
             add_flow(c["owner"], target, flow_type)
 
+        # The ``controllers`` dict at the contract entry is populated
+        # unfiltered from every tracked address-typed ControllerValue
+        # row, which includes integration/composability references
+        # (``weth``, ``oracle``, ``treasury``, ``swapRouter``, ``stEth``)
+        # alongside real authorizers. Emitting type=controller for the
+        # former asserts a control relationship that doesn't exist.
+        # Gate on FunctionPrincipal membership so only CV values that
+        # the capability resolver also identified as call-authority
+        # principals produce a controller flow.
         for cid, val in c.get("controllers", {}).items():
             if isinstance(val, str) and val.startswith("0x"):
                 val_lower = val.lower()
-                if val_lower in contract_addrs and val_lower != (c.get("owner") or ""):
+                if val_lower in contract_addrs and val_lower != (c.get("owner") or "") and val_lower in fp_principals:
                     add_flow(val_lower, target, "controller")
 
-        lookup_c = lookup_contract_by_entry.get(target)
+        # In-protocol contract principals come from FunctionPrincipal —
+        # the per-function access-control record produced by the
+        # capability resolver. A bare ControlGraphNode match used to
+        # drive this and over-reported transitive lineage (e.g. a token
+        # mid-chain like ``WithdrawalQueueERC721 -> WstETH -> Lido stETH``
+        # was flagged as a principal of every EtherFi contract whose
+        # graph traversed it). FP is the authoritative signal: an
+        # address only appears here if it can actually call a function.
         if lookup_c:
-            for cgn in cgn_by_cid.get(lookup_c.id, []):
-                node_addr = (cgn.address or "").lower()
-                if node_addr and node_addr in contract_addrs and node_addr != target:
-                    add_flow(node_addr, target, "principal")
+            for node_addr in fp_principals:
+                if not node_addr or node_addr == target:
+                    continue
+                if node_addr not in contract_addrs:
+                    continue
+                add_flow(node_addr, target, "principal")
 
     # Collect non-contract principals from control graph + function principals.
     # First pass: find safe_owner edges so we can nest Safe owners later.
