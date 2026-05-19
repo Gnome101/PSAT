@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-import time
 from typing import Any
 
 import pytest
 
-from tests.live.conftest import DEFAULT_COMPANY_TIMEOUT, DEFAULT_POLL_INTERVAL, LiveClient
+from tests.live.conftest import DEFAULT_SINGLE_TIMEOUT, LiveClient
 
 EXPECTED_LEAF_KINDS = {
     "membership",
@@ -40,7 +39,7 @@ EXPECTED_CAPABILITY_KINDS = {
     "AND",
     "OR",
 }
-TERMINAL_STATUSES = {"completed", "failed", "failed_terminal"}
+GUARDED_PREDICATE_ADDRESS = "0x2c4a81e257381f87f5a5c4bd525116466d972e50"
 
 
 def _iter_leaves(tree: dict[str, Any]):
@@ -63,66 +62,30 @@ def _leaves_from_artifact(artifact: dict[str, Any]) -> list[dict[str, Any]]:
     return leaves
 
 
-def _descendants_of(jobs: list[dict[str, Any]], parent_job_id: str) -> list[dict[str, Any]]:
-    by_parent: dict[str, list[dict[str, Any]]] = {}
-    for job in jobs:
-        request = job.get("request") or {}
-        parent = request.get("parent_job_id")
-        if isinstance(parent, str):
-            by_parent.setdefault(parent, []).append(job)
-
-    descendants: list[dict[str, Any]] = []
-    stack = list(by_parent.get(parent_job_id, []))
-    while stack:
-        job = stack.pop(0)
-        descendants.append(job)
-        stack.extend(by_parent.get(job["job_id"], []))
-    return descendants
-
-
-def _poll_descendants_until_done(
-    live_client: LiveClient,
-    parent_job_id: str,
-    timeout: float = DEFAULT_COMPANY_TIMEOUT,
-) -> list[dict[str, Any]]:
-    deadline = time.time() + timeout
-    descendants: list[dict[str, Any]] = []
-    while time.time() < deadline:
-        descendants = _descendants_of(live_client.jobs(), parent_job_id)
-        if descendants and all(job["status"] in TERMINAL_STATUSES for job in descendants):
-            return descendants
-        time.sleep(DEFAULT_POLL_INTERVAL * 2)
-    return descendants
-
-
 @pytest.fixture(scope="module")
-def guarded_company_child(analyzed_company, live_client: LiveClient) -> dict[str, Any]:
-    descendants = _poll_descendants_until_done(live_client, analyzed_company["job_id"])
-    completed = [job for job in descendants if job.get("status") == "completed" and job.get("name")]
-    diagnostics: list[str] = []
+def guarded_contract_analysis(live_client: LiveClient) -> dict[str, Any]:
+    job = live_client.submit_and_wait(GUARDED_PREDICATE_ADDRESS, timeout=DEFAULT_SINGLE_TIMEOUT * 2)
+    if job.get("status") != "completed":
+        pytest.fail(f"Guarded contract analysis did not complete: {job.get('status')} {job.get('error')}")
 
-    for job in completed:
-        artifact = live_client.artifact(job["name"], "predicate_trees")
-        if not isinstance(artifact, dict):
-            diagnostics.append(f"{job.get('name')} {job.get('address')}: missing predicate_trees")
-            continue
-        trees = artifact.get("trees")
-        if not isinstance(trees, dict) or not trees:
-            diagnostics.append(f"{job.get('name')} {job.get('address')}: no guarded trees")
-            continue
-        leaves = _leaves_from_artifact(artifact)
-        if any(leaf.get("authority_role") in AUTHORITY_LEAF_ROLES for leaf in leaves):
-            return {"job": job, "predicate_trees": artifact, "leaves": leaves}
-        diagnostics.append(f"{job.get('name')} {job.get('address')}: no authority leaves")
+    artifact = live_client.artifact(job["name"], "predicate_trees")
+    if not isinstance(artifact, dict):
+        pytest.fail(f"{job.get('name')} {job.get('address')}: missing predicate_trees")
+    trees = artifact.get("trees")
+    if not isinstance(trees, dict) or not trees:
+        pytest.fail(f"{job.get('name')} {job.get('address')}: no guarded trees")
+    leaves = _leaves_from_artifact(artifact)
+    if any(leaf.get("authority_role") in AUTHORITY_LEAF_ROLES for leaf in leaves):
+        return {"job": job, "predicate_trees": artifact, "leaves": leaves}
 
     pytest.fail(
-        "analyzed_company produced no completed guarded descendant with semantic predicate trees; "
-        f"checked={len(completed)} descendants={len(descendants)} diagnostics={diagnostics[:10]}"
+        "guarded contract produced predicate_trees but no authority leaves; "
+        f"name={job.get('name')} address={job.get('address')} leaves={leaves[:10]}"
     )
 
 
-def test_predicate_trees_artifact_exists(guarded_company_child):
-    artifact = guarded_company_child["predicate_trees"]
+def test_predicate_trees_artifact_exists(guarded_contract_analysis):
+    artifact = guarded_contract_analysis["predicate_trees"]
     trees = artifact.get("trees")
 
     assert artifact.get("schema_version") == "semantic", (
@@ -131,8 +94,8 @@ def test_predicate_trees_artifact_exists(guarded_company_child):
     assert isinstance(trees, dict) and trees, "guarded child predicate_trees.trees must be non-empty"
 
 
-def test_predicate_trees_has_typed_leaves(guarded_company_child):
-    leaves = guarded_company_child["leaves"]
+def test_predicate_trees_has_typed_leaves(guarded_contract_analysis):
+    leaves = guarded_contract_analysis["leaves"]
     assert leaves, "guarded child predicate_trees must contain at least one leaf"
 
     saw_typed_leaf = False
@@ -154,8 +117,8 @@ def test_predicate_trees_has_typed_leaves(guarded_company_child):
     assert saw_authority_leaf, f"No authority leaf with role in {sorted(AUTHORITY_LEAF_ROLES)} found"
 
 
-def test_capability_resolution_returns_non_empty(guarded_company_child, live_client: LiveClient):
-    job = guarded_company_child["job"]
+def test_capability_resolution_returns_non_empty(guarded_contract_analysis, live_client: LiveClient):
+    job = guarded_contract_analysis["job"]
     addr = (job.get("address") or "").lower()
     assert addr.startswith("0x"), f"guarded child address missing or malformed: {addr!r}"
 
@@ -179,8 +142,8 @@ def test_capability_resolution_returns_non_empty(guarded_company_child, live_cli
         )
 
 
-def test_effective_function_has_capability_expr(guarded_company_child, live_client: LiveClient):
-    job = guarded_company_child["job"]
+def test_effective_function_has_capability_expr(guarded_contract_analysis, live_client: LiveClient):
+    job = guarded_contract_analysis["job"]
     detail = live_client.analysis_detail(job["name"])
     functions = (detail.get("effective_permissions") or {}).get("functions") or []
 
@@ -191,10 +154,10 @@ def test_effective_function_has_capability_expr(guarded_company_child, live_clie
 
 
 def test_effective_function_principal_consistent_with_capability_expr(
-    guarded_company_child,
+    guarded_contract_analysis,
     live_client: LiveClient,
 ):
-    job = guarded_company_child["job"]
+    job = guarded_contract_analysis["job"]
     detail = live_client.analysis_detail(job["name"])
     functions = (detail.get("effective_permissions") or {}).get("functions") or []
 
@@ -238,8 +201,8 @@ def test_effective_function_principal_consistent_with_capability_expr(
     assert checked_any, "No effective function row had an asserted-kind capability_expr"
 
 
-def test_no_retired_artifacts_present(guarded_company_child, live_client: LiveClient):
-    job = guarded_company_child["job"]
+def test_no_retired_artifacts_present(guarded_contract_analysis, live_client: LiveClient):
+    job = guarded_contract_analysis["job"]
     for retired_name in ("permission_graph", "semantic_guards"):
         artifact = live_client.artifact(job["name"], retired_name)
         if artifact is None:
