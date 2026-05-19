@@ -640,21 +640,54 @@ class TestStructuralOrphanMigration:
     protocol. Cross-protocol collisions skip + log."""
 
     def _seed_high_owner_with_edge(
-        self, db_session, *, parent_addr, child_addr, protocol_id, relationship, chain="ethereum"
+        self,
+        db_session,
+        *,
+        parent_addr,
+        child_addr,
+        protocol_id,
+        relationship,
+        chain="ethereum",
+        structurally_linked=True,
     ):
         """Helper: create a HIGH-owned Contract row and a dep edge from it
-        to ``child_addr`` with the given structural relationship type."""
+        to ``child_addr`` with the given structural relationship type.
+
+        When ``structurally_linked`` is True (the default) the parent's
+        proxy/beacon fields are set so the corrected migration SELECT
+        recognises the structural link. Setting it False seeds the
+        Lido-stETH-style false-positive shape: the edge exists with a
+        structural ``relationship_type`` but neither side's recorded
+        proxy/beacon fields link the two contracts."""
         from db.models import Contract, ContractDependency
 
-        parent = Contract(
-            address=parent_addr,
-            chain=chain,
-            protocol_id=protocol_id,
-            contract_name="ParentImpl",
-            discovery_sources=["deployer_expansion"],
-        )
+        parent_kwargs: dict = {
+            "address": parent_addr,
+            "chain": chain,
+            "protocol_id": protocol_id,
+            "contract_name": "ParentImpl",
+            "discovery_sources": ["deployer_expansion"],
+        }
+        if structurally_linked:
+            if relationship == "implementation":
+                parent_kwargs["is_proxy"] = True
+                parent_kwargs["implementation"] = child_addr
+            elif relationship == "beacon":
+                parent_kwargs["is_proxy"] = True
+                parent_kwargs["beacon"] = child_addr
+
+        parent = Contract(**parent_kwargs)
         db_session.add(parent)
         db_session.flush()
+
+        if structurally_linked and relationship == "proxy":
+            # ``proxy`` edge: the dep itself is the proxy whose impl is
+            # the parent. Mirror that on the (pre-existing) child row.
+            child_row = db_session.query(Contract).filter_by(address=child_addr).one_or_none()
+            if child_row is not None:
+                child_row.is_proxy = True
+                child_row.implementation = parent_addr
+
         db_session.add(
             ContractDependency(
                 contract_id=parent.id,
@@ -747,6 +780,56 @@ class TestStructuralOrphanMigration:
         assert child_ids_in_result == set(), (
             "non-structural edge surfaced as an adoption candidate — "
             "the WHERE clause's relationship_type filter is wrong"
+        )
+
+    def test_migration_skips_falsely_classified_dep(self, db_session, seed_protocol, migration_module):
+        """Regression: a HIGH parent calling a third-party proxy (e.g.
+        ether.fi → Lido stETH) produces a ``relationship_type='proxy'``
+        edge in ``contract_dependencies`` because the dep IS classified
+        as a proxy in its own right. The earlier migration version
+        adopted these by trusting ``relationship_type`` alone, which
+        re-opened the WETH/stETH leak. The corrected SELECT requires
+        the parent.implementation / parent.beacon / dep.implementation
+        fields to actually link the two contracts."""
+        from db.models import Contract
+
+        parent_addr = _addr(0xAA05)
+        child_addr = _addr(0xBB05)  # the falsely-claimed "proxy" of parent
+        # Child IS a proxy, but its impl points to some THIRD address
+        # (not parent_addr) — the shape of Lido stETH in the leak case.
+        third_impl = _addr(0xCC05)
+        db_session.add(
+            Contract(
+                address=child_addr,
+                chain="ethereum",
+                protocol_id=None,
+                discovery_sources=["dapp_crawl"],
+                is_proxy=True,
+                implementation=third_impl,
+            )
+        )
+        db_session.commit()
+        self._seed_high_owner_with_edge(
+            db_session,
+            parent_addr=parent_addr,
+            child_addr=child_addr,
+            protocol_id=seed_protocol,
+            relationship="proxy",
+            structurally_linked=False,  # parent.implementation != child_addr; child.implementation != parent_addr
+        )
+
+        rows = db_session.execute(migration_module._SELECT_STRUCTURAL_ORPHANS).fetchall()
+        # Neither this orphan nor any other seeded in this test should
+        # surface for adoption — the structural-link check must fail.
+        offending = [
+            r[0]
+            for r in rows
+            if db_session.query(Contract).get(r[0]) is not None
+            and db_session.query(Contract).get(r[0]).address == child_addr
+        ]
+        assert offending == [], (
+            "third-party proxy was surfaced as a structural-orphan candidate by relationship_type "
+            "alone — this is the Lido stETH leak the corrected SELECT must prevent"
         )
 
     def test_migration_skips_cross_protocol_collisions(self, db_session, seed_protocol, migration_module):

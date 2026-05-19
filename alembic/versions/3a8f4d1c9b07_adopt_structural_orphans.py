@@ -38,6 +38,17 @@ logger = logging.getLogger("alembic.runtime.migration")
 
 _SELECT_STRUCTURAL_ORPHANS = sa.text(
     """
+    -- ``cd.relationship_type`` is the classifier's verdict on *what kind
+    -- of contract the dep IS*, not the structural relationship between
+    -- parent and dep. A HIGH-owned ether.fi contract that CALLs Lido
+    -- stETH has ``relationship_type='proxy'`` on that edge because Lido
+    -- stETH happens to be a proxy contract — that doesn't make stETH
+    -- ether.fi's proxy. To assert structural same-protocol identity, the
+    -- proxy/impl/beacon fields recorded on ``Contract`` (set when the
+    -- classifier resolved the relationship) must actually link the two:
+    --   * impl edge → parent.implementation == orphan.address
+    --   * proxy edge → orphan.implementation == parent.address
+    --   * beacon edge → parent.beacon == orphan.address
     SELECT
         orphan.id              AS orphan_id,
         array_agg(DISTINCT parent.protocol_id) AS parent_protocols
@@ -48,7 +59,14 @@ _SELECT_STRUCTURAL_ORPHANS = sa.text(
       ON parent.id = cd.contract_id
     WHERE orphan.protocol_id IS NULL
       AND parent.protocol_id IS NOT NULL
-      AND cd.relationship_type IN ('implementation', 'proxy', 'beacon')
+      AND (
+        (cd.relationship_type = 'implementation'
+            AND lower(parent.implementation) = orphan.address)
+        OR (cd.relationship_type = 'proxy'
+            AND lower(orphan.implementation) = parent.address)
+        OR (cd.relationship_type = 'beacon'
+            AND lower(parent.beacon) = orphan.address)
+      )
     GROUP BY orphan.id
     """
 )
