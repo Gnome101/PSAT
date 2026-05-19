@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
@@ -30,6 +31,7 @@ from .constants import (
     STANDARD_EVENTS,
     STANDARD_SIGNATURES,
 )
+from .semantic_facts import classified_protocols
 from .shared import (
     _all_modifiers,
     _all_state_variables,
@@ -44,6 +46,8 @@ from .shared import (
 )
 
 _SENSITIVE_SINK_KINDS = frozenset({"state_write", "external_call", "delegatecall", "contract_creation", "selfdestruct"})
+_CAMEL_BOUNDARY_RE = re.compile(r"(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])")
+_TOKEN_SPLIT_RE = re.compile(r"[^A-Za-z0-9]+")
 
 
 def _tree_has_caller_or_delegated_authority(tree: dict | None) -> bool:
@@ -405,15 +409,30 @@ def _function_name_lower(function: Any) -> str:
     return str(getattr(function, "name", "") or getattr(function, "full_name", "") or "").lower()
 
 
-def _bridge_context_text(function: Any, graph_entry: dict | None = None) -> str:
-    parts: list[str] = [
+def _compact_identifier(value: object) -> str:
+    return re.sub(r"[^a-z0-9]", "", str(value or "").lower())
+
+
+def _identifier_tokens(value: object) -> set[str]:
+    raw_parts = [part for part in _TOKEN_SPLIT_RE.split(str(value or "")) if part]
+    out: set[str] = set()
+    for part in raw_parts:
+        for token in _CAMEL_BOUNDARY_RE.sub(" ", part).split():
+            normalized = token.lower()
+            if normalized:
+                out.add(normalized)
+    return out
+
+
+def _bridge_context_identifiers(function: Any, graph_entry: dict | None = None) -> list[str]:
+    identifiers: list[str] = [
         str(getattr(function, "name", "") or ""),
         str(getattr(function, "full_name", "") or ""),
         str(getattr(getattr(function, "contract", None), "name", "") or ""),
     ]
     for param in getattr(function, "parameters", []) or []:
-        parts.append(str(getattr(param, "name", "") or ""))
-        parts.append(str(getattr(param, "type", "") or ""))
+        identifiers.append(str(getattr(param, "name", "") or ""))
+        identifiers.append(str(getattr(param, "type", "") or ""))
     for attr in ("all_state_variables_read", "all_state_variables_written"):
         getter = getattr(function, attr, None)
         if not callable(getter):
@@ -422,15 +441,81 @@ def _bridge_context_text(function: Any, graph_entry: dict | None = None) -> str:
         if not isinstance(values, (list, tuple, set)):
             continue
         for variable in values:
-            parts.append(str(getattr(variable, "name", "") or ""))
-            parts.append(str(getattr(variable, "type", "") or ""))
+            identifiers.append(str(getattr(variable, "name", "") or ""))
+            identifiers.append(str(getattr(variable, "type", "") or ""))
     if isinstance(graph_entry, dict):
         for sink in graph_entry.get("sinks") or []:
             if not isinstance(sink, dict):
                 continue
-            parts.append(str(sink.get("target") or ""))
-            parts.append(str(sink.get("selector") or ""))
-    return " ".join(parts).replace("_", "").lower()
+            identifiers.append(str(sink.get("target") or ""))
+            identifiers.append(str(sink.get("selector") or ""))
+    return identifiers
+
+
+def _bridge_context_text(function: Any, graph_entry: dict | None = None) -> str:
+    return " ".join(_bridge_context_identifiers(function, graph_entry)).replace("_", "").lower()
+
+
+def _bridge_context_tokens(function: Any, graph_entry: dict | None = None) -> set[str]:
+    tokens: set[str] = set()
+    for identifier in _bridge_context_identifiers(function, graph_entry):
+        tokens.update(_identifier_tokens(identifier))
+    return tokens
+
+
+def _has_identifier_token(function: Any, graph_entry: dict | None, token: str) -> bool:
+    return token in _bridge_context_tokens(function, graph_entry)
+
+
+def _has_layerzero_type_identifier(function: Any, graph_entry: dict | None = None) -> bool:
+    long_markers = (
+        "ilayerzeroendpoint",
+        "layerzeroendpoint",
+        "endpointv2",
+        "oappcore",
+        "oappauth",
+        "oftcore",
+        "oftadapter",
+        "messagingfee",
+        "sendparam",
+        "enforcedoptionparam",
+    )
+    for identifier in _bridge_context_identifiers(function, graph_entry):
+        compact = _compact_identifier(identifier)
+        if any(marker in compact for marker in long_markers):
+            return True
+        tokens = _identifier_tokens(identifier)
+        if tokens.intersection({"oapp", "oft", "onft", "layerzero"}):
+            return True
+    return False
+
+
+def _is_layerzero_receive_or_compose(function: Any) -> bool:
+    return _compact_identifier(getattr(function, "name", "") or getattr(function, "full_name", "")) in {
+        "lzreceive",
+        "_lzreceive",
+        "lzcompose",
+    }
+
+
+def _is_layerzero_peer_function(function: Any) -> bool:
+    signature = str(getattr(function, "full_name", "") or getattr(function, "name", "") or "")
+    return signature in {
+        "setPeer(uint32,bytes32)",
+        "peers(uint32)",
+        "setTrustedRemote(uint16,bytes)",
+        "trustedRemoteLookup(uint16)",
+    }
+
+
+def _has_layerzero_security_config_shape(function: Any, graph_entry: dict | None = None) -> bool:
+    tokens = _bridge_context_tokens(function, graph_entry)
+    compact_params = {
+        _compact_identifier(getattr(param, "name", "") or "") for param in getattr(function, "parameters", [])
+    }
+    return bool(tokens.intersection({"dvn", "uln", "messagelib", "sendlibrary", "receivelibrary"})) and (
+        "eid" in tokens or "dsteid" in compact_params or "srceid" in compact_params
+    )
 
 
 def _has_cross_chain_parameter(function: Any) -> bool:
@@ -463,22 +548,22 @@ def _bridge_protocols_for_function(function: Any, graph_entry: dict | None = Non
     text = _bridge_context_text(function, graph_entry)
     protocols: set[str] = set()
 
-    if any(
-        marker in text
-        for marker in (
-            "layerzero",
-            "lzreceive",
-            "lzcompose",
-            "lzendpoint",
-            "trustedremote",
-            "dsteid",
-            "srceid",
-            "dstchainid",
-            "srcchainid",
-            "sendfrom",
-            "oapp",
-            "oft",
-            "onft",
+    if (
+        _is_layerzero_receive_or_compose(function)
+        or _is_layerzero_peer_function(function)
+        or _has_layerzero_type_identifier(function, graph_entry)
+        or _has_layerzero_security_config_shape(function, graph_entry)
+        or (
+            _has_layerzero_type_identifier(function, graph_entry)
+            and any(
+                _compact_identifier(target)
+                in {"endpointsend", "endpointquote", "endpointsetdelegate", "endpointsendcompose"}
+                for target in _external_call_targets(graph_entry)
+            )
+        )
+        or any(
+            _compact_identifier(target) in {"oftsend", "oftquotesend", "onftsend"}
+            for target in _external_call_targets(graph_entry)
         )
     ):
         protocols.add("LayerZero")
@@ -490,7 +575,15 @@ def _bridge_protocols_for_function(function: Any, graph_entry: dict | None = Non
         protocols.add("Hyperlane")
     if any(marker in text for marker in ("axelar", "gasservice", "expressreceive", "commandid")):
         protocols.add("Axelar")
-    if any(marker in text for marker in ("connext", "xcall", "executeorigin", "transferid")):
+    connext_targets = {_compact_identifier(target) for target in _external_call_targets(graph_entry)}
+    function_name = _function_name_lower(function).replace("_", "")
+    if (
+        "connext" in _bridge_context_tokens(function, graph_entry)
+        or any(marker in text for marker in ("iconnext", "ixreceiver", "xreceive"))
+        or function_name in {"xreceive", "xcall"}
+        or any(target.endswith("xcall") or target == "connextxcall" for target in connext_targets)
+        or ("transferid" in text and any(marker in text for marker in ("xreceive", "xcall", "connext")))
+    ):
         protocols.add("Connext")
 
     return protocols
@@ -512,6 +605,8 @@ def _has_bridge_semantics(function: Any, graph_entry: dict | None = None) -> boo
 
 
 def _is_bridge_receive_function(function: Any) -> bool:
+    if _is_layerzero_receive_or_compose(function):
+        return True
     if not _has_cross_chain_parameter(function):
         return False
     name = _function_name_lower(function).replace("_", "")
@@ -553,6 +648,7 @@ def _is_bridge_config_update(function: Any, graph_entry: dict | None = None) -> 
     return writes_state and (
         name.startswith(("set", "force", "configure", "update"))
         or any(marker in text for marker in _BRIDGE_CONFIG_MARKERS)
+        or _is_layerzero_peer_function(function)
     )
 
 
@@ -587,12 +683,25 @@ def _bridge_labels(function: Any, graph_entry: dict | None = None, labels: set[s
         out.add("bridge_config_update")
     if is_security_config:
         out.add("bridge_security_config")
-    if existing.intersection({"asset_pull", "asset_send", "mint", "burn"}) or any(
-        marker in name
-        for marker in ("bridge", "sendfrom", "sendtoken", "transferremote", "oft", "onft", "swapout", "swapin")
+    transfer_tokens = _identifier_tokens(name)
+    transfer_name = _compact_identifier(name) in {"sendfrom", "sendtoken", "transferremote"}
+    has_asset_effect = existing.intersection({"asset_pull", "asset_send", "mint", "burn"})
+    if (has_asset_effect and _has_bridge_semantics(function, graph_entry)) or (
+        (transfer_name or bool(transfer_tokens.intersection({"bridge", "oft", "onft", "swapout", "swapin"})))
+        and _has_bridge_semantics(function, graph_entry)
     ):
         out.add("bridge_transfer")
     return out
+
+
+def _external_call_targets(graph_entry: dict | None) -> list[str]:
+    if not isinstance(graph_entry, dict):
+        return []
+    return [
+        str(sink.get("target") or "")
+        for sink in graph_entry.get("sinks") or []
+        if isinstance(sink, dict) and sink.get("kind") == "external_call"
+    ]
 
 
 def _callee_signature_from_ir(call_ir: Any) -> str | None:
@@ -1120,6 +1229,7 @@ def _detect_contract_classification(
     contract,
     project_dir: Path,
     effects: Mapping[str, Any] | None = None,
+    semantic_facts: Mapping[str, Any] | None = None,
 ) -> ContractClassification:
     standards = set()
     erc_detector = getattr(contract, "ercs", None)
@@ -1164,6 +1274,10 @@ def _detect_contract_classification(
             protocols = _bridge_protocols_for_function(function)
             standards.add("Bridge")
             standards.update(protocols)
+    semantic_protocols = classified_protocols(semantic_facts)
+    if semantic_protocols:
+        standards.add("Bridge")
+        standards.update(semantic_protocols)
 
     standards_list = sorted(standards)
     return {
@@ -1386,6 +1500,7 @@ def _build_bridge_context(
     classification: ContractClassification,
     semantic_control: SemanticControlAnalysis,
     upgradeability: UpgradeabilityAnalysis,
+    semantic_facts: Mapping[str, Any] | None = None,
 ) -> BridgeContext:
     semantic_functions = semantic_control.get("semantic_functions", [])
     bridge_functions = [
@@ -1398,8 +1513,9 @@ def _build_bridge_context(
     ]
 
     standards = set(classification.get("standards") or [])
+    standards.update(classified_protocols(semantic_facts))
     protocols = {standard for standard in standards if standard in _BRIDGE_PROTOCOL_STANDARDS}
-    is_bridge = bool(bridge_functions)
+    is_bridge = bool(bridge_functions or protocols)
     has_security_config = any(
         "bridge_security_config" in (function.get("effect_labels") or []) for function in bridge_functions
     )

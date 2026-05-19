@@ -115,6 +115,16 @@ def test_collect_contract_analysis_with_artifacts_returns_semantic_artifacts(tmp
     assert effects is not None
     assert effects.get("schema_version") == "semantic"
     assert "functions" in effects or "error" in effects
+    assert analysis["semantic_facts"]["schema_version"] == "semantic_facts.v1"
+    assert "protocol_modules" in analysis["semantic_facts"]
+    assert {
+        "layerzero",
+        "ccip",
+        "hyperlane",
+        "wormhole",
+        "axelar",
+        "connext",
+    }.issubset(set(analysis["semantic_facts"]["protocol_modules"]))
 
 
 def test_collect_contract_analysis_uses_semantic_factory_without_upgrade_timelock_name_guessing(tmp_path):
@@ -410,6 +420,64 @@ def test_layerzero_bridge_semantics_surface_as_multichain_effects(tmp_path):
     assert {"cross_chain_message", "bridge_receive"}.issubset(set(receive["effect_labels"]))
 
 
+def test_layerzero_name_only_functions_do_not_classify_as_bridge(tmp_path):
+    project_dir = _write_project(
+        tmp_path,
+        "NameOnlyLayerZero",
+        """
+        pragma solidity ^0.8.19;
+
+        contract NameOnlyLayerZero {
+            uint256 public count;
+
+            function layerZeroSend() external {
+                count += 1;
+            }
+
+            function lzSend() external {
+                count += 1;
+            }
+        }
+        """,
+        slither_output={"results": {"detectors": []}},
+    )
+
+    analysis = collect_contract_analysis(project_dir)
+
+    assert "Bridge" not in set(analysis["contract_classification"]["standards"])
+    assert "LayerZero" not in set(analysis["contract_classification"]["standards"])
+    assert analysis["bridge_context"]["is_bridge"] is False
+
+
+def test_oft_substring_inside_tvl_does_not_classify_as_layerzero(tmp_path):
+    project_dir = _write_project(
+        tmp_path,
+        "RedemptionManager",
+        """
+        pragma solidity ^0.8.19;
+
+        contract RedemptionManager {
+            uint16 public lowWatermarkInBpsOfTvl;
+
+            function setLowWatermarkInBpsOfTvl(uint16 value, address token) external {
+                require(token != address(0), "bad token");
+                lowWatermarkInBpsOfTvl = value;
+            }
+        }
+        """,
+        slither_output={"results": {"detectors": []}},
+    )
+
+    analysis = collect_contract_analysis(project_dir)
+    setter = _semantic_function(analysis, "setLowWatermarkInBpsOfTvl(uint16,address)")
+
+    assert "bridge_config_update" not in set(setter["effect_labels"])
+    assert "bridge_transfer" not in set(setter["effect_labels"])
+    assert "Bridge" not in set(analysis["contract_classification"]["standards"])
+    assert "LayerZero" not in set(analysis["contract_classification"]["standards"])
+    assert analysis["bridge_context"]["is_bridge"] is False
+
+
 def test_bridge_context_includes_upgradeability_for_bridge_logic(tmp_path):
     project_dir = _write_project(
         tmp_path,
@@ -580,9 +648,296 @@ def test_hyperlane_ism_security_config_surfaces_as_bridge_security(tmp_path):
     analysis = collect_contract_analysis(project_dir)
     set_ism = _semantic_function(analysis, "setInterchainSecurityModule(IInterchainSecurityModule)")
 
-    assert {"Bridge", "Hyperlane"}.issubset(set(analysis["contract_classification"]["standards"]))
+    standards = set(analysis["contract_classification"]["standards"])
+    assert {"Bridge", "Hyperlane"}.issubset(standards)
+    assert "Connext" not in standards
     assert {"bridge_config_update", "bridge_security_config"}.issubset(set(set_ism["effect_labels"]))
     assert set_ism["action_summary"] == "Updates cross-chain bridge security or verification configuration."
+
+
+@pytest.mark.parametrize(
+    ("contract_name", "protocol_key", "protocol", "source_code"),
+    [
+        (
+            "CcipBridge",
+            "ccip",
+            "CCIP",
+            """
+            pragma solidity ^0.8.19;
+
+            library Client {
+                struct EVM2AnyMessage {
+                    bytes receiver;
+                    bytes data;
+                    address feeToken;
+                    uint256 extraArgs;
+                }
+
+                struct Any2EVMMessage {
+                    bytes32 messageId;
+                    uint64 sourceChainSelector;
+                    bytes sender;
+                    bytes data;
+                }
+            }
+
+            interface IRouterClient {
+                function ccipSend(
+                    uint64 destinationChainSelector,
+                    Client.EVM2AnyMessage calldata message
+                ) external payable returns (bytes32);
+            }
+
+            contract CcipBridge {
+                IRouterClient public router;
+                mapping(uint64 => bool) public allowedSourceChains;
+                mapping(bytes32 => bool) public received;
+
+                constructor(IRouterClient router_) {
+                    router = router_;
+                }
+
+                function allowlistSourceChain(uint64 sourceChainSelector, bool allowed) external {
+                    allowedSourceChains[sourceChainSelector] = allowed;
+                }
+
+                function sendMessage(
+                    uint64 destinationChainSelector,
+                    bytes calldata receiver,
+                    bytes calldata data
+                ) external payable returns (bytes32) {
+                    Client.EVM2AnyMessage memory message = Client.EVM2AnyMessage({
+                        receiver: receiver,
+                        data: data,
+                        feeToken: address(0),
+                        extraArgs: 0
+                    });
+                    return router.ccipSend{value: msg.value}(destinationChainSelector, message);
+                }
+
+                function ccipReceive(Client.Any2EVMMessage calldata message) external {
+                    require(msg.sender == address(router), "bad router");
+                    received[message.messageId] = true;
+                }
+            }
+            """,
+        ),
+        (
+            "WormholeBridge",
+            "wormhole",
+            "Wormhole",
+            """
+            pragma solidity ^0.8.19;
+
+            interface IWormholeRelayer {
+                function sendPayloadToEvm(
+                    uint16 targetChain,
+                    address targetAddress,
+                    bytes calldata payload,
+                    uint256 receiverValue,
+                    uint256 gasLimit
+                ) external payable returns (uint64);
+            }
+
+            contract WormholeBridge {
+                IWormholeRelayer public relayer;
+                mapping(uint16 => bytes32) public registeredSenders;
+                bytes32 public lastDeliveryHash;
+
+                constructor(IWormholeRelayer relayer_) {
+                    relayer = relayer_;
+                }
+
+                function setRegisteredSender(uint16 chainId, bytes32 sender) external {
+                    registeredSenders[chainId] = sender;
+                }
+
+                function bridge(uint16 targetChain, address targetAddress, bytes calldata payload) external payable {
+                    relayer.sendPayloadToEvm{value: msg.value}(targetChain, targetAddress, payload, 0, 200000);
+                }
+
+                function receiveWormholeMessages(
+                    bytes memory,
+                    bytes[] memory,
+                    bytes32,
+                    uint16,
+                    bytes32 deliveryHash
+                ) public payable {
+                    lastDeliveryHash = deliveryHash;
+                }
+            }
+            """,
+        ),
+        (
+            "AxelarBridge",
+            "axelar",
+            "Axelar",
+            """
+            pragma solidity ^0.8.19;
+
+            interface IAxelarGateway {
+                function validateContractCall(
+                    bytes32 commandId,
+                    string calldata sourceChain,
+                    string calldata sourceAddress,
+                    bytes32 payloadHash
+                ) external returns (bool);
+
+                function callContract(
+                    string calldata destinationChain,
+                    string calldata destinationAddress,
+                    bytes calldata payload
+                ) external;
+            }
+
+            interface IAxelarGasService {
+                function payNativeGasForContractCall(
+                    address sender,
+                    string calldata destinationChain,
+                    string calldata destinationAddress,
+                    bytes calldata payload,
+                    address refundAddress
+                ) external payable;
+            }
+
+            contract AxelarBridge {
+                IAxelarGateway public gateway;
+                IAxelarGasService public gasService;
+                mapping(bytes32 => bytes32) public trustedSources;
+                bytes32 public lastCommandId;
+
+                constructor(IAxelarGateway gateway_, IAxelarGasService gasService_) {
+                    gateway = gateway_;
+                    gasService = gasService_;
+                }
+
+                function setTrustedAddress(string calldata sourceChain, string calldata sourceAddress) external {
+                    trustedSources[keccak256(bytes(sourceChain))] = keccak256(bytes(sourceAddress));
+                }
+
+                function bridge(
+                    string calldata destinationChain,
+                    string calldata destinationAddress,
+                    bytes calldata payload
+                ) external payable {
+                    gasService.payNativeGasForContractCall{value: msg.value}(
+                        address(this),
+                        destinationChain,
+                        destinationAddress,
+                        payload,
+                        msg.sender
+                    );
+                    gateway.callContract(destinationChain, destinationAddress, payload);
+                }
+
+                function execute(
+                    bytes32 commandId,
+                    string calldata sourceChain,
+                    string calldata sourceAddress,
+                    bytes calldata payload
+                ) external {
+                    require(
+                        gateway.validateContractCall(commandId, sourceChain, sourceAddress, keccak256(payload)),
+                        "bad command"
+                    );
+                    lastCommandId = commandId;
+                }
+            }
+            """,
+        ),
+        (
+            "ConnextBridge",
+            "connext",
+            "Connext",
+            """
+            pragma solidity ^0.8.19;
+
+            interface IConnext {
+                function xcall(
+                    uint32 destinationDomain,
+                    address to,
+                    address asset,
+                    address delegate,
+                    uint256 amount,
+                    uint256 slippage,
+                    bytes calldata callData
+                ) external payable returns (bytes32);
+            }
+
+            interface IXReceiver {
+                function xReceive(
+                    bytes32 transferId,
+                    uint256 amount,
+                    address asset,
+                    address originSender,
+                    uint32 originDomain,
+                    bytes calldata callData
+                ) external returns (bytes memory);
+            }
+
+            contract ConnextBridge is IXReceiver {
+                IConnext public connext;
+                mapping(uint32 => address) public remotes;
+                bytes32 public lastTransferId;
+
+                constructor(IConnext connext_) {
+                    connext = connext_;
+                }
+
+                function setDomain(uint32 destinationDomain, address remote) external {
+                    remotes[destinationDomain] = remote;
+                }
+
+                function bridge(
+                    uint32 destinationDomain,
+                    address asset,
+                    uint256 amount,
+                    bytes calldata callData
+                ) external payable returns (bytes32) {
+                    return connext.xcall{value: msg.value}(
+                        destinationDomain,
+                        remotes[destinationDomain],
+                        asset,
+                        msg.sender,
+                        amount,
+                        30,
+                        callData
+                    );
+                }
+
+                function xReceive(
+                    bytes32 transferId,
+                    uint256,
+                    address,
+                    address,
+                    uint32,
+                    bytes calldata
+                ) external returns (bytes memory) {
+                    lastTransferId = transferId;
+                    return "";
+                }
+            }
+            """,
+        ),
+    ],
+)
+def test_bridge_protocol_semantic_modules_classify_representative_apps(
+    tmp_path, contract_name, protocol_key, protocol, source_code
+):
+    project_dir = _write_project(
+        tmp_path,
+        contract_name,
+        source_code,
+        slither_output={"results": {"detectors": []}},
+    )
+
+    analysis = collect_contract_analysis(project_dir)
+    module = analysis["semantic_facts"]["protocol_modules"][protocol_key]
+
+    assert {"Bridge", protocol}.issubset(set(analysis["contract_classification"]["standards"]))
+    assert module["protocol"] == protocol
+    assert module["classification"] != "not_applicable"
+    assert module["claims"]
 
 
 def test_guardian_admin_contract_is_not_classified_as_wormhole_bridge(tmp_path):

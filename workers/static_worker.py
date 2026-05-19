@@ -1585,6 +1585,9 @@ class StaticWorker(BaseWorker):
             (project_dir / "predicate_trees.json").write_text(json.dumps(semantic_predicate_trees, indent=2) + "\n")
         if semantic_effects is not None:
             (project_dir / "effects.json").write_text(json.dumps(semantic_effects, indent=2) + "\n")
+        semantic_facts = analysis_data.get("semantic_facts") if isinstance(analysis_data, dict) else None
+        if semantic_facts is not None:
+            (project_dir / "semantic_facts.json").write_text(json.dumps(semantic_facts, indent=2) + "\n")
 
         store_artifact(session, job.id, "contract_analysis", data=analysis_data)
         if semantic_predicate_trees is not None:
@@ -1611,6 +1614,19 @@ class StaticWorker(BaseWorker):
                 )
                 logger.exception(
                     "Static stage: effects artifact store failed for job %s",
+                    job.id,
+                )
+        if semantic_facts is not None:
+            try:
+                store_artifact(session, job.id, "semantic_facts", data=semantic_facts)
+            except Exception as exc:
+                record_degraded(
+                    phase="semantic_facts_artifact_store",
+                    exc=exc,
+                    context={"address": address, "contract_name": contract_name, "job_id": str(job.id)},
+                )
+                logger.exception(
+                    "Static stage: semantic_facts artifact store failed for job %s",
                     job.id,
                 )
         self._write_analysis_tables(session, job, analysis_data)

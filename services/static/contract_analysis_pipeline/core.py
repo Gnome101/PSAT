@@ -21,6 +21,7 @@ from .predicate_artifacts import (
     build_predicate_artifacts_with_pause_info,
 )
 from .reentrancy_pause import PauseInfo
+from .semantic_facts import build_semantic_facts
 from .shared import _load_json, _select_subject_contract
 from .summaries import (
     _build_bridge_context,
@@ -143,6 +144,9 @@ def analyze_contract(project_dir: Path) -> Path:
         (project_dir / "predicate_trees.json").write_text(json.dumps(predicate_trees, indent=2) + "\n")
     if effects is not None:
         (project_dir / "effects.json").write_text(json.dumps(effects, indent=2) + "\n")
+    semantic_facts = analysis.get("semantic_facts")
+    if semantic_facts is not None:
+        (project_dir / "semantic_facts.json").write_text(json.dumps(semantic_facts, indent=2) + "\n")
 
     return output_path
 
@@ -222,8 +226,15 @@ def collect_contract_analysis_with_artifacts(
         logger.exception("semantic effects emit failed for %s", project_dir)
         effects_artifact = {"schema_version": "semantic", "error": str(exc)}
 
+    with _phase("semantic_facts", durations_ms):
+        semantic_facts = build_semantic_facts(subject_contract, effects_artifact)
     with _phase("classification", durations_ms):
-        classification = _detect_contract_classification(subject_contract, project_dir, effects_artifact)
+        classification = _detect_contract_classification(
+            subject_contract,
+            project_dir,
+            effects_artifact,
+            semantic_facts,
+        )
     with _phase("semantic_control", durations_ms):
         semantic_control = _build_semantic_control_summary(
             subject_contract,
@@ -242,7 +253,7 @@ def collect_contract_analysis_with_artifacts(
     with _phase("upgradeability", durations_ms):
         upgradeability = _detect_upgradeability(subject_contract, project_dir, effects_artifact)
     with _phase("bridge_context", durations_ms):
-        bridge_context = _build_bridge_context(classification, semantic_control, upgradeability)
+        bridge_context = _build_bridge_context(classification, semantic_control, upgradeability, semantic_facts)
     with _phase("pausability", durations_ms):
         pausability = _detect_pausability(subject_contract, project_dir, pause_info)
     with _phase("timelock", durations_ms):
@@ -280,6 +291,7 @@ def collect_contract_analysis_with_artifacts(
         },
         "summary": summary,
         "contract_classification": classification,
+        "semantic_facts": semantic_facts,
         "semantic_control": semantic_control,
         "upgradeability": upgradeability,
         "bridge_context": bridge_context,

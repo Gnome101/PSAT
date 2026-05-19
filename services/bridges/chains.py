@@ -100,10 +100,11 @@ def hyperlane_domain_entries() -> tuple[dict[str, int | str], ...]:
 def rpc_url_for_chain(chain: str | None, default_rpc_url: str | None = None) -> str | None:
     """Return a chain-specific RPC URL when the configured default supports it.
 
-    The existing deployment convention uses an Alchemy URL in ``ETH_RPC``.
-    When that is available we can derive sibling mainnet URLs; otherwise we
-    derive sibling mainnet URLs; otherwise known public RPC fallbacks are
-    used for chains that need them.
+    Resolution order:
+    1. explicit ``PSAT_RPC_<CHAIN>`` override;
+    2. ``ALCHEMY_API_KEY`` + known Alchemy network slug;
+    3. key extracted from an Alchemy-shaped ``ETH_RPC`` / ``default_rpc_url``;
+    4. public RPC fallback for local/dev chains that have one.
     """
     info = chain_info(chain)
     if info is None:
@@ -112,6 +113,11 @@ def rpc_url_for_chain(chain: str | None, default_rpc_url: str | None = None) -> 
     override_key = f"PSAT_RPC_{info.name.upper().replace('-', '_')}"
     if os.getenv(override_key):
         return os.getenv(override_key)
+
+    alchemy_key = os.getenv("ALCHEMY_API_KEY")
+    if alchemy_key and info.alchemy_slug:
+        return f"https://{info.alchemy_slug}.g.alchemy.com/v2/{alchemy_key}"
+
     if info.name == "ethereum":
         return configured
     if not configured or "/v2/" not in configured or not info.alchemy_slug:

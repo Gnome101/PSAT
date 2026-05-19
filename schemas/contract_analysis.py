@@ -261,6 +261,7 @@ class ContractAnalysis(TypedDict):
     analysis_status: AnalysisStatus
     summary: Summary
     contract_classification: ContractClassification
+    semantic_facts: NotRequired[dict]
     semantic_control: SemanticControlAnalysis
     upgradeability: UpgradeabilityAnalysis
     bridge_context: BridgeContext

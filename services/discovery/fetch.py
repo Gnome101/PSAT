@@ -72,6 +72,17 @@ def parse_sources(result: dict) -> dict[str, str]:
             sources[normalized] = content
         return sources
 
+    parsed = _parse_source_code(result.get("SourceCode", ""))
+    if parsed:
+        sources = {}
+        for filename, obj in parsed.items():
+            if isinstance(obj, dict) and isinstance(obj.get("content"), str):
+                sources[str(filename).lstrip("./")] = obj["content"]
+            elif isinstance(obj, str):
+                sources[str(filename).lstrip("./")] = obj
+        if sources:
+            return sources
+
     raw = result["SourceCode"]
     extension = ".vy" if is_vyper_result(result) else ".sol"
     return {f"src/{contract_name}{extension}": raw}
