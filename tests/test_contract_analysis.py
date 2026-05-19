@@ -115,8 +115,9 @@ def test_collect_contract_analysis_with_artifacts_returns_semantic_artifacts(tmp
     assert effects is not None
     assert effects.get("schema_version") == "semantic"
     assert "functions" in effects or "error" in effects
-    assert analysis["semantic_facts"]["schema_version"] == "semantic_facts.v1"
-    assert "protocol_modules" in analysis["semantic_facts"]
+    semantic_facts = analysis.get("semantic_facts") or {}
+    assert semantic_facts["schema_version"] == "semantic_facts.v1"
+    assert "protocol_modules" in semantic_facts
     assert {
         "layerzero",
         "ccip",
@@ -124,7 +125,7 @@ def test_collect_contract_analysis_with_artifacts_returns_semantic_artifacts(tmp
         "wormhole",
         "axelar",
         "connext",
-    }.issubset(set(analysis["semantic_facts"]["protocol_modules"]))
+    }.issubset(set(semantic_facts["protocol_modules"]))
 
 
 def test_collect_contract_analysis_uses_semantic_factory_without_upgrade_timelock_name_guessing(tmp_path):
@@ -932,7 +933,8 @@ def test_bridge_protocol_semantic_modules_classify_representative_apps(
     )
 
     analysis = collect_contract_analysis(project_dir)
-    module = analysis["semantic_facts"]["protocol_modules"][protocol_key]
+    semantic_facts = analysis.get("semantic_facts") or {}
+    module = semantic_facts["protocol_modules"][protocol_key]
 
     assert {"Bridge", protocol}.issubset(set(analysis["contract_classification"]["standards"]))
     assert module["protocol"] == protocol
