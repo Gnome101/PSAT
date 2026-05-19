@@ -398,17 +398,20 @@ class ResolutionWorker(BaseWorker):
         #   * proxy edge  → dep.implementation == parent.address
         #   * beacon edge → parent.beacon == dep.address
         #
-        # Defensive on attribute access — test fixtures stub the parent
-        # Contract row with ``SimpleNamespace`` that may not carry every
-        # column; treat any access failure as "no structural propagation"
-        # which is the safe default.
+        # Best-effort structural-propagation lookup: a failure here
+        # falls back to "no propagation" (the safe default) rather than
+        # blocking discovery. Transient DB errors are logged + swallowed
+        # so the resolution stage still completes.
         parent_owns_high = False
         structural_rel_by_addr: dict[str, str] = {}
         try:
             parent_contract = session.execute(
                 select(Contract).where(Contract.job_id == job.id).limit(1)
             ).scalar_one_or_none()
-        except Exception:  # noqa: BLE001 — test-fixture session mocks raise here
+        except Exception as exc:
+            logger.debug(
+                "Job %s: structural-propagation parent lookup failed: %s", job.id, exc
+            )
             parent_contract = None
         if parent_contract is not None:
             parent_sources = getattr(parent_contract, "discovery_sources", None)
@@ -424,7 +427,12 @@ class ResolutionWorker(BaseWorker):
                             select(ContractDependency).where(ContractDependency.contract_id == parent_id)
                         ).scalars()
                     )
-                except Exception:  # noqa: BLE001 — same defensive treatment
+                except Exception as exc:
+                    logger.debug(
+                        "Job %s: structural-propagation dep-rows lookup failed: %s",
+                        job.id,
+                        exc,
+                    )
                     dep_rows = []
                 # For proxy-direction edges we need to verify the dep's
                 # Contract.implementation back-links to the parent.
@@ -440,7 +448,12 @@ class ResolutionWorker(BaseWorker):
                         ).scalars()
                         for dc in dep_contract_rows:
                             dep_impl_by_addr[dc.address.lower()] = (dc.implementation or "").lower() or None
-                    except Exception:  # noqa: BLE001
+                    except Exception as exc:
+                        logger.debug(
+                            "Job %s: structural-propagation dep-contract back-link lookup failed: %s",
+                            job.id,
+                            exc,
+                        )
                         dep_impl_by_addr = {}
 
                 for row in dep_rows:
