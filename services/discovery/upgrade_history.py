@@ -637,7 +637,16 @@ def backfill_historical_impl_contracts(
     if not impl_addrs:
         return
 
-    owns = asserts_ownership(parent_proxy_sources)
+    # Historical impls are structural same-protocol components of the
+    # parent proxy. Route through the unified gate so this path uses
+    # the same logic as the resolution / static-worker cascades: direct
+    # evidence (parent has a HIGH source) OR structural evidence (the
+    # relationship to the parent is ``implementation``). The two
+    # branches collapse into a single ``asserts_ownership`` call when
+    # the structural relationship is fixed and ``parent_owns`` carries
+    # the parent's direct-evidence state.
+    parent_owns = asserts_ownership(parent_proxy_sources)
+    owns = asserts_ownership(None, parent_owns=parent_owns, parent_relationship="implementation")
     owning_protocol_id = protocol_id if owns else None
 
     # Match the natural (address, chain) uniqueness grain. Cross-chain

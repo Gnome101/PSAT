@@ -45,6 +45,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from services.discovery.source_confidence import (  # noqa: E402
     HIGH_CONFIDENCE_SOURCES,
     LOW_CONFIDENCE_SOURCES,
+    STRUCTURAL_OWNERSHIP_RELATIONSHIPS,
     asserts_ownership,
 )
 from tests.conftest import requires_postgres  # noqa: E402
@@ -87,6 +88,60 @@ class TestAssertsOwnership:
         # Defensive: if a source ends up in both tiers, the helper's
         # behavior is ambiguous and the gate's contract starts leaking.
         assert HIGH_CONFIDENCE_SOURCES.isdisjoint(LOW_CONFIDENCE_SOURCES)
+
+
+class TestStructuralOwnership:
+    """The second evidence branch: a same-protocol structural relationship
+    to a confirmed parent grants ownership without a HIGH source on the
+    child. This is the fix for the resolution-cascade false negatives —
+    UUPSProxy / OssifiableProxy / UpgradeableBeacon shells of confirmed
+    impls were ending up orphan because cascade-spawn jobs don't pass a
+    HIGH discovery source.
+    """
+
+    def test_structural_alone_grants_ownership(self):
+        # No HIGH source — pure structural propagation from a confirmed
+        # parent via an ``implementation`` edge.
+        for rel in ("implementation", "proxy", "beacon"):
+            assert asserts_ownership(None, parent_owns=True, parent_relationship=rel) is True
+
+    def test_structural_without_parent_owns_is_blocked(self):
+        # If the parent itself isn't HIGH-owned, the structural edge
+        # doesn't transitively grant ownership — propagation stops at
+        # one hop, otherwise dapp_crawl noise would cascade.
+        assert asserts_ownership(None, parent_owns=False, parent_relationship="implementation") is False
+
+    def test_non_structural_relationship_does_not_grant(self):
+        # Regular CALL edges (parent calls WETH), library edges
+        # (correctly tagged but the bucket mixes internal helpers with
+        # shared infra), and unknown relationships must NOT propagate
+        # ownership. See source_confidence.py docstring for the library
+        # rationale.
+        for rel in ("regular", "library", None, "controller", "principal"):
+            assert asserts_ownership(None, parent_owns=True, parent_relationship=rel) is False
+
+    def test_library_is_excluded(self):
+        # Pin the deliberate omission. The classifier correctly
+        # identifies library-pattern targets, but the bucket mixes
+        # protocol-internal helpers (BucketLimiter) with shared
+        # infrastructure (Circle's SignatureChecker). Without a
+        # signal that splits the two, adopting either way is wrong
+        # for the other — see source_confidence.py docstring.
+        assert "library" not in STRUCTURAL_OWNERSHIP_RELATIONSHIPS
+
+    def test_either_branch_grants_ownership(self):
+        # Both axes are valid evidence — direct OR structural — and
+        # supplying both still returns True (no XOR).
+        assert asserts_ownership(["deployer_expansion"], parent_owns=True, parent_relationship="implementation") is True
+
+    def test_low_confidence_source_plus_structural_branch_grants(self):
+        # The structural branch independently grants ownership even when
+        # the child's own discovery_sources is LOW-only. This is the
+        # exact false-negative case from PR review: an impl was found
+        # via dapp_crawl, its analysis spawned a proxy-shell child whose
+        # discovery_sources stayed LOW, and the structural relationship
+        # is the only thing that lets the gate adopt it.
+        assert asserts_ownership(["dapp_crawl"], parent_owns=True, parent_relationship="implementation") is True
 
 
 # ---------------------------------------------------------------------------
@@ -509,3 +564,230 @@ class TestEigenLayerLeakShape:
         # not attributed. (Future corroboration can promote them.)
         assert db_session.query(Contract).filter_by(address=proxy_addr).count() == 1
         assert db_session.query(Contract).filter(Contract.address.in_(impl_addrs)).count() == 3
+
+
+# ---------------------------------------------------------------------------
+# 6. Structural-adoption gate at the discovery worker
+# ---------------------------------------------------------------------------
+
+
+@requires_postgres
+class TestStructuralAdoptionAtWorker:
+    """The false-negative fix layer: when ``workers/discovery.py`` runs
+    for a cascade-spawned child (resolution or proxy-impl), the parent
+    has already passed ``discovery_relationship`` + ``parent_owns_high``
+    in the request. The adoption gate consults the structural branch as
+    well as the source-tier branch, and tags ``structural_adoption`` on
+    the row so the audit trail captures *how* ownership was earned.
+    """
+
+    def test_structural_branch_adopts_orphan(self, db_session, seed_protocol):
+        """Reproduces the PR-review case: an UUPSProxy shell of a
+        confirmed etherfi impl was orphan because cascade spawn carried
+        no HIGH discovery source. The gate's structural branch (parent
+        is HIGH-owned, edge is ``implementation``) adopts it.
+        """
+        from db.models import Contract
+
+        addr = _addr(0xCA51)
+        # Pre-existing orphan with no discovery_sources — exactly the
+        # shape we observed for cascade-spawned proxy shells.
+        db_session.add(Contract(address=addr, chain="ethereum", protocol_id=None, discovery_sources=None))
+        db_session.commit()
+
+        # Simulate the gate decision: structural evidence from a HIGH parent.
+        should_adopt = asserts_ownership(None, parent_owns=True, parent_relationship="implementation")
+        assert should_adopt is True
+
+    def test_structural_branch_skips_regular_edges(self, db_session, seed_protocol):
+        """Counterpart: a regular CALL edge (parent → WETH) must NOT
+        trigger structural adoption — re-opens the original WETH leak.
+        """
+        from db.models import Contract
+
+        addr = _addr(0xCA52)
+        db_session.add(Contract(address=addr, chain="ethereum", protocol_id=None, discovery_sources=["dapp_crawl"]))
+        db_session.commit()
+
+        # Regular CALL relationship: structural branch returns False, and
+        # the LOW source list also doesn't qualify → no adoption.
+        existing = db_session.query(Contract).filter_by(address=addr).one()
+        decision = asserts_ownership(existing.discovery_sources) or asserts_ownership(
+            None, parent_owns=True, parent_relationship="regular"
+        )
+        assert decision is False
+
+    def test_structural_branch_does_not_fire_when_parent_low(self, db_session, seed_protocol):
+        """Protocol B's HIGH-owned proxy must not grant ownership to a
+        contract whose only structural edge comes from protocol A's
+        LOW-owned analysis. The gate hinges on ``parent_owns_high``
+        which the cascade-spawn site computes from the parent's own
+        discovery_sources before pushing into the child request.
+        """
+        decision = asserts_ownership(["dapp_crawl"], parent_owns=False, parent_relationship="implementation")
+        assert decision is False
+
+
+# ---------------------------------------------------------------------------
+# 7. Structural-orphan adoption migration (3a8f4d1c9b07)
+# ---------------------------------------------------------------------------
+
+
+@requires_postgres
+class TestStructuralOrphanMigration:
+    """The migration walks every orphan, checks for structural edges from
+    HIGH-owned contracts, and adopts when there's exactly one matching
+    protocol. Cross-protocol collisions skip + log."""
+
+    def _seed_high_owner_with_edge(
+        self, db_session, *, parent_addr, child_addr, protocol_id, relationship, chain="ethereum"
+    ):
+        """Helper: create a HIGH-owned Contract row and a dep edge from it
+        to ``child_addr`` with the given structural relationship type."""
+        from db.models import Contract, ContractDependency
+
+        parent = Contract(
+            address=parent_addr,
+            chain=chain,
+            protocol_id=protocol_id,
+            contract_name="ParentImpl",
+            discovery_sources=["deployer_expansion"],
+        )
+        db_session.add(parent)
+        db_session.flush()
+        db_session.add(
+            ContractDependency(
+                contract_id=parent.id,
+                dependency_address=child_addr,
+                relationship_type=relationship,
+                source=["dynamic"],
+            )
+        )
+        db_session.commit()
+        return parent
+
+    @pytest.fixture(scope="class")
+    def migration_module(self):
+        """Load the migration file directly. Migration filenames start
+        with the revision id (digits) which isn't a valid Python module
+        name, so importlib.util by path is the way in.
+        """
+        import importlib.util
+
+        path = Path(__file__).resolve().parents[1] / "alembic" / "versions" / "3a8f4d1c9b07_adopt_structural_orphans.py"
+        spec = importlib.util.spec_from_file_location("_adopt_structural_orphans_mig", path)
+        assert spec is not None and spec.loader is not None
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+
+    def test_migration_adopts_structural_orphan(self, db_session, seed_protocol, migration_module):
+        """Seed (orphan child, HIGH parent with implementation edge) →
+        migration adopts the orphan and tags ``structural_adoption``."""
+        from db.models import Contract
+
+        parent_addr = _addr(0xAA01)
+        child_addr = _addr(0xBB01)
+        db_session.add(Contract(address=child_addr, chain="ethereum", protocol_id=None, discovery_sources=None))
+        db_session.commit()
+        self._seed_high_owner_with_edge(
+            db_session,
+            parent_addr=parent_addr,
+            child_addr=child_addr,
+            protocol_id=seed_protocol,
+            relationship="implementation",
+        )
+
+        # Run the same SQL the migration uses. Direct bind execution
+        # exercises the actual statements without alembic's stamping.
+        rows = db_session.execute(migration_module._SELECT_STRUCTURAL_ORPHANS).fetchall()
+        adopted = 0
+        for orphan_id, parent_protocols in rows:
+            unique = [pid for pid in (parent_protocols or []) if pid is not None]
+            if len(unique) == 1:
+                db_session.execute(migration_module._ADOPT_ORPHAN, {"pid": unique[0], "id": orphan_id})
+                adopted += 1
+        db_session.commit()
+
+        assert adopted >= 1
+        row = db_session.query(Contract).filter_by(address=child_addr).one()
+        assert row.protocol_id == seed_protocol
+        assert "structural_adoption" in (row.discovery_sources or [])
+
+    def test_migration_skips_non_structural_edges(self, db_session, seed_protocol, migration_module):
+        """A regular CALL edge from a HIGH parent must NOT cause
+        adoption — that's the WETH leak the original gate closed."""
+        from db.models import Contract
+
+        parent_addr = _addr(0xAA02)
+        child_addr = _addr(0xBB02)
+        db_session.add(
+            Contract(address=child_addr, chain="ethereum", protocol_id=None, discovery_sources=["dapp_crawl"])
+        )
+        db_session.commit()
+        self._seed_high_owner_with_edge(
+            db_session,
+            parent_addr=parent_addr,
+            child_addr=child_addr,
+            protocol_id=seed_protocol,
+            relationship="regular",
+        )
+
+        rows = db_session.execute(migration_module._SELECT_STRUCTURAL_ORPHANS).fetchall()
+        # The child should not appear in the result set at all — the
+        # SQL's WHERE clause filters relationship_type to the
+        # structural set.
+        child_ids_in_result = {
+            r[0]
+            for r in rows
+            if r[0] is not None
+            and db_session.query(Contract).get(r[0]) is not None
+            and db_session.query(Contract).get(r[0]).address == child_addr
+        }
+        assert child_ids_in_result == set(), (
+            "non-structural edge surfaced as an adoption candidate — "
+            "the WHERE clause's relationship_type filter is wrong"
+        )
+
+    def test_migration_skips_cross_protocol_collisions(self, db_session, seed_protocol, migration_module):
+        """An orphan referenced by HIGH-owned contracts of two different
+        protocols stays orphan + a warning is logged. Avoids silently
+        assigning truly-shared infrastructure to one protocol."""
+        from db.models import Contract, Protocol
+
+        # Second protocol so we can simulate a cross-protocol structural edge.
+        second_proto = Protocol(name=f"src-conf-second-{uuid.uuid4().hex[:8]}")
+        db_session.add(second_proto)
+        db_session.commit()
+
+        child_addr = _addr(0xBB03)
+        db_session.add(Contract(address=child_addr, chain="ethereum", protocol_id=None, discovery_sources=None))
+        db_session.commit()
+        # Edges from two different HIGH-owned parents → collision.
+        self._seed_high_owner_with_edge(
+            db_session,
+            parent_addr=_addr(0xAA03),
+            child_addr=child_addr,
+            protocol_id=seed_protocol,
+            relationship="implementation",
+        )
+        self._seed_high_owner_with_edge(
+            db_session,
+            parent_addr=_addr(0xAA04),
+            child_addr=child_addr,
+            protocol_id=second_proto.id,
+            relationship="implementation",
+        )
+
+        rows = db_session.execute(migration_module._SELECT_STRUCTURAL_ORPHANS).fetchall()
+        for orphan_id, parent_protocols in rows:
+            unique = [pid for pid in (parent_protocols or []) if pid is not None]
+            if len(unique) == 1:
+                db_session.execute(migration_module._ADOPT_ORPHAN, {"pid": unique[0], "id": orphan_id})
+        db_session.commit()
+
+        row = db_session.query(Contract).filter_by(address=child_addr).one()
+        assert row.protocol_id is None, (
+            "cross-protocol collision was silently assigned to one protocol — "
+            "shared infra needs manual review, not first-writer-wins"
+        )

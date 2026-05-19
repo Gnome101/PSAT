@@ -1110,6 +1110,17 @@ class StaticWorker(BaseWorker):
                 continue
 
             impl_name = f"{base_name}: ({label})"
+            # Structural propagation: the impl IS a same-protocol
+            # component of the parent proxy. When the parent itself has
+            # direct-evidence ownership, the child inherits via the
+            # ``parent_relationship='implementation'`` branch in
+            # ``asserts_ownership`` rather than needing its own HIGH
+            # source. See services/discovery/source_confidence.py.
+            from services.discovery.source_confidence import asserts_ownership
+
+            parent_owns_high = asserts_ownership(
+                list(contract_row.discovery_sources) if contract_row and contract_row.discovery_sources else None
+            )
             child_request = {
                 "address": impl_addr,
                 "name": impl_name,
@@ -1118,6 +1129,8 @@ class StaticWorker(BaseWorker):
                 "root_job_id": root_job_id,
                 "proxy_address": address,
                 "proxy_type": proxy_type,
+                "discovery_relationship": "implementation",
+                "parent_owns_high": parent_owns_high,
             }
             if request.get("chain") is not None:
                 child_request["chain"] = request.get("chain")

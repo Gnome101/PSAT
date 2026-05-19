@@ -359,6 +359,12 @@ class ResolutionWorker(BaseWorker):
 
     def _queue_discovered_contracts(self, session: Session, job: Job, resolved_graph: dict, rpc_url: str) -> None:
         """Queue analysis jobs for contracts found during resolution that have no existing job."""
+        from db.models import Contract, ContractDependency
+        from services.discovery.source_confidence import (
+            STRUCTURAL_OWNERSHIP_RELATIONSHIPS,
+            asserts_ownership,
+        )
+
         request = job.request if isinstance(job.request, dict) else {}
         parent_company = job.company
 
@@ -378,6 +384,39 @@ class ResolutionWorker(BaseWorker):
                     parent_company = parent_job.company
                     break
                 current_req = parent_job.request if isinstance(parent_job.request, dict) else {}
+
+        # Structural-ownership lookup: the resolved control graph spawns
+        # children for any analyzed node, but the discovery gate only
+        # wants to grant ownership to children that are *structural*
+        # components (impl/proxy/beacon) of the parent. Pre-fetch the
+        # parent's contract_dependencies once so the per-child loop is
+        # an O(1) map check instead of N round-trips.
+        # Defensive on attribute access — test fixtures stub the parent
+        # Contract row with ``SimpleNamespace`` that may not carry every
+        # column; treat any access failure as "no structural propagation"
+        # which is the safe default.
+        parent_owns_high = False
+        structural_rel_by_addr: dict[str, str] = {}
+        try:
+            parent_contract = session.execute(
+                select(Contract).where(Contract.job_id == job.id).limit(1)
+            ).scalar_one_or_none()
+        except Exception:  # noqa: BLE001 — test-fixture session mocks raise here
+            parent_contract = None
+        if parent_contract is not None:
+            parent_sources = getattr(parent_contract, "discovery_sources", None)
+            parent_owns_high = asserts_ownership(list(parent_sources) if parent_sources else None)
+            parent_id = getattr(parent_contract, "id", None)
+            if parent_id is not None:
+                try:
+                    dep_rows = session.execute(
+                        select(ContractDependency).where(ContractDependency.contract_id == parent_id)
+                    ).scalars()
+                except Exception:  # noqa: BLE001 — same defensive treatment
+                    dep_rows = []
+                for row in dep_rows:
+                    if row.relationship_type in STRUCTURAL_OWNERSHIP_RELATIONSHIPS:
+                        structural_rel_by_addr[row.dependency_address.lower()] = row.relationship_type
 
         nodes = resolved_graph.get("nodes", [])
         root_address = resolved_graph.get("root_contract_address", "").lower()
@@ -410,6 +449,10 @@ class ResolutionWorker(BaseWorker):
             }
             if request.get("chain"):
                 child_request["chain"] = request["chain"]
+            structural_rel = structural_rel_by_addr.get(addr)
+            if structural_rel is not None:
+                child_request["discovery_relationship"] = structural_rel
+                child_request["parent_owns_high"] = parent_owns_high
 
             child_job = create_job(session, child_request, initial_stage=JobStage.discovery)
             if parent_company:

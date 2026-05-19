@@ -434,6 +434,30 @@ class DiscoveryWorker(BaseWorker):
             )
         ).scalar_one_or_none()
 
+        # Ownership gate: an analysis job inherits ``protocol_id`` from
+        # its parent (selection or resolution-dependency), but that
+        # alone doesn't prove the contract belongs to the protocol.
+        # WETH9 pulled in as a dependency of a confirmed etherfi
+        # contract is still WETH9, not an etherfi contract.
+        # ``asserts_ownership`` grants ``protocol_id`` via either
+        # direct evidence (a HIGH source in the discovery_sources list)
+        # or structural evidence (same-protocol relationship — impl /
+        # proxy / beacon — to a confirmed parent). The cascade-spawn
+        # sites (workers/resolution_worker.py, workers/static_worker.py
+        # proxy-impl cascade) populate ``discovery_relationship`` +
+        # ``parent_owns_high`` for the structural branch.
+        # See services/discovery/source_confidence.py.
+        from services.discovery.source_confidence import asserts_ownership
+
+        request_sources = request.get("discovery_sources") or []
+        parent_owns_high = bool(request.get("parent_owns_high"))
+        discovery_relationship = request.get("discovery_relationship")
+        structural_ownership = asserts_ownership(
+            None,
+            parent_owns=parent_owns_high,
+            parent_relationship=discovery_relationship,
+        )
+
         if existing:
             existing.job_id = job.id
             existing.contract_name = contract_name
@@ -448,28 +472,29 @@ class DiscoveryWorker(BaseWorker):
             existing.deployer = deployer
             existing.remappings = remappings or []
             existing.source_verified = True
-            # An analysis job inherits ``protocol_id`` from its parent
-            # (selection or resolution-dependency); arriving here doesn't
-            # itself prove the contract belongs to the protocol. WETH9
-            # pulled in as a dependency of a confirmed etherfi contract
-            # is still WETH9, not an etherfi contract. Honor the
-            # ownership gate: only adopt the orphan when its discovery
-            # trail already asserts ownership.
-            from services.discovery.source_confidence import asserts_ownership
-
-            if not existing.protocol_id and job.protocol_id and asserts_ownership(existing.discovery_sources):
+            should_adopt = (
+                not existing.protocol_id
+                and job.protocol_id
+                and (asserts_ownership(existing.discovery_sources) or structural_ownership)
+            )
+            if should_adopt:
                 existing.protocol_id = job.protocol_id
+                # Audit trail: when ownership comes from the structural
+                # branch (no HIGH source in discovery_sources), record
+                # how it was earned so future readers can tell direct
+                # from inherited adoption.
+                if structural_ownership and not asserts_ownership(existing.discovery_sources):
+                    merged = list(existing.discovery_sources or [])
+                    if "structural_adoption" not in merged:
+                        merged.append("structural_adoption")
+                    existing.discovery_sources = merged
         else:
-            # Same gate as the adopt branch above — protocol_id only
-            # sticks when the job's discovery_sources include a high-
-            # confidence ownership signal. Resolution-dependency jobs
-            # (e.g., a dependency of a confirmed contract) typically
-            # don't, so they land as orphans even though the job itself
-            # carries a protocol_id from its parent.
-            from services.discovery.source_confidence import asserts_ownership
-
-            request_sources = request.get("discovery_sources") or []
-            owning_protocol_id = job.protocol_id if asserts_ownership(request_sources) else None
+            owning_protocol_id = None
+            if job.protocol_id and (asserts_ownership(request_sources) or structural_ownership):
+                owning_protocol_id = job.protocol_id
+            sources_for_row = list(request_sources)
+            if structural_ownership and not asserts_ownership(request_sources):
+                sources_for_row.append("structural_adoption")
             contract = Contract(
                 job_id=job.id,
                 address=address.lower(),
@@ -488,7 +513,7 @@ class DiscoveryWorker(BaseWorker):
                 remappings=remappings or [],
                 rank_score=request.get("rank_score"),
                 confidence=request.get("confidence"),
-                discovery_sources=request.get("discovery_sources"),
+                discovery_sources=sources_for_row or None,
                 chains=request.get("chains"),
                 source_verified=True,
             )
