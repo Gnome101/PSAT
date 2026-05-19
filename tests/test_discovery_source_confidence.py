@@ -827,6 +827,100 @@ class TestProxyOfHighImplRuntimeAdoption:
             "is missing from the runtime check"
         )
 
+    def test_runtime_skips_when_only_low_source_parent_references_orphan(self, db_session, seed_protocol, monkeypatch):
+        """Tightening regression: the proxy is referenced by a same-
+        protocol contract whose only source is LOW (``upgrade_history``,
+        ``structural_adoption``). ``protocol_id`` is set on that parent
+        (transitively, via upgrade_history backfill from a HIGH proxy),
+        but its discovery_sources don't satisfy the HIGH gate. The
+        adoption must NOT fire — otherwise the runtime check silently
+        admits transitive chains that the one-hop gate refuses."""
+        from db.models import Contract, ContractDependency, Job, JobStage, JobStatus
+        from workers.static_worker import StaticWorker
+
+        impl_addr = _addr(0xF200)
+        proxy_addr = _addr(0xF201)
+        low_ref_addr = _addr(0xF202)
+
+        db_session.add(
+            Contract(
+                address=impl_addr,
+                chain="ethereum",
+                protocol_id=seed_protocol,
+                contract_name="HighImpl3",
+                discovery_sources=["deployer_expansion"],
+            )
+        )
+        # Same-protocol parent — but its only source is LOW
+        # (``upgrade_history``). protocol_id is set because this row was
+        # backfilled from a HIGH proxy earlier; it must not act as
+        # adoption evidence on its own.
+        ref_contract = Contract(
+            address=low_ref_addr,
+            chain="ethereum",
+            protocol_id=seed_protocol,
+            contract_name="LowRefContract",
+            discovery_sources=["upgrade_history"],
+        )
+        db_session.add(ref_contract)
+        db_session.flush()
+        db_session.add(
+            ContractDependency(
+                contract_id=ref_contract.id,
+                dependency_address=proxy_addr,
+                relationship_type="proxy",
+                source=["dynamic"],
+            )
+        )
+        proxy_job = Job(
+            id=uuid.uuid4(),
+            stage=JobStage.static,
+            status=JobStatus.processing,
+            request={"rpc_url": "rpc"},
+        )
+        db_session.add(proxy_job)
+        db_session.flush()
+        db_session.add(
+            Contract(
+                address=proxy_addr,
+                chain="ethereum",
+                protocol_id=None,
+                contract_name="OrphanProxyLowParent",
+                discovery_sources=None,
+                job_id=proxy_job.id,
+            )
+        )
+        db_session.commit()
+
+        monkeypatch.setattr(
+            "services.discovery.classifier.classify_single",
+            lambda address, rpc_url: {
+                "address": address,
+                "type": "proxy",
+                "proxy_type": "eip1967",
+                "implementation": impl_addr,
+            },
+        )
+        monkeypatch.setattr("workers.static_worker.store_artifact", lambda *a, **kw: None)
+        monkeypatch.setattr(
+            "workers.static_worker.create_job",
+            lambda *a, **kw: type("J", (), {"id": "child"})(),
+        )
+
+        from types import SimpleNamespace
+
+        worker_job = SimpleNamespace(
+            id=proxy_job.id, address=proxy_addr, name="OrphanProxyLowParent", request={"rpc_url": "rpc"}
+        )
+        StaticWorker()._resolve_proxy(db_session, worker_job, proxy_addr, "OrphanProxyLowParent")
+        db_session.commit()
+
+        row = db_session.query(Contract).filter_by(address=proxy_addr).one()
+        assert row.protocol_id is None, (
+            "orphan was adopted on the strength of a LOW-only-source parent — "
+            "the runtime check is no longer enforcing the one-hop-from-HIGH rule"
+        )
+
 
 @requires_postgres
 class TestStructuralOrphanMigration:
@@ -1142,6 +1236,60 @@ class TestStructuralOrphanMigration:
         assert stranger_row.id not in surfaced_ids, (
             "fork / TBA-style proxy was surfaced for adoption — the "
             "'must be referenced by HIGH protocol contract' filter is missing"
+        )
+
+    def test_migration_skips_low_source_parents(self, db_session, seed_protocol, migration_module):
+        """Tightening regression: a parent with ``protocol_id`` set but
+        only LOW-confidence sources (``upgrade_history``,
+        ``structural_adoption``) must NOT contribute adoption evidence.
+        Otherwise the migration extends the cascade past the one-hop
+        limit the runtime gate enforces. Shape: orphan would be adopted
+        by branch 1 IF parent's sources counted, but parent's only
+        source is ``upgrade_history``."""
+        from db.models import Contract, ContractDependency
+
+        parent_addr = _addr(0xAA20)
+        child_addr = _addr(0xBB20)
+        db_session.add(
+            Contract(
+                address=child_addr,
+                chain="ethereum",
+                protocol_id=None,
+                discovery_sources=None,
+            )
+        )
+        # Parent has protocol_id (transitively, via upgrade_history
+        # backfill from a HIGH proxy) but its own sources are LOW. The
+        # structural field link is real — what the test pins is that the
+        # parent's source tier matters even when the link is valid.
+        parent = Contract(
+            address=parent_addr,
+            chain="ethereum",
+            protocol_id=seed_protocol,
+            contract_name="LowSourceParent",
+            discovery_sources=["upgrade_history"],
+            is_proxy=True,
+            implementation=child_addr,
+        )
+        db_session.add(parent)
+        db_session.flush()
+        db_session.add(
+            ContractDependency(
+                contract_id=parent.id,
+                dependency_address=child_addr,
+                relationship_type="implementation",
+                source=["dynamic"],
+            )
+        )
+        db_session.commit()
+
+        rows = db_session.execute(migration_module._SELECT_STRUCTURAL_ORPHANS).fetchall()
+        surfaced_ids = {r[0] for r in rows}
+        child_row = db_session.query(Contract).filter_by(address=child_addr).one()
+        assert child_row.id not in surfaced_ids, (
+            "orphan was surfaced for adoption on the strength of a LOW-only-"
+            "source parent — the migration is no longer consistent with the "
+            "runtime gate's one-hop-from-HIGH rule"
         )
 
     def test_migration_skips_cross_protocol_collisions(self, db_session, seed_protocol, migration_module):

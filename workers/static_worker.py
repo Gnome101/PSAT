@@ -1063,11 +1063,16 @@ class StaticWorker(BaseWorker):
                         sa_select(Contract).where(Contract.address == impl_address.lower()).limit(1)
                     ).scalar_one_or_none()
                 except Exception as exc:
-                    logger.debug(
-                        "Job %s: structural-adoption impl lookup failed: %s", job.id, exc
-                    )
+                    logger.debug("Job %s: structural-adoption impl lookup failed: %s", job.id, exc)
                     impl_row = None
                 if impl_row is not None and getattr(impl_row, "protocol_id", None) is not None:
+                    # Parent must be HIGH-source-owned, mirroring the
+                    # ``asserts_ownership`` gate. A LOW-source parent
+                    # (``upgrade_history`` backfill, ``structural_adoption``)
+                    # with ``protocol_id`` set must not act as evidence —
+                    # that'd silently relax the runtime one-hop limit.
+                    from services.discovery.source_confidence import HIGH_CONFIDENCE_SOURCES
+
                     try:
                         referenced_by_same_protocol = session.execute(
                             sa_select(ContractDependency.id)
@@ -1075,6 +1080,7 @@ class StaticWorker(BaseWorker):
                             .where(
                                 ContractDependency.dependency_address == contract_addr,
                                 Contract.protocol_id == impl_row.protocol_id,
+                                Contract.discovery_sources.overlap(list(HIGH_CONFIDENCE_SOURCES)),
                             )
                             .limit(1)
                         ).scalar_one_or_none()

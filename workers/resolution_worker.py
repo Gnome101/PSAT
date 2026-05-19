@@ -409,9 +409,7 @@ class ResolutionWorker(BaseWorker):
                 select(Contract).where(Contract.job_id == job.id).limit(1)
             ).scalar_one_or_none()
         except Exception as exc:
-            logger.debug(
-                "Job %s: structural-propagation parent lookup failed: %s", job.id, exc
-            )
+            logger.debug("Job %s: structural-propagation parent lookup failed: %s", job.id, exc)
             parent_contract = None
         if parent_contract is not None:
             parent_sources = getattr(parent_contract, "discovery_sources", None)

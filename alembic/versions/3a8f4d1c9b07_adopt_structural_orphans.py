@@ -60,6 +60,16 @@ _SELECT_STRUCTURAL_ORPHANS = sa.text(
     -- proxies, ERC-6551 token-bound accounts), require the orphan to
     -- *also* be referenced by some HIGH-owned contract of the same
     -- protocol — i.e. the protocol actually integrates with this proxy.
+    -- Parent must be HIGH-source-owned, not merely ``protocol_id`` set.
+    -- ``protocol_id IS NOT NULL`` admits rows that themselves got their
+    -- protocol_id via a LOW source (``upgrade_history`` backfill,
+    -- ``structural_adoption``) — using those as adoption evidence would
+    -- silently extend the one-hop limit the runtime gate enforces.
+    -- Keep the migration consistent with ``asserts_ownership`` so the
+    -- catch-up pass can't undo the cascade discipline. The HIGH set
+    -- mirrors ``services/discovery/source_confidence.HIGH_CONFIDENCE_SOURCES``;
+    -- migrations are deploy-time snapshots so the constant is duplicated
+    -- here rather than imported.
     SELECT
         orphan.id              AS orphan_id,
         array_agg(DISTINCT parent.protocol_id) AS parent_protocols
@@ -70,6 +80,10 @@ _SELECT_STRUCTURAL_ORPHANS = sa.text(
       ON parent.id = cd.contract_id
     WHERE orphan.protocol_id IS NULL
       AND parent.protocol_id IS NOT NULL
+      AND parent.discovery_sources && ARRAY[
+        'deployer_expansion','defillama','ai_inventory',
+        'exa_deep_research','inventory','spa_override','dependency_two_pass'
+      ]::varchar[]
       AND (
         (cd.relationship_type = 'implementation'
             AND lower(parent.implementation) = orphan.address)
