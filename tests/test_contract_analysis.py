@@ -190,6 +190,74 @@ def test_collect_contract_analysis_emits_layerzero_bridge_static_context(tmp_pat
     assert {"bridge_send", "bridge_receive", "bridge_peer_config", "bridge_security_config"}.issubset(fact_kinds)
 
 
+def test_bridge_static_context_does_not_match_layerzero_by_substring(tmp_path):
+    project_dir = _write_project(
+        tmp_path,
+        "MembershipManager",
+        """
+        pragma solidity ^0.8.19;
+
+        contract MembershipManager {
+            function numberOfTiers() external pure returns (uint256) {
+                return 3;
+            }
+
+            function rebase(int128 delta) external pure returns (int128) {
+                return delta;
+            }
+        }
+        """,
+        slither_output={"results": {"detectors": []}},
+    )
+
+    context = collect_contract_analysis(project_dir).get("bridge_static_context")
+
+    assert context is not None
+    assert context["is_bridge"] is False
+    assert context["protocols"] == []
+    assert all(fact["protocol"] != "LayerZero" for fact in context["facts"])
+
+
+def test_bridge_static_context_ignores_contract_name_only_router(tmp_path):
+    project_dir = _write_project(
+        tmp_path,
+        "EtherFiRewardsRouter",
+        """
+        pragma solidity ^0.8.19;
+
+        contract EtherFiRewardsRouter {
+            address public owner;
+            address public implementation;
+
+            modifier onlyOwner() {
+                require(msg.sender == owner, "owner");
+                _;
+            }
+
+            constructor() {
+                owner = msg.sender;
+            }
+
+            function upgradeTo(address newImplementation) external onlyOwner {
+                implementation = newImplementation;
+            }
+
+            function proxiableUUID() external pure returns (bytes32) {
+                return keccak256("eip1967.proxy.implementation");
+            }
+        }
+        """,
+        slither_output={"results": {"detectors": []}},
+    )
+
+    context = collect_contract_analysis(project_dir).get("bridge_static_context")
+
+    assert context is not None
+    assert context["is_bridge"] is False
+    assert context["protocols"] == []
+    assert context["facts"] == []
+
+
 def test_collect_contract_analysis_uses_semantic_factory_without_upgrade_timelock_name_guessing(tmp_path):
     project_dir = _write_project(
         tmp_path,

@@ -129,6 +129,8 @@ class BridgeStaticFact(TypedDict):
     function: str
     evidence: str
     confidence: str
+    module: NotRequired[str]
+    display: NotRequired[str]
 
 
 class BridgeStaticFunction(TypedDict):
@@ -138,6 +140,7 @@ class BridgeStaticFunction(TypedDict):
     effect_labels: list[str]
     effect_targets: list[str]
     action_summary: str
+    modules: NotRequired[list[str]]
 
 
 class BridgeStaticContext(TypedDict):
@@ -147,6 +150,9 @@ class BridgeStaticContext(TypedDict):
     fact_count: int
     facts: list[BridgeStaticFact]
     functions: list[BridgeStaticFunction]
+    modules: NotRequired[list[str]]
+    promotion: NotRequired[str]
+    visibility: NotRequired[str]
 
 
 class PausabilityAnalysis(TypedDict):

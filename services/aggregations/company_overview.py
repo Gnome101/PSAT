@@ -660,6 +660,18 @@ def _bridge_status_label(runtime: dict[str, Any] | None, static_context: dict[st
     return "unresolved"
 
 
+def _static_bridge_visible(static_context: dict[str, Any] | None) -> bool:
+    if not isinstance(static_context, dict) or not static_context.get("is_bridge"):
+        return False
+    visibility = str(static_context.get("visibility") or "")
+    promotion = str(static_context.get("promotion") or "")
+    if visibility:
+        return visibility == "default"
+    if promotion:
+        return promotion == "confirmed"
+    return True
+
+
 def _peer_summary(routes: list[dict[str, Any]]) -> str:
     counts = {"analyzed": 0, "queued": 0, "processing": 0, "missing_rpc": 0, "unsupported_chain": 0}
     for route in routes:
@@ -739,6 +751,16 @@ def _config_control_label(policies: Any) -> str:
 def _bridge_summary(static_context: dict[str, Any] | None, runtime: dict[str, Any] | None) -> dict[str, Any] | None:
     if not isinstance(static_context, dict) and not isinstance(runtime, dict):
         return None
+    routes = [route for route in (runtime or {}).get("routes", []) if isinstance(route, dict)]
+    if isinstance(runtime, dict):
+        status = str(runtime.get("status") or "")
+        if status == "not_bridge":
+            return None
+        if status in {"unresolved", "unsupported", "unsupported_runtime"} and not routes:
+            return None
+    if not routes and not _static_bridge_visible(static_context):
+        return None
+
     protocols: list[str] = []
     if isinstance(runtime, dict):
         protocols.extend(str(p) for p in runtime.get("protocols") or [])
@@ -748,7 +770,6 @@ def _bridge_summary(static_context: dict[str, Any] | None, runtime: dict[str, An
         protocols.extend(str(p) for p in static_context.get("protocols") or [])
     protocols = list(dict.fromkeys([p for p in protocols if p and p != "Bridge"]))
     protocol = protocols[0] if protocols else "Bridge"
-    routes = [route for route in (runtime or {}).get("routes", []) if isinstance(route, dict)]
     route_labels = [
         {
             "chain": route.get("chain_display_name") or route.get("chain"),
@@ -1025,7 +1046,6 @@ def build_governance_view(
         is_pausable = summary_row.is_pausable if summary_row else False
         control_model = summary_row.control_model if summary_row else None
 
-        name_lower = contract_name.lower()
         bridge_artifact_job_id = impl_job.id if impl_job else job.id
         bridge_artifacts = {
             **bridge_artifacts_by_job_id.get(job.id, {}),
@@ -1044,7 +1064,7 @@ def build_governance_view(
                 )
             )
         )
-        if has_bridge_context or "bridge" in name_lower or "gateway" in name_lower:
+        if has_bridge_context:
             role = "bridge"
         elif any(e in value_effects for e in ("asset_pull", "asset_send")):
             role = "value_handler"

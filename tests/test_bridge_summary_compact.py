@@ -44,3 +44,40 @@ def test_bridge_summary_keeps_route_security_compact() -> None:
         "peers": "1 queued",
         "config_control": "Owner",
     }
+
+
+def test_bridge_summary_hides_unresolved_runtime_without_routes() -> None:
+    summary = _bridge_summary(
+        {
+            "schema_version": "bridge_static.v1",
+            "is_bridge": True,
+            "protocols": ["LayerZero"],
+            "promotion": "confirmed",
+            "visibility": "default",
+        },
+        {
+            "status": "unresolved",
+            "protocol": "LayerZero",
+            "protocols": ["LayerZero"],
+            "reason": "No endpoint address was found.",
+            "routes": [],
+        },
+    )
+
+    assert summary is None
+
+
+def test_bridge_summary_hides_candidate_static_context() -> None:
+    summary = _bridge_summary(
+        {
+            "schema_version": "bridge_static.v1",
+            "is_bridge": False,
+            "protocols": [],
+            "promotion": "candidate",
+            "visibility": "debug",
+            "facts": [{"protocol": "Bridge", "kind": "bridge_route_hint", "confidence": "medium"}],
+        },
+        None,
+    )
+
+    assert summary is None
