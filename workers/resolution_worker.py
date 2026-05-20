@@ -7,7 +7,7 @@ import os
 import time
 from collections.abc import Callable
 from datetime import datetime, timezone
-from typing import cast
+from typing import Any, cast
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -587,7 +587,7 @@ class ResolutionWorker(BaseWorker):
                 (provider_job.address or target_addr).lower() if provider_job is not None else target_addr
             )
             if provider_job is None:
-                provider_request = {
+                provider_request: dict[str, Any] = {
                     "address": target_addr,
                     "name": target_addr,
                     "rpc_url": rpc_url,

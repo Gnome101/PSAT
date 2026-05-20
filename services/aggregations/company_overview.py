@@ -718,7 +718,11 @@ def _config_control_label(policies: Any) -> str:
     label = str(policy.get("label") or policy.get("type") or "").lower()
     owners = details.get("owners") if isinstance(details, dict) else None
     threshold = details.get("threshold") if isinstance(details, dict) else None
-    owner_count = len(owners) if isinstance(owners, list) else details.get("owner_count")
+    owner_count = None
+    if isinstance(owners, list):
+        owner_count = len(owners)
+    elif isinstance(details, dict):
+        owner_count = details.get("owner_count")
     if "safe" in label and isinstance(threshold, int) and isinstance(owner_count, int) and owner_count > 0:
         return f"{threshold}-of-{owner_count} Safe"
     if "safe" in label:

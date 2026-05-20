@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import uuid
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 
 from workers.discovery import DiscoveryWorker
 
@@ -18,8 +18,8 @@ def test_parallel_discovery_children_preserve_chain_identity(monkeypatch):
 
     job = SimpleNamespace(id=uuid.uuid4(), protocol_id=7)
     DiscoveryWorker()._spawn_parallel_discovery(
-        SimpleNamespace(),
-        job,
+        cast(Any, SimpleNamespace()),
+        cast(Any, job),
         "LayerZero Example",
         {"chain": "base", "rpc_url": "https://rpc.example", "analyze_limit": 2},
         str(job.id),
