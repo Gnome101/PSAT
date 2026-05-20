@@ -1592,6 +1592,9 @@ class StaticWorker(BaseWorker):
             (project_dir / "predicate_trees.json").write_text(json.dumps(semantic_predicate_trees, indent=2) + "\n")
         if semantic_effects is not None:
             (project_dir / "effects.json").write_text(json.dumps(semantic_effects, indent=2) + "\n")
+        bridge_static_context = analysis_data.get("bridge_static_context")
+        if isinstance(bridge_static_context, dict):
+            (project_dir / "bridge_static_context.json").write_text(json.dumps(bridge_static_context, indent=2) + "\n")
 
         store_artifact(session, job.id, "contract_analysis", data=analysis_data)
         if semantic_predicate_trees is not None:
@@ -1618,6 +1621,19 @@ class StaticWorker(BaseWorker):
                 )
                 logger.exception(
                     "Static stage: effects artifact store failed for job %s",
+                    job.id,
+                )
+        if isinstance(bridge_static_context, dict):
+            try:
+                store_artifact(session, job.id, "bridge_static_context", data=bridge_static_context)
+            except Exception as exc:
+                record_degraded(
+                    phase="bridge_static_context_artifact_store",
+                    exc=exc,
+                    context={"address": address, "contract_name": contract_name, "job_id": str(job.id)},
+                )
+                logger.exception(
+                    "Static stage: bridge_static_context artifact store failed for job %s",
                     job.id,
                 )
         self._write_analysis_tables(session, job, analysis_data)

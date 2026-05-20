@@ -123,6 +123,32 @@ class UpgradeabilityAnalysis(TypedDict):
     evidence: list[Evidence]
 
 
+class BridgeStaticFact(TypedDict):
+    kind: str
+    protocol: str
+    function: str
+    evidence: str
+    confidence: str
+
+
+class BridgeStaticFunction(TypedDict):
+    function: str
+    protocols: list[str]
+    fact_kinds: list[str]
+    effect_labels: list[str]
+    effect_targets: list[str]
+    action_summary: str
+
+
+class BridgeStaticContext(TypedDict):
+    schema_version: str
+    is_bridge: bool
+    protocols: list[str]
+    fact_count: int
+    facts: list[BridgeStaticFact]
+    functions: list[BridgeStaticFunction]
+
+
 class PausabilityAnalysis(TypedDict):
     is_pausable: bool
     pause_functions: list[str]
@@ -230,6 +256,7 @@ class ContractAnalysis(TypedDict):
     analysis_status: AnalysisStatus
     summary: Summary
     contract_classification: ContractClassification
+    bridge_static_context: NotRequired[BridgeStaticContext]
     semantic_control: SemanticControlAnalysis
     upgradeability: UpgradeabilityAnalysis
     pausability: PausabilityAnalysis

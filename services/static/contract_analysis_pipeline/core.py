@@ -16,6 +16,7 @@ from slither.slither import Slither
 
 from schemas.contract_analysis import AuditAlignment, ContractAnalysis, Summary
 
+from .bridge_facts import build_bridge_static_context
 from .effects import EffectsArtifact, build_effects
 from .predicate_artifacts import (
     build_predicate_artifacts_with_pause_info,
@@ -142,6 +143,9 @@ def analyze_contract(project_dir: Path) -> Path:
         (project_dir / "predicate_trees.json").write_text(json.dumps(predicate_trees, indent=2) + "\n")
     if effects is not None:
         (project_dir / "effects.json").write_text(json.dumps(effects, indent=2) + "\n")
+    bridge_static_context = analysis.get("bridge_static_context")
+    if bridge_static_context is not None:
+        (project_dir / "bridge_static_context.json").write_text(json.dumps(bridge_static_context, indent=2) + "\n")
 
     return output_path
 
@@ -221,6 +225,8 @@ def collect_contract_analysis_with_artifacts(
         logger.exception("semantic effects emit failed for %s", project_dir)
         effects_artifact = {"schema_version": "semantic", "error": str(exc)}
 
+    with _phase("bridge_static_context", durations_ms):
+        bridge_static_context = build_bridge_static_context(subject_contract, effects_artifact)
     with _phase("classification", durations_ms):
         classification = _detect_contract_classification(subject_contract, project_dir, effects_artifact)
     with _phase("semantic_control", durations_ms):
@@ -277,6 +283,7 @@ def collect_contract_analysis_with_artifacts(
         },
         "summary": summary,
         "contract_classification": classification,
+        "bridge_static_context": bridge_static_context,
         "semantic_control": semantic_control,
         "upgradeability": upgradeability,
         "pausability": pausability,

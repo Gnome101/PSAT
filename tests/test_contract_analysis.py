@@ -117,6 +117,79 @@ def test_collect_contract_analysis_with_artifacts_returns_semantic_artifacts(tmp
     assert "functions" in effects or "error" in effects
 
 
+def test_collect_contract_analysis_emits_layerzero_bridge_static_context(tmp_path):
+    project_dir = _write_project(
+        tmp_path,
+        "LayerZeroApp",
+        """
+        pragma solidity ^0.8.19;
+
+        interface ILayerZeroEndpointV2 {
+            function send(uint32 dstEid, bytes calldata payload, bytes calldata options) external payable;
+            function setDelegate(address delegate) external;
+        }
+
+        contract LayerZeroApp {
+            struct Origin {
+                uint32 srcEid;
+                bytes32 sender;
+                uint64 nonce;
+            }
+
+            ILayerZeroEndpointV2 public endpoint;
+            mapping(uint32 => bytes32) public peers;
+            address public owner;
+
+            modifier onlyOwner() {
+                require(msg.sender == owner, "owner");
+                _;
+            }
+
+            constructor(ILayerZeroEndpointV2 endpoint_) {
+                endpoint = endpoint_;
+                owner = msg.sender;
+            }
+
+            function setPeer(uint32 dstEid, bytes32 peer) external onlyOwner {
+                peers[dstEid] = peer;
+            }
+
+            function sendMessage(uint32 dstEid, bytes calldata payload) external payable {
+                endpoint.send{value: msg.value}(dstEid, payload, "");
+            }
+
+            function lzReceive(
+                Origin calldata origin,
+                bytes32 guid,
+                bytes calldata message,
+                address executor,
+                bytes calldata extraData
+            ) external {
+                origin;
+                guid;
+                message;
+                executor;
+                extraData;
+            }
+
+            function setSendLibrary(address libraryAddress) external onlyOwner {
+                endpoint.setDelegate(libraryAddress);
+            }
+        }
+        """,
+        slither_output={"results": {"detectors": []}},
+    )
+
+    analysis = collect_contract_analysis(project_dir)
+    context = analysis.get("bridge_static_context")
+    assert context is not None
+    fact_kinds = {fact["kind"] for fact in context["facts"]}
+
+    assert context["is_bridge"] is True
+    assert context["protocols"] == ["LayerZero"]
+    assert {"bridge_send", "bridge_receive", "bridge_peer_config", "bridge_security_config"}.issubset(fact_kinds)
+
+
 def test_collect_contract_analysis_uses_semantic_factory_without_upgrade_timelock_name_guessing(tmp_path):
     project_dir = _write_project(
         tmp_path,
