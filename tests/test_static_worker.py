@@ -256,6 +256,10 @@ def test_no_force_uses_global_dedupe(monkeypatch):
 
     created_jobs: list[dict] = []
     monkeypatch.setattr(
+        "workers.static_worker.find_existing_job_for_address",
+        lambda *_a, **_kw: prior,
+    )
+    monkeypatch.setattr(
         "workers.static_worker.create_job",
         lambda _session, request: created_jobs.append(request) or SimpleNamespace(id="should-not-be-created"),
     )
