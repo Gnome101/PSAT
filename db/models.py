@@ -511,6 +511,7 @@ class Contract(Base):
     address: Mapped[str] = mapped_column(String(42), nullable=False)
     source_verified: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     chain: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    chain_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     contract_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     compiler_version: Mapped[str | None] = mapped_column(String(100), nullable=True)
     language: Mapped[str | None] = mapped_column(String(20), nullable=True)
@@ -574,6 +575,7 @@ class Contract(Base):
     __table_args__ = (
         Index("ix_contracts_job_id", "job_id"),
         Index("ix_contracts_protocol_id", "protocol_id"),
+        Index("ix_contracts_chain_id", "chain_id"),
         UniqueConstraint("address", "chain", name="uq_contract_address_chain"),
     )
 

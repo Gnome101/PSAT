@@ -77,6 +77,7 @@ def test_queue_bridge_peer_analysis_queues_chain_scoped_peer(db_session, monkeyp
         db_session.query(Contract).filter(Contract.address == peer_addr.lower(), Contract.chain == "base").one()
     )
     assert peer_contract.protocol_id == protocol.id
+    assert peer_contract.chain_id == 8453
     assert "bridge_runtime" in peer_contract.discovery_sources
 
 

@@ -15,6 +15,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from utils.chains import canonical_chain, canonical_chain_list
+from utils.rpc import chain_id_for_chain_name
 
 from .models import (
     Artifact,
@@ -53,6 +54,17 @@ DEFAULT_JOB_STALE_TIMEOUT = int(os.getenv("PSAT_JOB_STALE_TIMEOUT", "900"))
 # either a crashed worker or a worker that's gone too long without a
 # heartbeat (e.g. a single nested forge build over the heartbeat cadence).
 DEFAULT_JOB_LEASE_TTL_S = int(os.getenv("PSAT_JOB_LEASE_TTL_S", str(DEFAULT_JOB_STALE_TIMEOUT)))
+
+
+def _contract_chain_id(chain: str | None, explicit_chain_id: Any = None) -> int | None:
+    if explicit_chain_id is not None:
+        try:
+            parsed = int(explicit_chain_id)
+            if parsed > 0:
+                return parsed
+        except (TypeError, ValueError):
+            pass
+    return chain_id_for_chain_name(chain)
 
 
 class LeaseLost(RuntimeError):
@@ -167,7 +179,7 @@ def bulk_upsert_discovered_contracts(
     """Bulk variant of :func:`upsert_discovered_contract` with identical first-writer-wins semantics.
 
     Each *entries* item is a dict with keys: ``address`` (required),
-    ``chain``, ``new_sources`` (list[str]), ``contract_name``, ``confidence``,
+    ``chain``, optional ``chain_id``, ``new_sources`` (list[str]), ``contract_name``, ``confidence``,
     ``chains``, ``discovery_url``. The single-row helper does one SELECT per
     address, which dominates wall time when discovery surfaces 100-300
     contracts at once. This collapses every SELECT into one ``IN (...)`` and
@@ -186,6 +198,7 @@ def bulk_upsert_discovered_contracts(
         chain = canonical_chain(entry.get("chain"))
         clean_entry = dict(entry)
         clean_entry["chain"] = chain
+        clean_entry["chain_id"] = _contract_chain_id(chain, entry.get("chain_id"))
         clean_entry["chains"] = canonical_chain_list(entry.get("chains"))
         norm_entries.append((address, chain, clean_entry))
 
@@ -205,6 +218,7 @@ def bulk_upsert_discovered_contracts(
             row = Contract(
                 address=address,
                 chain=chain,
+                chain_id=entry.get("chain_id"),
                 protocol_id=protocol_id,
                 contract_name=entry.get("contract_name"),
                 confidence=entry.get("confidence"),
@@ -225,6 +239,8 @@ def bulk_upsert_discovered_contracts(
             existing.discovery_sources = merged
         if existing.protocol_id is None and protocol_id is not None:
             existing.protocol_id = protocol_id
+        if existing.chain_id is None and entry.get("chain_id") is not None:
+            existing.chain_id = entry["chain_id"]
         if not existing.contract_name and entry.get("contract_name"):
             existing.contract_name = entry["contract_name"]
         if existing.confidence is None and entry.get("confidence") is not None:
@@ -249,6 +265,7 @@ def upsert_discovered_contract(
     confidence: float | None = None,
     chains: list[str] | None = None,
     discovery_url: str | None = None,
+    chain_id: int | None = None,
 ) -> Contract:
     """Insert or update a discovered contract, unioning ``discovery_sources``.
 
@@ -273,6 +290,7 @@ def upsert_discovered_contract(
     normalized = address.lower()
     chain = canonical_chain(chain)
     chains = canonical_chain_list(chains)
+    resolved_chain_id = _contract_chain_id(chain, chain_id)
     existing = session.execute(
         select(Contract).where(
             Contract.address == normalized,
@@ -286,6 +304,7 @@ def upsert_discovered_contract(
         row = Contract(
             address=normalized,
             chain=chain,
+            chain_id=resolved_chain_id,
             protocol_id=protocol_id,
             contract_name=contract_name,
             confidence=confidence,
@@ -305,6 +324,8 @@ def upsert_discovered_contract(
 
     if existing.protocol_id is None and protocol_id is not None:
         existing.protocol_id = protocol_id
+    if existing.chain_id is None and resolved_chain_id is not None:
+        existing.chain_id = resolved_chain_id
     if not existing.contract_name and contract_name:
         existing.contract_name = contract_name
     if existing.confidence is None and confidence is not None:

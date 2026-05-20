@@ -130,6 +130,7 @@ def queue_bridge_peer_analysis(
             confidence=0.95,
             chains=[str(chain)],
             discovery_url=f"bridge_runtime:{source_job.address or ''}",
+            chain_id=peer_chain_id,
         )
         existing = find_existing_job_for_address(session, peer, chain=str(chain))
         if existing is None:
