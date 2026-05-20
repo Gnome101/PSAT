@@ -126,6 +126,27 @@ class ResolutionWorker(BaseWorker):
         # Keep as artifact — policy stage reads it as JSON
         store_artifact(session, job.id, "control_snapshot", data=snapshot)
 
+        bridge_static_context = get_artifact(session, job.id, "bridge_static_context")
+        if not isinstance(bridge_static_context, dict):
+            maybe_context = contract_analysis.get("bridge_static_context")
+            bridge_static_context = maybe_context if isinstance(maybe_context, dict) else None
+        if isinstance(bridge_static_context, dict) and bridge_static_context.get("is_bridge"):
+            try:
+                from services.bridges.runtime import resolve_bridge_runtime
+
+                bridge_runtime_context = resolve_bridge_runtime(
+                    rpc_url,
+                    {**contract_analysis, "bridge_static_context": bridge_static_context},
+                )
+                store_artifact(session, job.id, "bridge_runtime_context", data=bridge_runtime_context)
+            except Exception as exc:
+                record_degraded(
+                    phase="bridge_runtime_context",
+                    exc=exc,
+                    context={"address": job.address or "0x0"},
+                )
+                logger.warning("Job %s: bridge runtime context failed: %s", job.id, exc)
+
         # Write to controller_values table
         contract_row = session.execute(select(Contract).where(Contract.job_id == job.id).limit(1)).scalar_one_or_none()
         if contract_row:
