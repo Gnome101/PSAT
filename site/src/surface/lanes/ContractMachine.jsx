@@ -93,12 +93,18 @@ function BridgeOverview({ machine }) {
           {routes.map((route, index) => (
             <div className="ps-machine-bridge-route" key={`${route.chain || "route"}-${index}`}>
               <div className="ps-machine-bridge-route-head">
-                <span>{chainLabel(route.chain) || "Remote"}</span>
-                <span>{peerLabel(route)}</span>
+                <div className="ps-machine-bridge-field">
+                  <span>Network</span>
+                  <strong>{chainLabel(route.chain) || "Remote"}</strong>
+                </div>
+                <div className="ps-machine-bridge-field ps-machine-bridge-field-peer">
+                  <span>Peer</span>
+                  <strong>{peerLabel(route)}</strong>
+                </div>
               </div>
               <div className="ps-machine-bridge-route-meta">
-                <span>Peer: {peerStatusLabel(route.peer_status)}</span>
-                {route.security ? <span>{route.security}</span> : null}
+                <span>Peer status: {peerStatusLabel(route.peer_status)}</span>
+                {route.security ? <span>Security: {route.security}</span> : null}
               </div>
             </div>
           ))}

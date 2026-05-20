@@ -47,8 +47,10 @@ describe("ContractMachine bridge tab", () => {
     expect(screen.getByText("Ethereum -> Base, Arbitrum")).toBeInTheDocument();
     expect(screen.getByText("1 queued, 1 missing RPC")).toBeInTheDocument();
     expect(screen.getByText("Owner")).toBeInTheDocument();
-    expect(screen.getByText("Peer: missing RPC")).toBeInTheDocument();
-    expect(screen.getByText("2 required DVNs, threshold 1")).toBeInTheDocument();
+    expect(screen.getAllByText("Network")).toHaveLength(2);
+    expect(screen.getAllByText("Peer")).toHaveLength(2);
+    expect(screen.getByText("Peer status: missing RPC")).toBeInTheDocument();
+    expect(screen.getByText("Security: 2 required DVNs, threshold 1")).toBeInTheDocument();
 
     const text = document.body.textContent || "";
     expect(text).not.toContain("0x2222222222222222222222222222222222222222");

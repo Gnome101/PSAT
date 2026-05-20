@@ -1581,18 +1581,43 @@
 
 .ps-machine-bridge-route-head {
   color: #e2e8f0;
-  font-size: 12px;
-  font-weight: 800;
   line-height: 1.25;
 }
 
-.ps-machine-bridge-route-head span:last-child {
-  flex: 0 1 auto;
+.ps-machine-bridge-field {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.ps-machine-bridge-field span {
+  color: #94a3b8;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.ps-machine-bridge-field strong {
+  min-width: 0;
+  color: #e2e8f0;
+  font-size: 12px;
+  font-weight: 850;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ps-machine-bridge-field-peer {
+  text-align: right;
+}
+
+.ps-machine-bridge-field-peer strong {
   color: #cbd5e1;
   font-family: "JetBrains Mono", monospace;
   font-size: 10px;
   overflow-wrap: anywhere;
-  text-align: right;
+  white-space: normal;
 }
 
 .ps-machine-bridge-route-meta {
