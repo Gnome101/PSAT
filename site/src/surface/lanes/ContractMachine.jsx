@@ -7,6 +7,108 @@ import { BalanceTable } from "./BalanceTable.jsx";
 import { LaneColumn } from "./LaneColumn.jsx";
 import { OpsLane } from "./OpsLane.jsx";
 
+const BRIDGE_STATUS_LABELS = {
+  analyzed: "analyzed",
+  queued: "queued",
+  processing: "processing",
+  missing_rpc: "missing RPC",
+  unsupported_chain: "unsupported",
+  non_evm_peer: "non-EVM",
+  missing_chain: "missing chain",
+  not_queued: "not queued",
+  not_applicable: "n/a",
+};
+
+function chainLabel(chain) {
+  const value = String(chain || "").trim();
+  if (!value) return "";
+  const known = {
+    ethereum: "Ethereum",
+    mainnet: "Ethereum",
+    base: "Base",
+    arbitrum: "Arbitrum",
+    optimism: "Optimism",
+    polygon: "Polygon",
+    avalanche: "Avalanche",
+    bsc: "BSC",
+    linea: "Linea",
+    scroll: "Scroll",
+    blast: "Blast",
+  };
+  return known[value.toLowerCase()] || value;
+}
+
+function peerLabel(route) {
+  return route?.peer || shortAddr(route?.peer_address) || "unknown";
+}
+
+function peerStatusLabel(status) {
+  return BRIDGE_STATUS_LABELS[status] || status || "not queued";
+}
+
+function bridgeRouteCount(bridge) {
+  const routeCount = Number(bridge?.route_count);
+  if (Number.isFinite(routeCount) && routeCount > 0) return routeCount;
+  return (bridge?.routes || []).filter(Boolean).length;
+}
+
+function bridgeOverflowCount(bridge) {
+  const overflow = Number(bridge?.route_overflow);
+  return Number.isFinite(overflow) && overflow > 0 ? overflow : 0;
+}
+
+function BridgeOverview({ machine }) {
+  const bridge = machine.bridge_summary;
+  const routes = (bridge?.routes || []).filter(Boolean);
+  const overflow = bridgeOverflowCount(bridge);
+  const routeChains = routes.map((route) => chainLabel(route.chain)).filter(Boolean);
+  const localChain = chainLabel(machine.chain);
+  const routeSummary = routeChains.length
+    ? `${localChain ? `${localChain} -> ` : ""}${routeChains.join(", ")}${overflow ? `, +${overflow} more` : ""}`
+    : bridge?.status || "unresolved";
+
+  return (
+    <section className="ps-machine-bridge">
+      <div className="ps-machine-bridge-summary">
+        <div className="ps-machine-bridge-heading">
+          <div>
+            <div className="ps-machine-bridge-title">{bridge?.protocol || "Bridge"} bridge</div>
+            <div className="ps-machine-bridge-route-summary">{routeSummary}</div>
+          </div>
+          <span className="ps-machine-bridge-status">{bridge?.status || "unresolved"}</span>
+        </div>
+        <div className="ps-machine-bridge-facts">
+          <div>
+            <span>Peers</span>
+            <strong>{bridge?.peers || "none analyzed"}</strong>
+          </div>
+          <div>
+            <span>Config control</span>
+            <strong>{bridge?.config_control || "Unknown"}</strong>
+          </div>
+        </div>
+      </div>
+      {routes.length ? (
+        <div className="ps-machine-bridge-routes">
+          {routes.map((route, index) => (
+            <div className="ps-machine-bridge-route" key={`${route.chain || "route"}-${index}`}>
+              <div className="ps-machine-bridge-route-head">
+                <span>{chainLabel(route.chain) || "Remote"}</span>
+                <span>{peerLabel(route)}</span>
+              </div>
+              <div className="ps-machine-bridge-route-meta">
+                <span>Peer: {peerStatusLabel(route.peer_status)}</span>
+                {route.security ? <span>{route.security}</span> : null}
+              </div>
+            </div>
+          ))}
+          {overflow ? <div className="ps-machine-bridge-more">+{overflow} more routes</div> : null}
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
 export function ContractMachine({
   machine,
   onSelectGuard,
@@ -18,6 +120,10 @@ export function ContractMachine({
 }) {
   const [activeTab, setActiveTab] = useState("control");
   const usdLabel = formatUsd(machine.total_usd);
+  const bridge = machine.bridge_summary;
+  const machineTabs = bridge
+    ? [...MACHINE_TABS, { key: "bridges", label: "Bridges" }]
+    : MACHINE_TABS;
   const highlightedFunction = useMemo(
     () => machineFunctions(machine).find((fnView) => fnView.key === highlightedFunctionKey) || null,
     [machine, highlightedFunctionKey],
@@ -27,11 +133,16 @@ export function ContractMachine({
     if (highlightedFunction) setActiveTab(tabForLane(highlightedFunction.lane));
   }, [highlightedFunction]);
 
+  useEffect(() => {
+    if (activeTab === "bridges" && !bridge) setActiveTab("control");
+  }, [activeTab, bridge]);
+
   const tabCounts = {
     control: machine.lanes.top.length + machine.lanes.ops.length,
     inflows: machine.lanes.left.length,
     outflows: machine.lanes.right.length,
     balances: machine.balances?.length || 0,
+    bridges: bridgeRouteCount(bridge),
   };
 
   return (
@@ -75,7 +186,7 @@ export function ContractMachine({
       </header>
 
       <div className="ps-machine-tabs">
-        {MACHINE_TABS.map((t) => (
+        {machineTabs.map((t) => (
           <button
             key={t.key}
             className={`ps-machine-tab${activeTab === t.key ? " active" : ""}`}
@@ -129,6 +240,9 @@ export function ContractMachine({
       )}
       {activeTab === "balances" && (
         <BalanceTable machine={machine} />
+      )}
+      {activeTab === "bridges" && bridge && (
+        <BridgeOverview machine={machine} />
       )}
     </article>
   );
