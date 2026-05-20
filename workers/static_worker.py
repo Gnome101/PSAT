@@ -16,7 +16,14 @@ from typing import cast
 from sqlalchemy import select
 
 from db.models import Contract, ContractSummary, Job, JobDependency, JobStage, RoleDefinition
-from db.queue import _MUTABLE_CONTRACT_FIELDS, create_job, get_artifact, get_source_files, store_artifact
+from db.queue import (
+    _MUTABLE_CONTRACT_FIELDS,
+    create_job,
+    find_existing_job_for_address,
+    get_artifact,
+    get_source_files,
+    store_artifact,
+)
 from schemas.contract_analysis import ContractAnalysis
 from services.discovery import (
     build_dependency_visualization,
@@ -31,7 +38,7 @@ from services.monitoring.proxy_watcher import resolve_current_implementation
 from services.resolution.tracking_plan import build_control_tracking_plan
 from services.static.contract_analysis_pipeline import collect_contract_analysis_with_artifacts
 from utils.logging import record_degraded
-from utils.rpc import default_rpc_url, normalize_hex  # used for address comparison
+from utils.rpc import chain_id_from_request, default_rpc_url, normalize_hex  # used for address comparison
 from workers.base import BaseWorker, JobHandledDirectly
 
 logger = logging.getLogger("workers.static_worker")
@@ -813,7 +820,7 @@ class StaticWorker(BaseWorker):
         if row is not None or not job.address:
             return row
         request = job.request if isinstance(job.request, dict) else {}
-        chain = request.get("chain")
+        chain = request.get("chain") if isinstance(request.get("chain"), str) else None
         stmt = sa_select(Contract).where(Contract.address == job.address.lower())
         if chain is not None:
             stmt = stmt.where(Contract.chain == chain)
@@ -1073,7 +1080,8 @@ class StaticWorker(BaseWorker):
         force = bool(request.get("force"))
         # Within-cascade dedupe under --force: same impl reached via multiple proxy paths must not spawn N copies.
         root_job_id = request.get("root_job_id") or str(job.id)
-        chain = request.get("chain")
+        chain = request.get("chain") if isinstance(request.get("chain"), str) else None
+        chain_id = chain_id_from_request(request)
         from sqlalchemy import text as _sa_text
 
         for impl_addr, label in impl_entries:
@@ -1092,7 +1100,11 @@ class StaticWorker(BaseWorker):
                     stmt = stmt.where(Job.request["chain"].as_string() == chain)
                 existing = session.execute(stmt.limit(1)).scalar_one_or_none()
             else:
-                existing = session.execute(select(Job).where(Job.address == impl_addr).limit(1)).scalar_one_or_none()
+                existing = find_existing_job_for_address(
+                    session,
+                    impl_addr,
+                    chain=chain,
+                )
             if existing:
                 _redirect_proxy_policy_dependencies(
                     session,
@@ -1119,8 +1131,10 @@ class StaticWorker(BaseWorker):
                 "proxy_address": address,
                 "proxy_type": proxy_type,
             }
-            if request.get("chain") is not None:
-                child_request["chain"] = request.get("chain")
+            if chain is not None:
+                child_request["chain"] = chain
+            if chain_id is not None:
+                child_request["chain_id"] = chain_id
             if getattr(job, "protocol_id", None):
                 child_request["protocol_id"] = job.protocol_id
             if force:

@@ -43,6 +43,14 @@ def test_default_rpc_url_prefers_erpc_for_known_chain(monkeypatch):
     assert rpc.default_rpc_url(chain="base") == "https://erpc-proxy.example/main/evm/8453"
 
 
+def test_chain_id_from_request_prefers_positive_chain_id():
+    assert rpc.chain_id_from_request({"chain_id": "42161", "chain": "base"}) == 42161
+
+
+def test_chain_id_from_request_falls_back_to_chain_name():
+    assert rpc.chain_id_from_request({"chain_id": "not-an-int", "chain": "base"}) == 8453
+
+
 def test_default_rpc_url_does_not_invent_mainnet_for_unknown_chain(monkeypatch):
     monkeypatch.setenv("ERPC_BASE_URL", "https://erpc-proxy.example")
     monkeypatch.setenv("ETH_RPC", "https://legacy.example")

@@ -282,6 +282,22 @@ def chain_id_for_chain_name(chain: str | None) -> int | None:
     return COMMON_CHAIN_IDS.get(chain.lower().strip())
 
 
+def chain_id_from_request(request: Mapping[str, Any] | None) -> int | None:
+    """Return a positive request chain_id, falling back to the chain name."""
+    if not isinstance(request, Mapping):
+        return None
+    raw_chain_id = request.get("chain_id")
+    if raw_chain_id is not None:
+        try:
+            parsed = int(raw_chain_id)
+            if parsed > 0:
+                return parsed
+        except (TypeError, ValueError):
+            pass
+    chain = request.get("chain")
+    return chain_id_for_chain_name(chain if isinstance(chain, str) else None)
+
+
 def default_rpc_url(
     *,
     explicit_rpc_url: str | None = None,

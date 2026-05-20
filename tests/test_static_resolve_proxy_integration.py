@@ -57,6 +57,7 @@ def _capture_store_and_create(monkeypatch):
         return SimpleNamespace(id=f"child-{next(child_counter)}")
 
     monkeypatch.setattr("workers.static_worker.create_job", _fake_create)
+    monkeypatch.setattr("workers.static_worker.find_existing_job_for_address", lambda *_a, **_kw: None)
 
     return store_calls, created_jobs
 
@@ -152,7 +153,7 @@ def test_proxy_with_implementation_creates_child_job(monkeypatch):
 
 
 def test_proxy_child_job_inherits_chain(monkeypatch):
-    """When request includes 'chain', child job request also includes it."""
+    """When request includes 'chain', child job request also includes chain identity."""
     worker = StaticWorker()
     session = MagicMock()
     session.execute.return_value.scalar_one_or_none.return_value = None
@@ -173,6 +174,7 @@ def test_proxy_child_job_inherits_chain(monkeypatch):
 
     assert len(created_jobs) == 1
     assert created_jobs[0]["chain"] == "base"
+    assert created_jobs[0]["chain_id"] == 8453
 
 
 def test_proxy_uses_job_name_for_child_naming(monkeypatch):
@@ -453,6 +455,7 @@ def test_existing_impl_job_skips_child_creation(monkeypatch):
     job = _job()
 
     store_calls, created_jobs = _capture_store_and_create(monkeypatch)
+    monkeypatch.setattr("workers.static_worker.find_existing_job_for_address", lambda *_a, **_kw: existing_job)
 
     monkeypatch.setattr(
         "services.discovery.classifier.classify_single",
@@ -488,6 +491,10 @@ def test_partial_existing_jobs_creates_only_missing(monkeypatch):
 
     job = _job()
     store_calls, created_jobs = _capture_store_and_create(monkeypatch)
+    monkeypatch.setattr(
+        "workers.static_worker.find_existing_job_for_address",
+        lambda _session, address, **_kw: existing_job if address == _IMPL_ADDR else None,
+    )
 
     monkeypatch.setattr(
         "services.discovery.classifier.classify_single",

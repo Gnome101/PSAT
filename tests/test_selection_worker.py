@@ -296,6 +296,8 @@ def test_selection_ranks_across_sources_and_queues_top_n(db_session, worker, see
         assert req["root_job_id"] == str(job.id)
         assert req["parent_job_id"] == str(job.id)
         assert req["rpc_url"] == "https://rpc.example"
+        assert req["chain"] == "ethereum"
+        assert req["chain_id"] == 1
         assert any(s in {"inventory", "dapp_crawl", "defillama"} for s in req.get("discovery_sources", []))
 
     # Rank scores are persisted back onto the Contract rows so the UI
