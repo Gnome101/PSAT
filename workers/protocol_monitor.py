@@ -11,11 +11,15 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
+from utils.rpc import PUBLIC_ETH_RPC_URL, default_rpc_url
+
 load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_RPC_URL = os.environ.get("ETH_RPC", "https://ethereum-rpc.publicnode.com")
+DEFAULT_RPC_URL = (
+    default_rpc_url(chain_id=1, fallback_url=os.environ.get("ETH_RPC") or PUBLIC_ETH_RPC_URL) or PUBLIC_ETH_RPC_URL
+)
 
 
 def main():
