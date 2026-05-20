@@ -7,6 +7,9 @@ export function ContractNode({ data }) {
   const m = data.machine;
   const roleColor = (ROLE_META[m.role] || ROLE_META.utility).color;
   const chip = data.selectionChip;
+  const bridgeBadge = m.bridge_summary
+    ? `${m.bridge_summary.protocol || "Bridge"} · ${m.bridge_summary.status || "unresolved"}`
+    : null;
   return (
     <div
       className={`ps-node${data.selected ? " ps-node-selected" : ""}${data.focused ? " ps-node-focused" : ""}`}
@@ -36,6 +39,7 @@ export function ContractNode({ data }) {
       {m.standards && m.standards.length > 0 && (
         <div className="ps-node-standards">{m.standards.join(" · ")}</div>
       )}
+      {bridgeBadge ? <div className="ps-node-bridge">{bridgeBadge}</div> : null}
       <div className="ps-node-addr">{shortAddr(m.address)}</div>
       <div className="ps-node-role" style={{ color: roleColor }}>{(ROLE_META[m.role] || ROLE_META.utility).label.replace(/s$/, "")}</div>
       {m.total_usd ? <div className="ps-node-balance">{formatUsd(m.total_usd)}</div> : null}

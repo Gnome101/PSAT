@@ -5,6 +5,8 @@ export default function SummaryTab({ detail }) {
   const summary = detail?.contract_analysis?.summary || detail?.summary || {};
   const subject = detail?.contract_analysis?.subject || {};
   const standards = summary.standards || [];
+  const bridge = detail?.bridge_summary;
+  const bridgeRoutes = (bridge?.routes || []).map((route) => route.chain).filter(Boolean).join(", ");
   return (
     <div className="stack">
       <div className="summary-grid">
@@ -38,6 +40,25 @@ export default function SummaryTab({ detail }) {
           </div>
         </div>
       </div>
+      {bridge ? (
+        <div className="card">
+          <h3>{bridge.protocol || "Bridge"} bridge</h3>
+          <div className="kv-grid">
+            <div className="kv-row">
+              <span className="key">Routes</span>
+              <span>{bridgeRoutes || bridge.status || "unresolved"}</span>
+            </div>
+            <div className="kv-row">
+              <span className="key">Peers</span>
+              <span>{bridge.peers || "none analyzed"}</span>
+            </div>
+            <div className="kv-row">
+              <span className="key">Config control</span>
+              <span>{bridge.config_control || "Unknown"}</span>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

@@ -35,6 +35,7 @@ from sqlalchemy import and_, exists, func, or_, select
 from sqlalchemy.orm import Session, aliased, selectinload
 
 from db.models import (
+    Artifact,
     Contract,
     ContractBalance,
     ControlGraphEdge,
@@ -48,6 +49,7 @@ from db.models import (
     TvlSnapshot,
     UpgradeEvent,
 )
+from db.queue import _artifact_row_to_value
 from services.governance.principals import _build_company_function_entry
 
 logger = logging.getLogger("services.aggregations.company_overview")
@@ -645,6 +647,79 @@ def _trim_control_graph(nodes: list[dict[str, Any]], edges: list[dict[str, Any]]
     return {"nodes": kept_nodes, "edges": kept_edges}
 
 
+def _bridge_status_label(runtime: dict[str, Any] | None, static_context: dict[str, Any] | None) -> str:
+    if isinstance(runtime, dict):
+        status = str(runtime.get("status") or "")
+        route_count = len([route for route in runtime.get("routes") or [] if isinstance(route, dict)])
+        if status == "resolved" and route_count:
+            return f"{route_count} route" + ("" if route_count == 1 else "s")
+        if status in {"partial", "unresolved", "unsupported", "unsupported_runtime"}:
+            return status.replace("_", " ")
+    if isinstance(static_context, dict) and static_context.get("is_bridge"):
+        return "static only"
+    return "unresolved"
+
+
+def _peer_summary(routes: list[dict[str, Any]]) -> str:
+    counts = {"analyzed": 0, "queued": 0, "processing": 0, "missing_rpc": 0, "unsupported_chain": 0}
+    for route in routes:
+        analysis = route.get("peer_analysis")
+        status = analysis.get("status") if isinstance(analysis, dict) else None
+        if status in counts:
+            counts[status] += 1
+    parts: list[str] = []
+    if counts["analyzed"]:
+        parts.append(f"{counts['analyzed']} analyzed")
+    if counts["queued"] or counts["processing"]:
+        parts.append(f"{counts['queued'] + counts['processing']} queued")
+    if counts["missing_rpc"]:
+        parts.append(f"{counts['missing_rpc']} missing RPC")
+    if counts["unsupported_chain"]:
+        parts.append(f"{counts['unsupported_chain']} unsupported")
+    return ", ".join(parts) if parts else "none analyzed"
+
+
+def _bridge_summary(static_context: dict[str, Any] | None, runtime: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not isinstance(static_context, dict) and not isinstance(runtime, dict):
+        return None
+    protocols: list[str] = []
+    if isinstance(runtime, dict):
+        protocols.extend(str(p) for p in runtime.get("protocols") or [])
+        if runtime.get("protocol"):
+            protocols.append(str(runtime["protocol"]))
+    if isinstance(static_context, dict):
+        protocols.extend(str(p) for p in static_context.get("protocols") or [])
+    protocols = list(dict.fromkeys([p for p in protocols if p and p != "Bridge"]))
+    protocol = protocols[0] if protocols else "Bridge"
+    routes = [route for route in (runtime or {}).get("routes", []) if isinstance(route, dict)]
+    route_labels = [
+        {
+            "chain": route.get("chain_display_name") or route.get("chain"),
+            "peer": route.get("peer_address") or route.get("peer"),
+            "peer_status": (route.get("peer_analysis") or {}).get("status")
+            if isinstance(route.get("peer_analysis"), dict)
+            else None,
+        }
+        for route in routes[:3]
+    ]
+    if len(routes) > 3:
+        route_labels.append({"chain": f"+{len(routes) - 3} more", "peer": None, "peer_status": None})
+    policies = runtime.get("policies") if isinstance(runtime, dict) else []
+    config_control = "Unknown"
+    if isinstance(policies, list) and policies:
+        first_policy = policies[0]
+        if isinstance(first_policy, dict):
+            config_control = str(first_policy.get("label") or first_policy.get("address") or "Known")
+    return {
+        "protocol": protocol,
+        "status": _bridge_status_label(runtime, static_context),
+        "route_count": len(routes),
+        "routes": route_labels,
+        "peers": _peer_summary(routes),
+        "config_control": config_control,
+    }
+
+
 def _has_timelock_delay(details: Any) -> bool:
     if not isinstance(details, dict):
         return False
@@ -794,6 +869,26 @@ def build_governance_view(
 
     contracts: list[dict[str, Any]] = []
     owner_groups: dict[str, list[dict]] = {}
+    bridge_artifacts_by_job_id: dict[Any, dict[str, dict[str, Any]]] = {}
+    job_ids = [job.id for job in jobs]
+    if job_ids:
+        rows = (
+            session.execute(
+                select(Artifact).where(
+                    Artifact.job_id.in_(job_ids),
+                    Artifact.name.in_(("bridge_static_context", "bridge_runtime_context")),
+                )
+            )
+            .scalars()
+            .all()
+        )
+        for artifact in rows:
+            try:
+                value = _artifact_row_to_value(artifact)
+            except Exception:
+                continue
+            if isinstance(value, dict):
+                bridge_artifacts_by_job_id.setdefault(artifact.job_id, {})[artifact.name] = value
 
     for job in jobs:
         request = job.request if isinstance(job.request, dict) else {}
@@ -879,7 +974,25 @@ def build_governance_view(
         control_model = summary_row.control_model if summary_row else None
 
         name_lower = contract_name.lower()
-        if "bridge" in name_lower or "gateway" in name_lower:
+        bridge_artifact_job_id = impl_job.id if impl_job else job.id
+        bridge_artifacts = {
+            **bridge_artifacts_by_job_id.get(job.id, {}),
+            **bridge_artifacts_by_job_id.get(bridge_artifact_job_id, {}),
+        }
+        bridge_static_context = bridge_artifacts.get("bridge_static_context")
+        bridge_runtime_context = bridge_artifacts.get("bridge_runtime_context")
+        compact_bridge_summary = _bridge_summary(bridge_static_context, bridge_runtime_context)
+        has_bridge_context = bool(
+            compact_bridge_summary
+            and (
+                (isinstance(bridge_static_context, dict) and bridge_static_context.get("is_bridge"))
+                or (
+                    isinstance(bridge_runtime_context, dict)
+                    and bridge_runtime_context.get("status") not in (None, "not_bridge")
+                )
+            )
+        )
+        if has_bridge_context or "bridge" in name_lower or "gateway" in name_lower:
             role = "bridge"
         elif any(e in value_effects for e in ("asset_pull", "asset_send")):
             role = "value_handler"
@@ -891,6 +1004,8 @@ def build_governance_view(
             role = "factory"
         else:
             role = "utility"
+        if role == "bridge" and "bridge" not in capabilities:
+            capabilities.append("bridge")
 
         balance_contract = lookup_contract or contract_row
         balances_list = []
@@ -940,6 +1055,8 @@ def build_governance_view(
             "balances": balances_list,
             "total_usd": round(total_usd, 2) if total_usd > 0 else None,
         }
+        if compact_bridge_summary and role == "bridge":
+            entry["bridge_summary"] = compact_bridge_summary
 
         graph_contract = lookup_contract or contract_row
         if graph_contract:

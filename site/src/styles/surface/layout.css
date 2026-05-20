@@ -878,6 +878,15 @@
   font-weight: 600;
 }
 
+.ps-node-bridge {
+  margin-top: 3px;
+  color: #d4a017;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
 .ps-node-role {
   margin-top: 2px;
   font-size: 9px;
@@ -2172,4 +2181,3 @@
 .react-flow__node-group {
   z-index: 0 !important;
 }
-
