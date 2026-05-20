@@ -93,6 +93,56 @@
   border: 1px solid rgba(245, 158, 11, 0.28);
 }
 
+.bridge-card {
+  display: grid;
+  gap: 14px;
+}
+
+.bridge-card-header,
+.bridge-route-line {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.bridge-status-chip,
+.bridge-peer-status {
+  flex: 0 0 auto;
+  border-radius: 999px;
+  border: 1px solid rgba(45, 212, 191, 0.22);
+  background: rgba(20, 184, 166, 0.12);
+  color: #99f6e4;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 4px 8px;
+  white-space: nowrap;
+}
+
+.bridge-card-main .kv-row span:last-child {
+  text-align: right;
+}
+
+.bridge-route-list {
+  display: grid;
+  gap: 8px;
+}
+
+.bridge-route-row {
+  display: grid;
+  gap: 4px;
+  border-top: 1px solid rgba(148, 163, 184, 0.12);
+  padding-top: 8px;
+  color: #e2e8f0;
+  font-size: 13px;
+}
+
+.bridge-route-security,
+.bridge-route-more {
+  color: #94a3b8;
+  font-size: 12px;
+}
+
 .chip.alt {
   background: var(--teal-soft);
   color: var(--teal);
@@ -104,4 +154,3 @@
   color: #facc15;
   border-color: rgba(234, 179, 8, 0.30);
 }
-

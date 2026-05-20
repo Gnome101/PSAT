@@ -35,6 +35,7 @@ from services.discovery.inventory import merge_inventory, search_protocol_invent
 from services.discovery.protocol_resolver import pick_family_slug, resolve_protocol
 from utils import etherscan
 from utils.logging import record_degraded
+from utils.rpc import chain_id_from_request
 from workers.base import BaseWorker, JobHandledDirectly
 
 logger = logging.getLogger("workers.discovery")
@@ -224,22 +225,26 @@ class DiscoveryWorker(BaseWorker):
         # when multiple inventory signals agreed; preserve that granularity
         # so ranking sees the richer corroboration story.
         bulk_entries: list[dict] = []
+        request_chain_id = chain_id_from_request(request)
         for entry in discovered:
             entry_chains = entry.get("chains")
-            entry_chain = entry_chains[0] if isinstance(entry_chains, list) and entry_chains else entry.get("chain")
+            entry_chain = (
+                entry_chains[0] if isinstance(entry_chains, list) and entry_chains else entry.get("chain") or chain
+            )
             entry_sources = entry.get("source") or ["inventory"]
             if not isinstance(entry_sources, list):
                 entry_sources = [str(entry_sources)]
-            bulk_entries.append(
-                {
-                    "address": str(entry["address"]),
-                    "chain": entry_chain,
-                    "new_sources": entry_sources,
-                    "contract_name": entry.get("name"),
-                    "confidence": entry.get("confidence"),
-                    "chains": entry.get("chains"),
-                }
-            )
+            bulk_entry = {
+                "address": str(entry["address"]),
+                "chain": entry_chain,
+                "new_sources": entry_sources,
+                "contract_name": entry.get("name"),
+                "confidence": entry.get("confidence"),
+                "chains": entry.get("chains"),
+            }
+            if entry_chain is None and request_chain_id is not None:
+                bulk_entry["chain_id"] = request_chain_id
+            bulk_entries.append(bulk_entry)
         # One SELECT for all existing rows + a single bulk add for new ones —
         # collapses 100-300 sequential SELECTs that delayed the cascade kickoff
         # into roughly one round-trip.
@@ -311,6 +316,8 @@ class DiscoveryWorker(BaseWorker):
         all_slugs = protocol.get("all_slugs", [])
         if not all_slugs and protocol.get("slug"):
             all_slugs = [protocol["slug"]]
+        chain = request.get("chain") if isinstance(request.get("chain"), str) else None
+        chain_id = chain_id_from_request(request)
         for slug in all_slugs:
             defillama_request = {
                 "defillama_protocol": slug,
@@ -322,6 +329,10 @@ class DiscoveryWorker(BaseWorker):
                 "rpc_url": request.get("rpc_url"),
                 "protocol_id": job.protocol_id,
             }
+            if chain:
+                defillama_request["chain"] = chain
+            if chain_id is not None:
+                defillama_request["chain_id"] = chain_id
             dl_job = create_job(session, defillama_request, initial_stage=JobStage.defillama_scan)
             logger.info("Job %s: spawned DefiLlama scan job %s (slug=%s)", job.id, dl_job.id, slug)
 
@@ -335,11 +346,13 @@ class DiscoveryWorker(BaseWorker):
                 "parent_job_id": str(job.id),
                 "root_job_id": root_job_id,
                 "analyze_limit": request.get("analyze_limit", 5),
-                "chain_id": request.get("chain_id") or 1,
+                "chain_id": chain_id or 1,
                 "wait": request.get("wait", 10),
                 "rpc_url": request.get("rpc_url"),
                 "protocol_id": job.protocol_id,
             }
+            if chain:
+                dapp_request["chain"] = chain
             crawl_job = create_job(session, dapp_request, initial_stage=JobStage.dapp_crawl)
             logger.info("Job %s: spawned DApp crawl job %s (url=%s)", job.id, crawl_job.id, dapp_url)
 
@@ -361,6 +374,11 @@ class DiscoveryWorker(BaseWorker):
             self.update_detail(session, job, f"Reusing cached static data for {address}")
             new_contract_id = copy_static_cache(session, cached_job.id, job.id)
             if new_contract_id is not None:
+                chain_id = chain_id_from_request(request)
+                if chain_id is not None:
+                    cached_contract = session.get(Contract, new_contract_id)
+                    if cached_contract is not None and cached_contract.chain_id is None:
+                        cached_contract.chain_id = chain_id
                 # Mark the job so downstream workers know static data was cached
                 req = job.request if isinstance(job.request, dict) else {}
                 job.request = {**req, "static_cached": True, "cache_source_job_id": str(cached_job.id)}
@@ -427,6 +445,7 @@ class DiscoveryWorker(BaseWorker):
 
         # Write to contracts table — upsert to handle pre-existing discovered rows
         request = job.request if isinstance(job.request, dict) else {}
+        chain_id = chain_id_from_request(request)
         existing = session.execute(
             select(Contract).where(
                 Contract.address == address.lower(),
@@ -450,11 +469,14 @@ class DiscoveryWorker(BaseWorker):
             existing.source_verified = True
             if not existing.protocol_id and job.protocol_id:
                 existing.protocol_id = job.protocol_id
+            if existing.chain_id is None and chain_id is not None:
+                existing.chain_id = chain_id
         else:
             contract = Contract(
                 job_id=job.id,
                 address=address.lower(),
                 chain=request.get("chain"),
+                chain_id=chain_id,
                 protocol_id=job.protocol_id,
                 contract_name=contract_name,
                 compiler_version=result.get("CompilerVersion", ""),

@@ -32,6 +32,7 @@ from db.models import (  # noqa: E402
     Protocol,
     UpgradeEvent,
 )
+from db.queue import store_artifact  # noqa: E402
 from services.aggregations.company_overview import (  # noqa: E402
     CompanyNotFound,
     _build_principal_lookup,
@@ -262,6 +263,67 @@ def test_build_company_overview_omits_functions_field(db_session):
     # value_effects / capabilities should still derive from the lightweight
     # ef_effects projection — pause_toggle → "pause" capability.
     assert "pause" in entry["capabilities"]
+
+
+def test_build_company_overview_exposes_compact_bridge_summary(db_session):
+    p = _add_protocol(db_session, f"bridge-summary-{uuid.uuid4().hex[:8]}")
+    addr = _addr("br1")
+    peer = _addr("brp")
+    job = _add_job(db_session, address=addr, protocol_id=p.id, name="LayerZeroBridge")
+    _add_contract(db_session, address=addr, job=job, protocol_id=p.id, contract_name="LayerZeroBridge")
+    store_artifact(
+        db_session,
+        job.id,
+        "bridge_static_context",
+        data={"schema_version": "bridge_static.v1", "is_bridge": True, "protocols": ["LayerZero"]},
+    )
+    store_artifact(
+        db_session,
+        job.id,
+        "bridge_runtime_context",
+        data={
+            "status": "resolved",
+            "protocol": "LayerZero",
+            "protocols": ["LayerZero"],
+            "routes": [
+                {
+                    "chain": "base",
+                    "chain_display_name": "Base",
+                    "peer_address": peer,
+                    "peer_analysis": {"status": "queued"},
+                    "receive_uln": {
+                        "required_dvn_count": 2,
+                        "optional_dvn_count": 1,
+                        "optional_dvn_threshold": 1,
+                    },
+                }
+            ],
+            "policies": [{"label": "owner controls local app admin functions"}],
+        },
+    )
+
+    payload = build_company_overview(db_session, p.name)
+    entry = next(c for c in payload["contracts"] if c["address"] == addr)
+
+    assert entry["role"] == "bridge"
+    assert "bridge" in entry["capabilities"]
+    assert entry["bridge_summary"] == {
+        "protocol": "LayerZero",
+        "status": "1 route",
+        "route_count": 1,
+        "route_overflow": 0,
+        "routes": [
+            {
+                "chain": "Base",
+                "peer": f"{peer[:6]}..{peer[-4:]}",
+                "peer_status": "queued",
+                "security": "2 required DVNs, 1 optional, threshold 1",
+            }
+        ],
+        "peers": "1 queued",
+        "config_control": "Owner",
+    }
+    assert "bridge_runtime_context" not in entry
 
 
 def test_build_functions_for_protocol_returns_keyed_function_list(db_session):

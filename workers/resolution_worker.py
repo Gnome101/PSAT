@@ -7,7 +7,7 @@ import os
 import time
 from collections.abc import Callable
 from datetime import datetime, timezone
-from typing import cast
+from typing import Any, cast
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -22,7 +22,7 @@ from db.models import (
     JobStage,
 )
 from db.nested_artifacts import store_bundle as store_nested_artifacts
-from db.queue import create_job, get_artifact, store_artifact
+from db.queue import create_job, find_existing_job_for_address, get_artifact, store_artifact
 from schemas.control_tracking import ControlSnapshot, ControlTrackingPlan
 from services.resolution.capability_resolver import (
     find_analysis_job_for_address,
@@ -31,12 +31,28 @@ from services.resolution.capability_resolver import (
 from services.resolution.recursive import LoadedArtifacts, resolve_control_graph
 from services.resolution.tracking import build_control_snapshot
 from utils.logging import record_degraded
+from utils.rpc import PUBLIC_ETH_RPC_URL, chain_id_from_request, default_rpc_url
 from workers.base import BaseWorker
 
 logger = logging.getLogger("workers.resolution_worker")
 
-DEFAULT_RPC_URL = os.getenv("ETH_RPC", "https://ethereum-rpc.publicnode.com")
+DEFAULT_RPC_URL = os.getenv("ETH_RPC", PUBLIC_ETH_RPC_URL)
 RECURSION_MAX_DEPTH = int(os.getenv("PSAT_RECURSION_MAX_DEPTH", "6"))
+
+
+def _rpc_url_for_job(job: Job) -> str:
+    request = job.request if isinstance(job.request, dict) else {}
+    explicit = request.get("rpc_url")
+    chain = request.get("chain")
+    return (
+        default_rpc_url(
+            explicit_rpc_url=explicit if isinstance(explicit, str) else None,
+            chain_id=request.get("chain_id"),
+            chain=chain if isinstance(chain, str) else None,
+            fallback_url=os.getenv("ETH_RPC") or DEFAULT_RPC_URL,
+        )
+        or DEFAULT_RPC_URL
+    )
 
 
 def _build_root_artifacts(
@@ -65,9 +81,7 @@ class ResolutionWorker(BaseWorker):
             job.address or "0x0",
             job.name or "Contract",
         )
-        rpc_url = DEFAULT_RPC_URL
-        if job.request and isinstance(job.request, dict):
-            rpc_url = job.request.get("rpc_url") or rpc_url
+        rpc_url = _rpc_url_for_job(job)
 
         # Read control_tracking_plan from DB
         tracking_plan = get_artifact(session, job.id, "control_tracking_plan")
@@ -112,8 +126,38 @@ class ResolutionWorker(BaseWorker):
         # Keep as artifact — policy stage reads it as JSON
         store_artifact(session, job.id, "control_snapshot", data=snapshot)
 
-        # Write to controller_values table
         contract_row = session.execute(select(Contract).where(Contract.job_id == job.id).limit(1)).scalar_one_or_none()
+
+        bridge_static_context = get_artifact(session, job.id, "bridge_static_context")
+        if not isinstance(bridge_static_context, dict):
+            maybe_context = contract_analysis.get("bridge_static_context")
+            bridge_static_context = maybe_context if isinstance(maybe_context, dict) else None
+        if isinstance(bridge_static_context, dict) and bridge_static_context.get("is_bridge"):
+            try:
+                from services.bridges.peer_analysis import queue_bridge_peer_analysis
+                from services.bridges.runtime import resolve_bridge_runtime
+
+                bridge_runtime_context = resolve_bridge_runtime(
+                    rpc_url,
+                    {**contract_analysis, "bridge_static_context": bridge_static_context},
+                )
+                bridge_runtime_context = queue_bridge_peer_analysis(
+                    session,
+                    source_job=job,
+                    source_contract=contract_row,
+                    runtime=bridge_runtime_context,
+                    default_rpc_url=rpc_url,
+                )
+                store_artifact(session, job.id, "bridge_runtime_context", data=bridge_runtime_context)
+            except Exception as exc:
+                record_degraded(
+                    phase="bridge_runtime_context",
+                    exc=exc,
+                    context={"address": job.address or "0x0"},
+                )
+                logger.warning("Job %s: bridge runtime context failed: %s", job.id, exc)
+
+        # Write to controller_values table
         if contract_row:
             session.query(ControllerValue).filter(ControllerValue.contract_id == contract_row.id).delete()
             for cid, cv in snapshot.get("controller_values", {}).items():
@@ -379,6 +423,8 @@ class ResolutionWorker(BaseWorker):
                     break
                 current_req = parent_job.request if isinstance(parent_job.request, dict) else {}
 
+        chain = request.get("chain") if isinstance(request.get("chain"), str) else None
+        chain_id = chain_id_from_request(request)
         nodes = resolved_graph.get("nodes", [])
         root_address = resolved_graph.get("root_contract_address", "").lower()
         queued_count = 0
@@ -395,8 +441,8 @@ class ResolutionWorker(BaseWorker):
             if node.get("node_type") != "contract":
                 continue
 
-            # Skip if a job already exists for this address
-            existing = session.execute(select(Job).where(Job.address == addr).limit(1)).scalar_one_or_none()
+            # Skip if a job already exists for this (chain, address)
+            existing = find_existing_job_for_address(session, addr, chain=chain)
             if existing:
                 continue
 
@@ -408,8 +454,10 @@ class ResolutionWorker(BaseWorker):
                 "parent_job_id": str(job.id),
                 "discovered_by": "resolution",
             }
-            if request.get("chain"):
-                child_request["chain"] = request["chain"]
+            if chain:
+                child_request["chain"] = chain
+            if chain_id is not None:
+                child_request["chain_id"] = chain_id
 
             child_job = create_job(session, child_request, initial_stage=JobStage.discovery)
             if parent_company:
@@ -518,6 +566,7 @@ class ResolutionWorker(BaseWorker):
 
         request = job.request if isinstance(job.request, dict) else {}
         chain = request.get("chain") if isinstance(request.get("chain"), str) else None
+        chain_id = chain_id_from_request(request)
         parent_company = job.company
 
         edges_inserted = 0
@@ -538,7 +587,7 @@ class ResolutionWorker(BaseWorker):
                 (provider_job.address or target_addr).lower() if provider_job is not None else target_addr
             )
             if provider_job is None:
-                provider_request = {
+                provider_request: dict[str, Any] = {
                     "address": target_addr,
                     "name": target_addr,
                     "rpc_url": rpc_url,
@@ -547,6 +596,8 @@ class ResolutionWorker(BaseWorker):
                 }
                 if chain:
                     provider_request["chain"] = chain
+                if chain_id is not None:
+                    provider_request["chain_id"] = chain_id
                 provider_job = create_job(session, provider_request, initial_stage=JobStage.discovery)
                 if parent_company:
                     provider_job.company = parent_company

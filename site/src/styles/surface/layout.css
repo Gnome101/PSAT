@@ -35,6 +35,33 @@
   border: none;
 }
 
+.react-flow__node-networkZone {
+  pointer-events: none !important;
+}
+
+.ps-network-zone {
+  width: 100%;
+  height: 100%;
+  border: 1px solid color-mix(in srgb, var(--zone-color) 46%, transparent);
+  background: color-mix(in srgb, var(--zone-color) 11%, transparent);
+  border-radius: 14px;
+  box-shadow: inset 0 0 0 1px rgba(15, 23, 42, 0.3);
+}
+
+.ps-network-zone-label {
+  position: absolute;
+  top: 10px;
+  left: 12px;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.72);
+  border: 1px solid color-mix(in srgb, var(--zone-color) 40%, rgba(148, 163, 184, 0.12));
+  color: #e2e8f0;
+  font-size: 11px;
+  font-weight: 800;
+  padding: 4px 8px;
+  white-space: nowrap;
+}
+
 /* Floating header overlay */
 .ps-surface-overlay {
   position: absolute;
@@ -878,6 +905,15 @@
   font-weight: 600;
 }
 
+.ps-node-bridge {
+  margin-top: 3px;
+  color: #d4a017;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
 .ps-node-role {
   margin-top: 2px;
   font-size: 9px;
@@ -1442,6 +1478,157 @@
 .ps-machine-tab.active .ps-machine-tab-count {
   color: #94a3b8;
   background: rgba(148, 163, 184, 0.15);
+}
+
+.ps-machine-bridge {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.ps-machine-bridge-summary,
+.ps-machine-bridge-route {
+  border: 1px solid rgba(212, 160, 23, 0.18);
+  background: rgba(212, 160, 23, 0.06);
+  border-radius: 7px;
+}
+
+.ps-machine-bridge-summary {
+  display: grid;
+  gap: 10px;
+  padding: 10px;
+}
+
+.ps-machine-bridge-heading,
+.ps-machine-bridge-route-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.ps-machine-bridge-title {
+  color: #f8fafc;
+  font-size: 13px;
+  font-weight: 850;
+  line-height: 1.2;
+}
+
+.ps-machine-bridge-route-summary {
+  margin-top: 3px;
+  color: #94a3b8;
+  font-size: 11px;
+  font-weight: 650;
+  line-height: 1.35;
+}
+
+.ps-machine-bridge-status {
+  flex: 0 0 auto;
+  border-radius: 999px;
+  border: 1px solid rgba(45, 212, 191, 0.22);
+  background: rgba(20, 184, 166, 0.12);
+  color: #99f6e4;
+  font-size: 10px;
+  font-weight: 800;
+  line-height: 1;
+  padding: 5px 7px;
+  white-space: nowrap;
+}
+
+.ps-machine-bridge-facts {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 8px;
+}
+
+.ps-machine-bridge-facts div {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+  border-radius: 5px;
+  background: rgba(15, 23, 42, 0.24);
+  padding: 7px 8px;
+}
+
+.ps-machine-bridge-facts span,
+.ps-machine-bridge-route-meta,
+.ps-machine-bridge-more {
+  color: #94a3b8;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.ps-machine-bridge-facts strong {
+  min-width: 0;
+  color: #e2e8f0;
+  font-size: 11px;
+  font-weight: 800;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ps-machine-bridge-routes {
+  display: grid;
+  gap: 7px;
+}
+
+.ps-machine-bridge-route {
+  display: grid;
+  gap: 5px;
+  padding: 9px 10px;
+}
+
+.ps-machine-bridge-route-head {
+  color: #e2e8f0;
+  line-height: 1.25;
+}
+
+.ps-machine-bridge-field {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.ps-machine-bridge-field span {
+  color: #94a3b8;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.ps-machine-bridge-field strong {
+  min-width: 0;
+  color: #e2e8f0;
+  font-size: 12px;
+  font-weight: 850;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ps-machine-bridge-field-peer {
+  text-align: right;
+}
+
+.ps-machine-bridge-field-peer strong {
+  color: #cbd5e1;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 10px;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+.ps-machine-bridge-route-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px 8px;
+  line-height: 1.35;
+}
+
+.ps-machine-bridge-more {
+  padding-left: 2px;
 }
 
 .ps-machine-name {
@@ -2172,4 +2359,3 @@
 .react-flow__node-group {
   z-index: 0 !important;
 }
-

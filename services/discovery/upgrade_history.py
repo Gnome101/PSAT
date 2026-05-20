@@ -617,9 +617,11 @@ def backfill_historical_impl_contracts(
 
     from db.models import Contract
     from utils.etherscan import get_contract_info, parallel_get
+    from utils.rpc import chain_id_for_chain_name
 
     if not impl_addrs:
         return
+    chain_id = chain_id_for_chain_name(chain)
 
     # Match the natural (address, chain) uniqueness grain. Cross-chain
     # protocols (rare but real — CREATE2 / deterministic deployments can
@@ -662,6 +664,8 @@ def backfill_historical_impl_contracts(
                     existing.protocol_id = protocol_id
                 if had_no_tag:
                     existing.discovery_sources = list(existing.discovery_sources or []) + ["upgrade_history"]
+                if existing.chain_id is None and chain_id is not None:
+                    existing.chain_id = chain_id
                 adopted += 1
                 if was_orphan or had_no_tag:
                     refresh_ids.append(existing.id)
@@ -681,6 +685,7 @@ def backfill_historical_impl_contracts(
             protocol_id=protocol_id,
             address=addr,
             chain=chain,
+            chain_id=chain_id,
             contract_name=name or "UnknownImpl",
             is_proxy=False,
             job_id=None,

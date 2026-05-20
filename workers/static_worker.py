@@ -5,7 +5,6 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-import os
 import re
 import shutil
 import tempfile
@@ -17,7 +16,14 @@ from typing import cast
 from sqlalchemy import select
 
 from db.models import Contract, ContractSummary, Job, JobDependency, JobStage, RoleDefinition
-from db.queue import _MUTABLE_CONTRACT_FIELDS, create_job, get_artifact, get_source_files, store_artifact
+from db.queue import (
+    _MUTABLE_CONTRACT_FIELDS,
+    create_job,
+    find_existing_job_for_address,
+    get_artifact,
+    get_source_files,
+    store_artifact,
+)
 from schemas.contract_analysis import ContractAnalysis
 from services.discovery import (
     build_dependency_visualization,
@@ -32,7 +38,7 @@ from services.monitoring.proxy_watcher import resolve_current_implementation
 from services.resolution.tracking_plan import build_control_tracking_plan
 from services.static.contract_analysis_pipeline import collect_contract_analysis_with_artifacts
 from utils.logging import record_degraded
-from utils.rpc import normalize_hex  # used for address comparison
+from utils.rpc import chain_id_from_request, default_rpc_url, normalize_hex  # used for address comparison
 from workers.base import BaseWorker, JobHandledDirectly
 
 logger = logging.getLogger("workers.static_worker")
@@ -64,6 +70,17 @@ def _log_phase_error(job_id: str, address: str, contract_name: str, phase: str, 
             phase=phase,
             error=error,
         )
+    )
+
+
+def _request_rpc_url(request: dict, *, public_fallback: bool = False) -> str | None:
+    explicit = request.get("rpc_url")
+    chain = request.get("chain")
+    return default_rpc_url(
+        explicit_rpc_url=explicit if isinstance(explicit, str) else None,
+        chain_id=request.get("chain_id"),
+        chain=chain if isinstance(chain, str) else None,
+        public_fallback=public_fallback,
     )
 
 
@@ -760,7 +777,7 @@ def _check_proxy_cache(session, job, contract_row) -> dict | None:
     if not cached_impl:
         return None
 
-    rpc_url = request.get("rpc_url") or os.getenv("ETH_RPC")
+    rpc_url = _request_rpc_url(request)
     if not rpc_url:
         return None
 
@@ -803,7 +820,7 @@ class StaticWorker(BaseWorker):
         if row is not None or not job.address:
             return row
         request = job.request if isinstance(job.request, dict) else {}
-        chain = request.get("chain")
+        chain = request.get("chain") if isinstance(request.get("chain"), str) else None
         stmt = sa_select(Contract).where(Contract.address == job.address.lower())
         if chain is not None:
             stmt = stmt.where(Contract.chain == chain)
@@ -963,12 +980,8 @@ class StaticWorker(BaseWorker):
         """
         from services.discovery.classifier import classify_single
 
-        rpc_url = None
         request = job.request if isinstance(job.request, dict) else {}
-        if request:
-            rpc_url = request.get("rpc_url")
-        if not rpc_url:
-            rpc_url = os.getenv("ETH_RPC")
+        rpc_url = _request_rpc_url(request)
         if not rpc_url:
             logger.info("Job %s: no RPC available for proxy classification", job.id)
             store_artifact(
@@ -1067,7 +1080,8 @@ class StaticWorker(BaseWorker):
         force = bool(request.get("force"))
         # Within-cascade dedupe under --force: same impl reached via multiple proxy paths must not spawn N copies.
         root_job_id = request.get("root_job_id") or str(job.id)
-        chain = request.get("chain")
+        chain = request.get("chain") if isinstance(request.get("chain"), str) else None
+        chain_id = chain_id_from_request(request)
         from sqlalchemy import text as _sa_text
 
         for impl_addr, label in impl_entries:
@@ -1086,7 +1100,11 @@ class StaticWorker(BaseWorker):
                     stmt = stmt.where(Job.request["chain"].as_string() == chain)
                 existing = session.execute(stmt.limit(1)).scalar_one_or_none()
             else:
-                existing = session.execute(select(Job).where(Job.address == impl_addr).limit(1)).scalar_one_or_none()
+                existing = find_existing_job_for_address(
+                    session,
+                    impl_addr,
+                    chain=chain,
+                )
             if existing:
                 _redirect_proxy_policy_dependencies(
                     session,
@@ -1113,8 +1131,10 @@ class StaticWorker(BaseWorker):
                 "proxy_address": address,
                 "proxy_type": proxy_type,
             }
-            if request.get("chain") is not None:
-                child_request["chain"] = request.get("chain")
+            if chain is not None:
+                child_request["chain"] = chain
+            if chain_id is not None:
+                child_request["chain_id"] = chain_id
             if getattr(job, "protocol_id", None):
                 child_request["protocol_id"] = job.protocol_id
             if force:
@@ -1194,8 +1214,9 @@ class StaticWorker(BaseWorker):
         self.update_detail(session, job, "Discovering dependencies")
 
         request = job.request if isinstance(job.request, dict) else {}
-        deps_rpc = request.get("rpc_url")
-        dynamic_rpc = request.get("dynamic_rpc") or deps_rpc
+        deps_rpc = _request_rpc_url(request)
+        dynamic_rpc_raw = request.get("dynamic_rpc")
+        dynamic_rpc = dynamic_rpc_raw if isinstance(dynamic_rpc_raw, str) and dynamic_rpc_raw.strip() else deps_rpc
         dynamic_tx_limit = request.get("dynamic_tx_limit", 10)
         dynamic_tx_hashes = request.get("dynamic_tx_hashes")
 
@@ -1585,6 +1606,9 @@ class StaticWorker(BaseWorker):
             (project_dir / "predicate_trees.json").write_text(json.dumps(semantic_predicate_trees, indent=2) + "\n")
         if semantic_effects is not None:
             (project_dir / "effects.json").write_text(json.dumps(semantic_effects, indent=2) + "\n")
+        bridge_static_context = analysis_data.get("bridge_static_context")
+        if isinstance(bridge_static_context, dict):
+            (project_dir / "bridge_static_context.json").write_text(json.dumps(bridge_static_context, indent=2) + "\n")
 
         store_artifact(session, job.id, "contract_analysis", data=analysis_data)
         if semantic_predicate_trees is not None:
@@ -1611,6 +1635,19 @@ class StaticWorker(BaseWorker):
                 )
                 logger.exception(
                     "Static stage: effects artifact store failed for job %s",
+                    job.id,
+                )
+        if isinstance(bridge_static_context, dict):
+            try:
+                store_artifact(session, job.id, "bridge_static_context", data=bridge_static_context)
+            except Exception as exc:
+                record_degraded(
+                    phase="bridge_static_context_artifact_store",
+                    exc=exc,
+                    context={"address": address, "contract_name": contract_name, "job_id": str(job.id)},
+                )
+                logger.exception(
+                    "Static stage: bridge_static_context artifact store failed for job %s",
                     job.id,
                 )
         self._write_analysis_tables(session, job, analysis_data)

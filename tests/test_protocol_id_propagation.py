@@ -117,7 +117,10 @@ class TestStaticWorkerProtocolIdPropagation:
 
         worker = StaticWorker()
 
-        with patch("services.discovery.classifier.classify_single", mock_classify):
+        with (
+            patch("services.discovery.classifier.classify_single", mock_classify),
+            patch("workers.static_worker.find_existing_job_for_address", return_value=None),
+        ):
             worker._resolve_proxy(mock_session, job, job.address, "eETH")
 
         # create_job must have been called
@@ -129,6 +132,8 @@ class TestStaticWorkerProtocolIdPropagation:
             "job gets protocol_id=NULL and monitoring enrollment never fires"
         )
         assert child_request["protocol_id"] == 1
+        assert child_request["chain"] == "ethereum"
+        assert child_request["chain_id"] == 1
 
     @patch("workers.static_worker.store_artifact")
     @patch("workers.static_worker.create_job")
@@ -150,7 +155,10 @@ class TestStaticWorkerProtocolIdPropagation:
 
         worker = StaticWorker()
 
-        with patch("services.discovery.classifier.classify_single", mock_classify):
+        with (
+            patch("services.discovery.classifier.classify_single", mock_classify),
+            patch("workers.static_worker.find_existing_job_for_address", return_value=None),
+        ):
             worker._resolve_proxy(mock_session, job, job.address, "TestContract")
 
         mock_create_job.assert_called_once()
@@ -188,7 +196,10 @@ class TestStaticWorkerProtocolIdPropagation:
 
         worker = StaticWorker()
 
-        with patch("services.discovery.classifier.classify_single", mock_classify):
+        with (
+            patch("services.discovery.classifier.classify_single", mock_classify),
+            patch("workers.static_worker.find_existing_job_for_address", return_value=None),
+        ):
             worker._resolve_proxy(mock_session, job, job.address, "DiamondProxy")
 
         # Should create 2 child jobs (one per facet)

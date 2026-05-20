@@ -786,6 +786,180 @@ export function layoutGroupInterior(kids, machines) {
   return { positions, width: totalWidth, height: totalHeight };
 }
 
+const NETWORK_LANE_GAP = 220;
+const NETWORK_CHAIN_ORDER = [
+  "ethereum",
+  "mainnet",
+  "base",
+  "arbitrum",
+  "optimism",
+  "polygon",
+  "avalanche",
+  "bsc",
+  "linea",
+  "scroll",
+  "blast",
+  "unknown",
+];
+
+function chainKey(chain) {
+  return String(chain || "unknown").trim().toLowerCase() || "unknown";
+}
+
+function chainComparator(left, right) {
+  const leftRank = NETWORK_CHAIN_ORDER.indexOf(left);
+  const rightRank = NETWORK_CHAIN_ORDER.indexOf(right);
+  const a = leftRank === -1 ? NETWORK_CHAIN_ORDER.length : leftRank;
+  const b = rightRank === -1 ? NETWORK_CHAIN_ORDER.length : rightRank;
+  if (a !== b) return a - b;
+  return left.localeCompare(right);
+}
+
+function nodeDimension(value, fallback) {
+  const n = Number(value);
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+}
+
+function nodeSize(node) {
+  return {
+    width: nodeDimension(node.style?.width, CHILD_W),
+    height: nodeDimension(node.style?.height, CHILD_H),
+  };
+}
+
+function addBounds(boundsByChain, chain, x, y, width, height) {
+  const current = boundsByChain.get(chain) || {
+    minX: Number.POSITIVE_INFINITY,
+    minY: Number.POSITIVE_INFINITY,
+    maxX: Number.NEGATIVE_INFINITY,
+    maxY: Number.NEGATIVE_INFINITY,
+  };
+  current.minX = Math.min(current.minX, x);
+  current.minY = Math.min(current.minY, y);
+  current.maxX = Math.max(current.maxX, x + width);
+  current.maxY = Math.max(current.maxY, y + height);
+  boundsByChain.set(chain, current);
+}
+
+// ELK packs by ownership/control shape, which is useful, but it does not
+// understand that Ethereum/Base/Arbitrum overlays become unreadable when their
+// contract bounds land on top of each other. This post-pass keeps the ELK
+// topology and owner groups, then slides chain lanes horizontally before the
+// canvas draws network-zone backplates and edge obstacles.
+export function separateNetworkLanes(nodes) {
+  const nodeById = new Map(nodes.map((node) => [node.id, node]));
+  const contractChainByIndex = new Map();
+  const childChainsByParent = new Map();
+  const boundsByChain = new Map();
+
+  nodes.forEach((node, index) => {
+    const machine = node.data?.machine;
+    if (node.type !== "contract" || !machine) return;
+    const chain = chainKey(machine.chain);
+    contractChainByIndex.set(index, chain);
+    if (node.parentId) {
+      if (!childChainsByParent.has(node.parentId)) childChainsByParent.set(node.parentId, new Set());
+      childChainsByParent.get(node.parentId).add(chain);
+    }
+
+    const parent = node.parentId ? nodeById.get(node.parentId) : null;
+    const x = (parent?.position?.x || 0) + (node.position?.x || 0);
+    const y = (parent?.position?.y || 0) + (node.position?.y || 0);
+    const { width, height } = nodeSize(node);
+    addBounds(boundsByChain, chain, x, y, width, height);
+  });
+
+  if (boundsByChain.size <= 1) return nodes;
+
+  const offsets = new Map();
+  let nextMinX = null;
+  for (const chain of [...boundsByChain.keys()].sort(chainComparator)) {
+    const bounds = boundsByChain.get(chain);
+    const delta = nextMinX == null ? 0 : Math.max(0, nextMinX - bounds.minX);
+    offsets.set(chain, delta);
+    nextMinX = bounds.maxX + delta + NETWORK_LANE_GAP;
+  }
+
+  if ([...offsets.values()].every((offset) => offset === 0)) return nodes;
+
+  const groupChainById = new Map();
+  for (const [parentId, chains] of childChainsByParent) {
+    if (chains.size === 1) groupChainById.set(parentId, [...chains][0]);
+  }
+
+  const out = nodes.map((node) => ({
+    ...node,
+    position: node.position ? { ...node.position } : { x: 0, y: 0 },
+    style: node.style ? { ...node.style } : node.style,
+  }));
+  const outById = new Map(out.map((node) => [node.id, node]));
+
+  for (const node of out) {
+    if (node.type !== "group") continue;
+    const chain = groupChainById.get(node.id);
+    const delta = chain ? offsets.get(chain) || 0 : 0;
+    if (delta) node.position.x = (node.position.x || 0) + delta;
+  }
+
+  out.forEach((node, index) => {
+    if (node.type !== "contract") return;
+    const chain = contractChainByIndex.get(index);
+    if (!chain) return;
+    const ownOffset = offsets.get(chain) || 0;
+    const parentChain = node.parentId ? groupChainById.get(node.parentId) : null;
+    const parentOffset = parentChain ? offsets.get(parentChain) || 0 : 0;
+    const delta = ownOffset - parentOffset;
+    if (delta) node.position.x = (node.position.x || 0) + delta;
+  });
+
+  const childrenByParent = new Map();
+  for (const node of out) {
+    if (!node.parentId) continue;
+    if (!childrenByParent.has(node.parentId)) childrenByParent.set(node.parentId, []);
+    childrenByParent.get(node.parentId).push(node);
+  }
+
+  for (const [parentId, kids] of childrenByParent) {
+    const parent = outById.get(parentId);
+    if (!parent || parent.type !== "group" || kids.length === 0) continue;
+
+    let minX = Number.POSITIVE_INFINITY;
+    let minY = Number.POSITIVE_INFINITY;
+    let maxX = Number.NEGATIVE_INFINITY;
+    let maxY = Number.NEGATIVE_INFINITY;
+    for (const kid of kids) {
+      const { width, height } = nodeSize(kid);
+      const x = kid.position?.x || 0;
+      const y = kid.position?.y || 0;
+      minX = Math.min(minX, x);
+      minY = Math.min(minY, y);
+      maxX = Math.max(maxX, x + width);
+      maxY = Math.max(maxY, y + height);
+    }
+
+    const shiftX = Math.max(0, GROUP_PADDING_SIDE - minX);
+    const shiftY = Math.max(0, GROUP_PADDING_TOP - minY);
+    if (shiftX || shiftY) {
+      for (const kid of kids) {
+        kid.position.x = (kid.position.x || 0) + shiftX;
+        kid.position.y = (kid.position.y || 0) + shiftY;
+      }
+      maxX += shiftX;
+      maxY += shiftY;
+    }
+
+    const currentWidth = nodeDimension(parent.style?.width, CHILD_W + 2 * GROUP_PADDING_SIDE);
+    const currentHeight = nodeDimension(parent.style?.height, GROUP_PADDING_TOP + CHILD_H + GROUP_PADDING_BOTTOM);
+    parent.style = {
+      ...(parent.style || {}),
+      width: Math.max(currentWidth, maxX + GROUP_PADDING_SIDE),
+      height: Math.max(currentHeight, maxY + GROUP_PADDING_BOTTOM),
+    };
+  }
+
+  return out;
+}
+
 export async function elkLayout(machines, fundFlows, principals) {
   const { nodes: rawNodes, edges: rawEdges } = buildGraphLayout(machines, fundFlows, principals);
 
@@ -874,14 +1048,16 @@ export async function elkLayout(machines, fundFlows, principals) {
       }
       return next;
     });
-    const laneAdjusted = assignEdgeLanes(laidOutNodes, rawEdges);
-    return { nodes: laidOutNodes, edges: attachObstacles(laneAdjusted, laidOutNodes) };
+    const networkSeparated = separateNetworkLanes(laidOutNodes);
+    const laneAdjusted = assignEdgeLanes(networkSeparated, rawEdges);
+    return { nodes: networkSeparated, edges: attachObstacles(laneAdjusted, networkSeparated) };
   } catch {
     // Fallback to manual positions if elk fails. Groups still get the
     // JS-computed interior dims; only the inter-group rectpacking is
     // lost (groups stack at their fallback positions).
-    const laneAdjusted = assignEdgeLanes(rawNodes, rawEdges);
-    return { nodes: rawNodes, edges: attachObstacles(laneAdjusted, rawNodes) };
+    const networkSeparated = separateNetworkLanes(rawNodes);
+    const laneAdjusted = assignEdgeLanes(networkSeparated, rawEdges);
+    return { nodes: networkSeparated, edges: attachObstacles(laneAdjusted, networkSeparated) };
   }
 }
 

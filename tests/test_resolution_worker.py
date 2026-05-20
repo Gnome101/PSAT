@@ -165,6 +165,7 @@ def _patch_all(monkeypatch: pytest.MonkeyPatch, **overrides: Any) -> dict[str, A
     monkeypatch.setattr("workers.resolution_worker.get_artifact", fake_get_artifact)
     monkeypatch.setattr("workers.resolution_worker.store_artifact", fake_store_artifact)
     monkeypatch.setattr("workers.resolution_worker.create_job", fake_create_job)
+    monkeypatch.setattr("workers.resolution_worker.find_existing_job_for_address", lambda *_a, **_kw: None)
     monkeypatch.setattr("workers.resolution_worker.build_control_snapshot", fake_build_control_snapshot)
     monkeypatch.setattr("workers.resolution_worker.resolve_control_graph", fake_resolve_control_graph)
     monkeypatch.setattr("workers.base.update_job_detail", lambda *a, **kw: None)
@@ -396,6 +397,7 @@ class TestQueueDiscoveredContracts:
             return SimpleNamespace(id=uuid.uuid4(), company=None)
 
         monkeypatch.setattr("workers.resolution_worker.create_job", fake_create_job)
+        monkeypatch.setattr("workers.resolution_worker.find_existing_job_for_address", lambda *_a, **_kw: None)
 
         graph = _resolved_graph(
             nodes=[
@@ -459,14 +461,14 @@ class TestQueueDiscoveredContracts:
     def test_skips_existing_job(self, monkeypatch: pytest.MonkeyPatch) -> None:
         worker = ResolutionWorker()
         session = MagicMock()
-        # Existing job found
-        session.execute.return_value.scalar_one_or_none.return_value = SimpleNamespace(id=uuid.uuid4())
+        existing_job = SimpleNamespace(id=uuid.uuid4())
 
         create_calls: list[dict] = []
         monkeypatch.setattr(
             "workers.resolution_worker.create_job",
             lambda _s, req, **kw: create_calls.append(req) or SimpleNamespace(id=uuid.uuid4(), company=None),
         )
+        monkeypatch.setattr("workers.resolution_worker.find_existing_job_for_address", lambda *_a, **_kw: existing_job)
 
         graph = _resolved_graph(
             nodes=[
@@ -523,13 +525,19 @@ class TestQueueDiscoveredContracts:
     def test_propagates_chain_from_request(self, monkeypatch: pytest.MonkeyPatch) -> None:
         worker = ResolutionWorker()
         session = MagicMock()
-        session.execute.return_value.scalar_one_or_none.return_value = None
 
         create_calls: list[dict] = []
         monkeypatch.setattr(
             "workers.resolution_worker.create_job",
             lambda _s, req, **kw: create_calls.append(req) or SimpleNamespace(id=uuid.uuid4(), company=None),
         )
+        lookup_calls: list[dict[str, Any]] = []
+
+        def fake_find_existing(_session: Any, address: str, *, chain: str | None = None) -> None:
+            lookup_calls.append({"address": address, "chain": chain})
+            return None
+
+        monkeypatch.setattr("workers.resolution_worker.find_existing_job_for_address", fake_find_existing)
 
         graph = _resolved_graph(nodes=[{"address": CHILD_ADDRESS, "node_type": "contract", "analyzed": True}])
 
@@ -538,6 +546,8 @@ class TestQueueDiscoveredContracts:
 
         assert len(create_calls) == 1
         assert create_calls[0]["chain"] == "ethereum"
+        assert create_calls[0]["chain_id"] == 1
+        assert lookup_calls == [{"address": CHILD_ADDRESS, "chain": "ethereum"}]
 
 
 # ---------------------------------------------------------------------------
@@ -578,6 +588,7 @@ class TestQueueDiscoveredContractsCompanyInheritance:
             return child_ns
 
         monkeypatch.setattr("workers.resolution_worker.create_job", fake_create_job)
+        monkeypatch.setattr("workers.resolution_worker.find_existing_job_for_address", lambda *_a, **_kw: None)
 
         graph = _resolved_graph(nodes=[{"address": CHILD_ADDRESS, "node_type": "contract", "analyzed": True}])
 
@@ -601,6 +612,7 @@ class TestQueueDiscoveredContractsCompanyInheritance:
             return child_ns
 
         monkeypatch.setattr("workers.resolution_worker.create_job", fake_create_job)
+        monkeypatch.setattr("workers.resolution_worker.find_existing_job_for_address", lambda *_a, **_kw: None)
 
         graph = _resolved_graph(nodes=[{"address": CHILD_ADDRESS, "node_type": "contract", "analyzed": True}])
 
@@ -734,6 +746,7 @@ class TestQueueDiscoveredContractsParentChainEdgeCases:
             "workers.resolution_worker.create_job",
             lambda _s, req, **kw: create_calls.append(req) or SimpleNamespace(id=uuid.uuid4(), company=None),
         )
+        monkeypatch.setattr("workers.resolution_worker.find_existing_job_for_address", lambda *_a, **_kw: None)
 
         graph = _resolved_graph(nodes=[{"address": CHILD_ADDRESS, "node_type": "contract", "analyzed": True}])
         job = _job(company=None, request={"rpc_url": "https://rpc.example", "parent_job_id": str(uuid.uuid4())})
@@ -775,6 +788,7 @@ class TestQueueDiscoveredContractsParentChainEdgeCases:
             return child_ns
 
         monkeypatch.setattr("workers.resolution_worker.create_job", fake_create_job)
+        monkeypatch.setattr("workers.resolution_worker.find_existing_job_for_address", lambda *_a, **_kw: None)
 
         graph = _resolved_graph(nodes=[{"address": CHILD_ADDRESS, "node_type": "contract", "analyzed": True}])
         job = _job(company=None, request={"rpc_url": "https://rpc.example", "parent_job_id": parent_id})

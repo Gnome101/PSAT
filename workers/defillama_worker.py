@@ -27,6 +27,7 @@ from db.queue import (
 )
 from services.crawlers.defillama.scan import scan_protocol
 from services.discovery.protocol_resolver import pick_family_slug, resolve_protocol
+from utils.rpc import chain_id_from_request
 from workers.base import BaseWorker, JobHandledDirectly
 
 logger = logging.getLogger("workers.defillama")
@@ -117,17 +118,20 @@ class DefiLlamaWorker(BaseWorker):
 
         # Write ALL discovered addresses to contracts table
         protocol_id = protocol_row.id
+        default_chain = request.get("chain") if isinstance(request.get("chain"), str) else None
+        default_chain_id = chain_id_from_request(request)
         bulk_entries: list[dict] = []
         for addr in addresses:
             normalized = addr.lower()
-            chain = chain_by_address.get(normalized)
-            bulk_entries.append(
-                {
-                    "address": normalized,
-                    "chain": chain,
-                    "new_sources": ["defillama"],
-                }
-            )
+            chain = chain_by_address.get(normalized) or default_chain
+            bulk_entry = {
+                "address": normalized,
+                "chain": chain,
+                "new_sources": ["defillama"],
+            }
+            if chain is None and default_chain_id is not None:
+                bulk_entry["chain_id"] = default_chain_id
+            bulk_entries.append(bulk_entry)
         bulk_upsert_discovered_contracts(session, protocol_id=protocol_id, entries=bulk_entries)
         session.commit()
 

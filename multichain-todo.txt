@@ -1,0 +1,64 @@
+# Multichain TODO
+
+1. Create branch/worktree
+   - Branch: `alex/feat-add-multichain`
+   - Worktree off `origin/main`
+
+2. Chain identity
+   - Store and preserve `chain` / `chain_id` on jobs, contracts, child jobs, dependencies, caches, and discovered peers.
+   - Audit dedupe paths so identity is `(chain, address)`, not address-only.
+
+3. ERPC routing
+   - Use env only: `ERPC_BASE_URL`, `ERPC_SECRET`.
+   - Endpoint shape: `${ERPC_BASE_URL}/main/evm/<chain_id>`.
+   - Add shared RPC helper support for `X-ERPC-Secret-Token` on single and batch calls.
+   - Keep explicit `rpc_url` overrides for local tests/dev.
+   - Add smoke checks for `/healthcheck` and `eth_chainId`.
+
+4. Static modules
+   - Add module-style static parsing for protocol shapes.
+   - Bridge base module emits generic bridge facts.
+   - LayerZero module emits send/receive/config/security/DVN/peer-related facts where detectable.
+
+5. Resolution modules
+   - Bridge runtime module consumes static facts and resolves live bridge context.
+   - LayerZero runtime resolver checks endpoint, peers, DVNs, libraries/executors where available.
+   - Store `bridge_runtime_context`; degrade cleanly on missing/unsupported data.
+
+6. Peer queueing
+   - Queue discovered EVM peers with `address`, `chain`, `chain_id`, `rpc_url`, parent job, and bridge source metadata.
+   - Deduplicate by `(chain, address)`.
+
+7. UI/API
+   - Aggregation should expose a compact `bridge_summary` so the UI does not have to dump raw runtime artifacts.
+   - Preserve raw `bridge_static_context` and `bridge_runtime_context` for detail/expand views only.
+   - Add network-colored zones on the surface view, but keep node/card text short.
+
+8. Bridge card copy
+   - Node badge:
+     - `LayerZero · 3 routes`
+     - `LayerZero · static only`
+     - `Bridge · unresolved`
+   - Main bridge card header:
+     - Title: `<Protocol> bridge`
+     - Status chip: `3 routes`, `static only`, `partial`, `unresolved`, or `unsupported`
+   - Main bridge card body, max 3 rows:
+     - `Routes: Ethereum -> Base, Arbitrum`
+     - `Peers: 2 analyzed, 1 queued`
+     - `Config control: 2-of-3 Safe`, `Timelock`, `Owner`, or `Unknown`
+   - Route rows:
+     - `<Remote chain> -> <short peer address>`
+     - `Peer: analyzed`, `queued`, `processing`, `missing RPC`, or `unsupported`
+     - `Security: 2 required DVNs, 1 optional, threshold 1` when available
+   - Hidden/expanded details only:
+     - Endpoint address, raw EID/domain, full peer address, DVN addresses, send/receive libraries, executor, max message size, raw policies.
+   - Do not render long lists by default; use `+N more` or an expand control.
+
+9. Tests
+   - RPC resolver/auth headers.
+   - Chain-aware dedupe.
+   - Static bridge facts.
+   - Runtime bridge context.
+   - Peer queueing.
+   - UI route/peer rendering.
+   - Card copy stays compact: no raw long addresses or long DVN/library lists in default cards.

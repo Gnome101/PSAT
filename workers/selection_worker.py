@@ -37,6 +37,7 @@ from services.discovery.ranking import (
     effective_confidence,
     rank_contract_rows,
 )
+from utils.rpc import chain_id_from_request
 from workers.base import BaseWorker, JobHandledDirectly
 
 logger = logging.getLogger("workers.selection_worker")
@@ -305,6 +306,9 @@ class SelectionWorker(BaseWorker):
                 "chains": entry.get("chains"),
                 "protocol_id": job.protocol_id,
             }
+            chain_id = chain_id_from_request({"chain": chain})
+            if chain_id is not None:
+                child_request["chain_id"] = chain_id
             if company:
                 child_request["company"] = company
             child_job = create_job(session, child_request)

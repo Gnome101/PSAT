@@ -57,6 +57,7 @@ def _capture_store_and_create(monkeypatch):
         return SimpleNamespace(id=f"child-{next(child_counter)}")
 
     monkeypatch.setattr("workers.static_worker.create_job", _fake_create)
+    monkeypatch.setattr("workers.static_worker.find_existing_job_for_address", lambda *_a, **_kw: None)
 
     return store_calls, created_jobs
 
@@ -152,7 +153,7 @@ def test_proxy_with_implementation_creates_child_job(monkeypatch):
 
 
 def test_proxy_child_job_inherits_chain(monkeypatch):
-    """When request includes 'chain', child job request also includes it."""
+    """When request includes 'chain', child job request also includes chain identity."""
     worker = StaticWorker()
     session = MagicMock()
     session.execute.return_value.scalar_one_or_none.return_value = None
@@ -173,6 +174,7 @@ def test_proxy_child_job_inherits_chain(monkeypatch):
 
     assert len(created_jobs) == 1
     assert created_jobs[0]["chain"] == "base"
+    assert created_jobs[0]["chain_id"] == 8453
 
 
 def test_proxy_uses_job_name_for_child_naming(monkeypatch):
@@ -329,6 +331,7 @@ def test_no_rpc_stores_classification_skipped(monkeypatch):
 
     store_calls, created_jobs = _capture_store_and_create(monkeypatch)
     monkeypatch.delenv("ETH_RPC", raising=False)
+    monkeypatch.delenv("ERPC_BASE_URL", raising=False)
 
     worker._resolve_proxy(session, job, _ADDR, "TestContract")
 
@@ -362,6 +365,28 @@ def test_no_rpc_env_fallback_used_when_request_has_no_rpc(monkeypatch):
 
     assert captured_rpc == ["https://env-rpc.example"]
     assert store_calls[0][1]["is_proxy"] is True
+
+
+def test_erpc_chain_route_used_when_request_has_chain(monkeypatch):
+    """Configured eRPC route is used when request has a supported chain."""
+    worker = StaticWorker()
+    session = MagicMock()
+    job = _job(request={"chain": "base"})
+
+    store_calls, _created_jobs = _capture_store_and_create(monkeypatch)
+    monkeypatch.delenv("ETH_RPC", raising=False)
+    monkeypatch.setenv("ERPC_BASE_URL", "https://erpc-proxy.example")
+
+    captured_rpc = []
+    monkeypatch.setattr(
+        "services.discovery.classifier.classify_single",
+        lambda address, rpc_url: captured_rpc.append(rpc_url) or {"type": "regular"},
+    )
+
+    worker._resolve_proxy(session, job, _ADDR, "TestContract")
+
+    assert captured_rpc == ["https://erpc-proxy.example/main/evm/8453"]
+    assert store_calls[0][1]["classification_type"] == "regular"
 
 
 # ---------------------------------------------------------------------------
@@ -430,6 +455,7 @@ def test_existing_impl_job_skips_child_creation(monkeypatch):
     job = _job()
 
     store_calls, created_jobs = _capture_store_and_create(monkeypatch)
+    monkeypatch.setattr("workers.static_worker.find_existing_job_for_address", lambda *_a, **_kw: existing_job)
 
     monkeypatch.setattr(
         "services.discovery.classifier.classify_single",
@@ -465,6 +491,10 @@ def test_partial_existing_jobs_creates_only_missing(monkeypatch):
 
     job = _job()
     store_calls, created_jobs = _capture_store_and_create(monkeypatch)
+    monkeypatch.setattr(
+        "workers.static_worker.find_existing_job_for_address",
+        lambda _session, address, **_kw: existing_job if address == _IMPL_ADDR else None,
+    )
 
     monkeypatch.setattr(
         "services.discovery.classifier.classify_single",

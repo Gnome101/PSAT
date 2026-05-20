@@ -149,6 +149,7 @@ class DAppCrawlWorker(BaseWorker):
                 {
                     "address": normalized,
                     "chain": addr_chain,
+                    "chain_id": chain_id,
                     "new_sources": ["dapp_crawl"],
                     "discovery_url": source_urls[0] if source_urls else None,
                 }
