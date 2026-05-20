@@ -1,12 +1,58 @@
 import { StatCard } from "../ui/StatCard.jsx";
 import { displayName } from "../displayName.js";
+import { shortAddr } from "../surface/format.js";
+
+const STATUS_LABELS = {
+  analyzed: "analyzed",
+  queued: "queued",
+  processing: "processing",
+  missing_rpc: "missing RPC",
+  unsupported_chain: "unsupported",
+  non_evm_peer: "non-EVM",
+  missing_chain: "missing chain",
+  not_queued: "not queued",
+  not_applicable: "n/a",
+};
+
+function chainLabel(chain) {
+  const value = String(chain || "").trim();
+  if (!value) return "";
+  const known = {
+    ethereum: "Ethereum",
+    mainnet: "Ethereum",
+    base: "Base",
+    arbitrum: "Arbitrum",
+    optimism: "Optimism",
+    polygon: "Polygon",
+    avalanche: "Avalanche",
+    bsc: "BSC",
+    linea: "Linea",
+    scroll: "Scroll",
+    blast: "Blast",
+  };
+  return known[value.toLowerCase()] || value;
+}
+
+function peerLabel(route) {
+  return route?.peer || shortAddr(route?.peer_address) || "unknown";
+}
+
+function peerStatusLabel(status) {
+  return STATUS_LABELS[status] || status || "not queued";
+}
 
 export default function SummaryTab({ detail }) {
   const summary = detail?.contract_analysis?.summary || detail?.summary || {};
   const subject = detail?.contract_analysis?.subject || {};
   const standards = summary.standards || [];
   const bridge = detail?.bridge_summary;
-  const bridgeRoutes = (bridge?.routes || []).map((route) => route.chain).filter(Boolean).join(", ");
+  const bridgeRoutes = (bridge?.routes || []).filter(Boolean);
+  const bridgeOverflow = Number(bridge?.route_overflow || 0);
+  const routeChains = bridgeRoutes.map((route) => chainLabel(route.chain)).filter(Boolean);
+  const localChain = chainLabel(detail?.chain || subject.chain);
+  const routeSummary = routeChains.length
+    ? `${localChain ? `${localChain} -> ` : ""}${routeChains.join(", ")}${bridgeOverflow ? `, +${bridgeOverflow} more` : ""}`
+    : bridge?.status || "unresolved";
   return (
     <div className="stack">
       <div className="summary-grid">
@@ -41,12 +87,15 @@ export default function SummaryTab({ detail }) {
         </div>
       </div>
       {bridge ? (
-        <div className="card">
-          <h3>{bridge.protocol || "Bridge"} bridge</h3>
-          <div className="kv-grid">
+        <div className="card bridge-card">
+          <div className="bridge-card-header">
+            <h3>{bridge.protocol || "Bridge"} bridge</h3>
+            <span className="bridge-status-chip">{bridge.status || "unresolved"}</span>
+          </div>
+          <div className="kv-grid bridge-card-main">
             <div className="kv-row">
               <span className="key">Routes</span>
-              <span>{bridgeRoutes || bridge.status || "unresolved"}</span>
+              <span>{routeSummary}</span>
             </div>
             <div className="kv-row">
               <span className="key">Peers</span>
@@ -57,6 +106,20 @@ export default function SummaryTab({ detail }) {
               <span>{bridge.config_control || "Unknown"}</span>
             </div>
           </div>
+          {bridgeRoutes.length ? (
+            <div className="bridge-route-list">
+              {bridgeRoutes.map((route, index) => (
+                <div className="bridge-route-row" key={`${route.chain || "route"}-${index}`}>
+                  <div className="bridge-route-line">
+                    <span>{chainLabel(route.chain) || "Remote"} -&gt; {peerLabel(route)}</span>
+                    <span className="bridge-peer-status">Peer: {peerStatusLabel(route.peer_status)}</span>
+                  </div>
+                  {route.security ? <div className="bridge-route-security">Security: {route.security}</div> : null}
+                </div>
+              ))}
+              {bridgeOverflow ? <div className="bridge-route-more">+{bridgeOverflow} more</div> : null}
+            </div>
+          ) : null}
         </div>
       ) : null}
     </div>

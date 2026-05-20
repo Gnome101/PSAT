@@ -35,6 +35,33 @@
   border: none;
 }
 
+.react-flow__node-networkZone {
+  pointer-events: none !important;
+}
+
+.ps-network-zone {
+  width: 100%;
+  height: 100%;
+  border: 1px solid color-mix(in srgb, var(--zone-color) 46%, transparent);
+  background: color-mix(in srgb, var(--zone-color) 11%, transparent);
+  border-radius: 14px;
+  box-shadow: inset 0 0 0 1px rgba(15, 23, 42, 0.3);
+}
+
+.ps-network-zone-label {
+  position: absolute;
+  top: 10px;
+  left: 12px;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.72);
+  border: 1px solid color-mix(in srgb, var(--zone-color) 40%, rgba(148, 163, 184, 0.12));
+  color: #e2e8f0;
+  font-size: 11px;
+  font-weight: 800;
+  padding: 4px 8px;
+  white-space: nowrap;
+}
+
 /* Floating header overlay */
 .ps-surface-overlay {
   position: absolute;

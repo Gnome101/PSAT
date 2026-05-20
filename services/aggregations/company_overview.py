@@ -679,6 +679,59 @@ def _peer_summary(routes: list[dict[str, Any]]) -> str:
     return ", ".join(parts) if parts else "none analyzed"
 
 
+def _short_address(address: Any) -> str | None:
+    if not isinstance(address, str) or len(address) < 12:
+        return None
+    return f"{address[:6]}..{address[-4:]}"
+
+
+def _bridge_security_label(route: dict[str, Any]) -> str | None:
+    config = route.get("receive_uln") if isinstance(route.get("receive_uln"), dict) else route.get("send_uln")
+    if not isinstance(config, dict):
+        return None
+    required = config.get("required_dvn_count")
+    if not isinstance(required, int):
+        required_dvns = config.get("required_dvns")
+        required = len(required_dvns) if isinstance(required_dvns, list) else 0
+    optional = config.get("optional_dvn_count")
+    if not isinstance(optional, int):
+        optional_dvns = config.get("optional_dvns")
+        optional = len(optional_dvns) if isinstance(optional_dvns, list) else 0
+    threshold = config.get("optional_dvn_threshold")
+    if not required and not optional:
+        return None
+    parts = [f"{required} required DVN" + ("" if required == 1 else "s")]
+    if optional:
+        parts.append(f"{optional} optional")
+    if isinstance(threshold, int) and threshold > 0:
+        parts.append(f"threshold {threshold}")
+    return ", ".join(parts)
+
+
+def _config_control_label(policies: Any) -> str:
+    if not isinstance(policies, list) or not policies:
+        return "Unknown"
+    policy = policies[0]
+    if not isinstance(policy, dict):
+        return "Known"
+    details = policy.get("details") if isinstance(policy.get("details"), dict) else {}
+    label = str(policy.get("label") or policy.get("type") or "").lower()
+    owners = details.get("owners") if isinstance(details, dict) else None
+    threshold = details.get("threshold") if isinstance(details, dict) else None
+    owner_count = len(owners) if isinstance(owners, list) else details.get("owner_count")
+    if "safe" in label and isinstance(threshold, int) and isinstance(owner_count, int) and owner_count > 0:
+        return f"{threshold}-of-{owner_count} Safe"
+    if "safe" in label:
+        return "Safe"
+    if "timelock" in label:
+        return "Timelock"
+    if "owner" in label:
+        return "Owner"
+    if "delegate" in label:
+        return "Delegate"
+    return "Known"
+
+
 def _bridge_summary(static_context: dict[str, Any] | None, runtime: dict[str, Any] | None) -> dict[str, Any] | None:
     if not isinstance(static_context, dict) and not isinstance(runtime, dict):
         return None
@@ -695,28 +748,23 @@ def _bridge_summary(static_context: dict[str, Any] | None, runtime: dict[str, An
     route_labels = [
         {
             "chain": route.get("chain_display_name") or route.get("chain"),
-            "peer": route.get("peer_address") or route.get("peer"),
+            "peer": _short_address(route.get("peer_address")) or _short_address(route.get("peer")) or "unknown",
             "peer_status": (route.get("peer_analysis") or {}).get("status")
             if isinstance(route.get("peer_analysis"), dict)
             else None,
+            "security": _bridge_security_label(route),
         }
         for route in routes[:3]
     ]
-    if len(routes) > 3:
-        route_labels.append({"chain": f"+{len(routes) - 3} more", "peer": None, "peer_status": None})
     policies = runtime.get("policies") if isinstance(runtime, dict) else []
-    config_control = "Unknown"
-    if isinstance(policies, list) and policies:
-        first_policy = policies[0]
-        if isinstance(first_policy, dict):
-            config_control = str(first_policy.get("label") or first_policy.get("address") or "Known")
     return {
         "protocol": protocol,
         "status": _bridge_status_label(runtime, static_context),
         "route_count": len(routes),
+        "route_overflow": max(0, len(routes) - len(route_labels)),
         "routes": route_labels,
         "peers": _peer_summary(routes),
-        "config_control": config_control,
+        "config_control": _config_control_label(policies),
     }
 
 

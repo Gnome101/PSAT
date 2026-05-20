@@ -16,8 +16,124 @@ import { GroupNode } from "./GroupNode.jsx";
 import { PrincipalNode } from "./PrincipalNode.jsx";
 import { PrincipalTourNav } from "./PrincipalTourNav.jsx";
 
-const nodeTypes = { contract: ContractNode, principal: PrincipalNode, group: GroupNode };
+const CONTRACT_NODE_WIDTH = 260;
+const CONTRACT_NODE_HEIGHT = 130;
+const NETWORK_ZONE_PADDING = 52;
+const NETWORK_ZONE_COLORS = {
+  ethereum: "#38bdf8",
+  mainnet: "#38bdf8",
+  base: "#3ddc97",
+  arbitrum: "#f59e0b",
+  optimism: "#fb7185",
+  polygon: "#c084fc",
+  avalanche: "#f43f5e",
+  bsc: "#facc15",
+  linea: "#a3e635",
+  scroll: "#22d3ee",
+  blast: "#f97316",
+};
+
+function chainLabel(chain) {
+  const value = String(chain || "").trim();
+  if (!value) return "Unknown";
+  const known = {
+    ethereum: "Ethereum",
+    mainnet: "Ethereum",
+    base: "Base",
+    arbitrum: "Arbitrum",
+    optimism: "Optimism",
+    polygon: "Polygon",
+    avalanche: "Avalanche",
+    bsc: "BSC",
+    linea: "Linea",
+    scroll: "Scroll",
+    blast: "Blast",
+  };
+  return known[value.toLowerCase()] || value;
+}
+
+function chainColor(chain) {
+  const key = String(chain || "").toLowerCase();
+  if (NETWORK_ZONE_COLORS[key]) return NETWORK_ZONE_COLORS[key];
+  let hash = 0;
+  for (const ch of key || "unknown") hash = (hash * 31 + ch.charCodeAt(0)) >>> 0;
+  const palette = ["#38bdf8", "#3ddc97", "#f59e0b", "#fb7185", "#c084fc", "#22d3ee"];
+  return palette[hash % palette.length];
+}
+
+function zoneId(chain) {
+  return `network-zone-${String(chain || "unknown").toLowerCase().replace(/[^a-z0-9]+/g, "-")}`;
+}
+
+function NetworkZoneNode({ data }) {
+  return (
+    <div className="ps-network-zone">
+      <span className="ps-network-zone-label">{data.label}</span>
+    </div>
+  );
+}
+
+const nodeTypes = {
+  contract: ContractNode,
+  principal: PrincipalNode,
+  group: GroupNode,
+  networkZone: NetworkZoneNode,
+};
 const edgeTypes = { channeled: ChanneledStepEdge };
+
+export function buildNetworkZones(layoutNodes) {
+  const byId = new Map(layoutNodes.map((node) => [node.id, node]));
+  const boundsByChain = new Map();
+
+  for (const node of layoutNodes) {
+    const machine = node.data?.machine;
+    if (node.type !== "contract" || !machine) continue;
+    const chain = machine.chain || "unknown";
+    const parent = node.parentId ? byId.get(node.parentId) : null;
+    const x = (parent?.position?.x || 0) + (node.position?.x || 0);
+    const y = (parent?.position?.y || 0) + (node.position?.y || 0);
+    const width = node.style?.width || CONTRACT_NODE_WIDTH;
+    const height = node.style?.height || CONTRACT_NODE_HEIGHT;
+    const current = boundsByChain.get(chain) || {
+      minX: Number.POSITIVE_INFINITY,
+      minY: Number.POSITIVE_INFINITY,
+      maxX: Number.NEGATIVE_INFINITY,
+      maxY: Number.NEGATIVE_INFINITY,
+      count: 0,
+    };
+    current.minX = Math.min(current.minX, x);
+    current.minY = Math.min(current.minY, y);
+    current.maxX = Math.max(current.maxX, x + width);
+    current.maxY = Math.max(current.maxY, y + height);
+    current.count += 1;
+    boundsByChain.set(chain, current);
+  }
+
+  return [...boundsByChain.entries()].map(([chain, bounds]) => {
+    const color = chainColor(chain);
+    return {
+      id: zoneId(chain),
+      type: "networkZone",
+      position: {
+        x: bounds.minX - NETWORK_ZONE_PADDING,
+        y: bounds.minY - NETWORK_ZONE_PADDING,
+      },
+      selectable: false,
+      draggable: false,
+      connectable: false,
+      focusable: false,
+      zIndex: 0,
+      style: {
+        width: bounds.maxX - bounds.minX + NETWORK_ZONE_PADDING * 2,
+        height: bounds.maxY - bounds.minY + NETWORK_ZONE_PADDING * 2,
+        "--zone-color": color,
+      },
+      data: {
+        label: `${chainLabel(chain)} · ${bounds.count}`,
+      },
+    };
+  });
+}
 
 // Selection-time legend. Renders only while a contract is selected so
 // the chip-color convention (warm = selected acts outward, cool =
@@ -168,42 +284,42 @@ export function SurfaceCanvas({ machines, fundFlows, principals, selectedAddress
     const hiActive = highlightedAddresses && highlightedAddresses.size > 0;
 
     const foc = focusedAddress?.toLowerCase();
-    setNodes(
-      initNodes.map((n) => {
-        const nid = n.id?.toLowerCase();
-        const inAudit = hiActive && highlightedAddresses.has(nid);
-        const dimmed = hiActive ? !inAudit : (sel && !connectedNodes.has(nid));
-        const focused = foc && nid === foc;
-        // Merge — don't replace — n.style. Group containers carry
-        // ELK-computed width/height in n.style and we'd otherwise blow
-        // them away each time selection changes.
-        const baseStyle = n.style || {};
-        const style = dimmed
-          ? { ...baseStyle, opacity: 0.2 }
-          : inAudit
-          ? { ...baseStyle, boxShadow: "0 0 0 2px #22c55e, 0 0 12px rgba(34,197,94,0.55)", borderRadius: 6 }
-          : baseStyle;
-        return {
-          ...n,
-          style,
-          data: {
-            ...n.data,
-            selected: n.id === selectedAddress,
-            focused,
-            selectionChip: selectionChips.get(nid) || null,
-            // Dispatch by node kind: contract nodes carry .machine,
-            // principal AND group nodes both carry .principal. A click on
-            // a group's header (the only pointer-events-active region)
-            // opens the principal detail just like a standalone
-            // PrincipalNode click, so users get the same drill-in either
-            // way.
-            onSelect: n.data.principal
-              ? () => onSelectPrincipal && onSelectPrincipal(n.data.principal)
-              : () => onSelectMachine(n.data.machine),
-          },
-        };
-      })
-    );
+    const nextNodes = initNodes.map((n) => {
+      const nid = n.id?.toLowerCase();
+      const inAudit = hiActive && highlightedAddresses.has(nid);
+      const dimmed = hiActive ? !inAudit : (sel && !connectedNodes.has(nid));
+      const focused = foc && nid === foc;
+      // Merge — don't replace — n.style. Group containers carry
+      // ELK-computed width/height in n.style and we'd otherwise blow
+      // them away each time selection changes.
+      const baseStyle = n.style || {};
+      const style = dimmed
+        ? { ...baseStyle, opacity: 0.2 }
+        : inAudit
+        ? { ...baseStyle, boxShadow: "0 0 0 2px #22c55e, 0 0 12px rgba(34,197,94,0.55)", borderRadius: 6 }
+        : baseStyle;
+      return {
+        ...n,
+        zIndex: n.zIndex ?? 1,
+        style,
+        data: {
+          ...n.data,
+          selected: n.id === selectedAddress,
+          focused,
+          selectionChip: selectionChips.get(nid) || null,
+          // Dispatch by node kind: contract nodes carry .machine,
+          // principal AND group nodes both carry .principal. A click on
+          // a group's header (the only pointer-events-active region)
+          // opens the principal detail just like a standalone
+          // PrincipalNode click, so users get the same drill-in either
+          // way.
+          onSelect: n.data.principal
+            ? () => onSelectPrincipal && onSelectPrincipal(n.data.principal)
+            : () => onSelectMachine(n.data.machine),
+        },
+      };
+    });
+    setNodes([...buildNetworkZones(initNodes), ...nextNodes]);
 
     const nextEdges = initEdges.map((e) => {
       const src = e.source?.toLowerCase();

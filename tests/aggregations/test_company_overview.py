@@ -291,6 +291,11 @@ def test_build_company_overview_exposes_compact_bridge_summary(db_session):
                     "chain_display_name": "Base",
                     "peer_address": peer,
                     "peer_analysis": {"status": "queued"},
+                    "receive_uln": {
+                        "required_dvn_count": 2,
+                        "optional_dvn_count": 1,
+                        "optional_dvn_threshold": 1,
+                    },
                 }
             ],
             "policies": [{"label": "owner controls local app admin functions"}],
@@ -306,9 +311,17 @@ def test_build_company_overview_exposes_compact_bridge_summary(db_session):
         "protocol": "LayerZero",
         "status": "1 route",
         "route_count": 1,
-        "routes": [{"chain": "Base", "peer": peer, "peer_status": "queued"}],
+        "route_overflow": 0,
+        "routes": [
+            {
+                "chain": "Base",
+                "peer": f"{peer[:6]}..{peer[-4:]}",
+                "peer_status": "queued",
+                "security": "2 required DVNs, 1 optional, threshold 1",
+            }
+        ],
         "peers": "1 queued",
-        "config_control": "owner controls local app admin functions",
+        "config_control": "Owner",
     }
     assert "bridge_runtime_context" not in entry
 
