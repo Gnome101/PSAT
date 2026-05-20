@@ -91,6 +91,46 @@ def _sync_audit_reports_to_db(session: Session, protocol_id: int, reports: list[
     session.expire_all()
 
 
+def _deployer_cascade_protocol_id(session: Session, deployer: str | None) -> int | None:
+    """Return a ``protocol_id`` to inherit when *deployer* also deployed
+    a HIGH-sourced contract attributed to a protocol.
+
+    This is the fifth ownership branch (after the four direct-source +
+    structural-edge branches in ``asserts_ownership``): a same-deployer
+    match. It exists because the dependency-cascade spawn at
+    ``workers/resolution_worker.py:499-513`` only propagates
+    ``discovery_relationship`` for impl / beacon edges. Contracts pulled
+    in by a plain function-call dependency edge land here with NULL
+    ``discovery_sources`` and no structural signal — even when their
+    Etherscan-recorded deployer is one of the protocol's known
+    qualified deployer EOAs.
+
+    The HIGH-sourced sibling requirement keeps shared-infrastructure
+    contracts (WETH9, USDC, OZ libs) out: their deployers never wrote
+    a HIGH-source contract attributed to the calling protocol.
+
+    Returns the protocol with the most HIGH-sourced sibling contracts
+    sharing this deployer (defensive against the unlikely case where a
+    single EOA has HIGH-sourced contracts split across two protocols).
+    """
+    if not deployer:
+        return None
+    from services.discovery.source_confidence import HIGH_CONFIDENCE_SOURCES
+
+    row = session.execute(
+        select(Contract.protocol_id, func.count(Contract.id).label("n"))
+        .where(
+            func.lower(Contract.deployer) == deployer.lower(),
+            Contract.protocol_id.is_not(None),
+            Contract.discovery_sources.op("&&")(list(HIGH_CONFIDENCE_SOURCES)),
+        )
+        .group_by(Contract.protocol_id)
+        .order_by(func.count(Contract.id).desc())
+        .limit(1)
+    ).first()
+    return row[0] if row else None
+
+
 class DiscoveryWorker(BaseWorker):
     stage = JobStage.discovery
     next_stage = JobStage.static
@@ -488,6 +528,21 @@ class DiscoveryWorker(BaseWorker):
                     if "structural_adoption" not in merged:
                         merged.append("structural_adoption")
                     existing.discovery_sources = merged
+            # Deployer-cascade adoption — fifth branch, fires when neither
+            # direct nor structural-edge evidence applies but the deployer
+            # EOA is shared with a HIGH-sourced sibling. See
+            # ``_deployer_cascade_protocol_id`` for the rationale. Tags the
+            # row with ``structural_adoption`` to match the audit
+            # convention used by the structural-edge branch above; this is
+            # also the sentinel the companion migration reverts under.
+            if not existing.protocol_id:
+                cascade_pid = _deployer_cascade_protocol_id(session, existing.deployer)
+                if cascade_pid:
+                    existing.protocol_id = cascade_pid
+                    merged = list(existing.discovery_sources or [])
+                    if "structural_adoption" not in merged:
+                        merged.append("structural_adoption")
+                    existing.discovery_sources = merged
         else:
             owning_protocol_id = None
             if job.protocol_id and (asserts_ownership(request_sources) or structural_ownership):
@@ -495,6 +550,17 @@ class DiscoveryWorker(BaseWorker):
             sources_for_row = list(request_sources)
             if structural_ownership and not asserts_ownership(request_sources):
                 sources_for_row.append("structural_adoption")
+            # Deployer-cascade adoption — fifth branch (mirrors the
+            # ``if existing`` arm above). When the dependency-cascade
+            # spawn didn't propagate ``discovery_relationship``, the
+            # shared-deployer signal is what saves these from going to
+            # the contracts table as orphans.
+            if not owning_protocol_id:
+                cascade_pid = _deployer_cascade_protocol_id(session, deployer)
+                if cascade_pid:
+                    owning_protocol_id = cascade_pid
+                    if "structural_adoption" not in sources_for_row:
+                        sources_for_row.append("structural_adoption")
             contract = Contract(
                 job_id=job.id,
                 address=address.lower(),

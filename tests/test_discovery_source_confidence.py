@@ -1334,3 +1334,570 @@ class TestStructuralOrphanMigration:
             "cross-protocol collision was silently assigned to one protocol — "
             "shared infra needs manual review, not first-writer-wins"
         )
+
+
+# ---------------------------------------------------------------------------
+# 7. Deployer-cascade adoption — the fifth ownership branch.
+#
+# Path: an orphan whose ``deployer`` is also the deployer of some
+# HIGH-sourced contract attributed to a protocol inherits that protocol
+# regardless of its own ``discovery_sources``. This catches the etherfi
+# orphan class surfaced by PR-87 investigation: contracts that landed
+# in the DB via the resolution-cascade spawn at
+# ``workers/resolution_worker.py:499-513`` (which only propagates
+# ``discovery_relationship`` for impl / beacon edges) — non-impl/beacon
+# dependencies arrive with NULL ``discovery_sources`` and no structural
+# signal, even when their deployer is one of the protocol's qualified
+# deployer EOAs.
+#
+# The HIGH-sourced-sibling requirement keeps WETH / USDC / OZ libs out:
+# their deployers never wrote a HIGH-source contract attributed to the
+# calling protocol.
+# ---------------------------------------------------------------------------
+
+
+@requires_postgres
+class TestDeployerCascadeAdoption:
+    """Runtime branch in ``workers.discovery._deployer_cascade_protocol_id``
+    + companion migration ``4d72e9b1f035_adopt_remaining_orphan_classes``."""
+
+    @staticmethod
+    def _seed_high_sibling(db_session, *, protocol_id, deployer, sibling_addr, sibling_sources):
+        """Create a Contract row that will serve as the HIGH-source sibling
+        for deployer-cascade adoption tests."""
+        from db.models import Contract
+
+        db_session.add(
+            Contract(
+                address=sibling_addr,
+                chain="ethereum",
+                deployer=deployer,
+                protocol_id=protocol_id,
+                discovery_sources=sibling_sources,
+            )
+        )
+        db_session.commit()
+
+    # ----- runtime helper ----------------------------------------------------
+
+    def test_runtime_helper_returns_protocol_when_high_sibling_shares_deployer(self, db_session, seed_protocol):
+        from workers.discovery import _deployer_cascade_protocol_id
+
+        deployer = _addr(0xC001)
+        self._seed_high_sibling(
+            db_session,
+            protocol_id=seed_protocol,
+            deployer=deployer,
+            sibling_addr=_addr(0xC101),
+            sibling_sources=["ai_inventory"],  # HIGH
+        )
+
+        result = _deployer_cascade_protocol_id(db_session, deployer)
+        assert result == seed_protocol
+
+    def test_runtime_helper_returns_none_when_sibling_is_low_only(self, db_session, seed_protocol):
+        """LOW-only sibling must NOT trigger adoption — that's how WETH
+        with only ``dapp_crawl`` stays unattributed."""
+        from workers.discovery import _deployer_cascade_protocol_id
+
+        deployer = _addr(0xC002)
+        self._seed_high_sibling(
+            db_session,
+            protocol_id=seed_protocol,
+            deployer=deployer,
+            sibling_addr=_addr(0xC102),
+            sibling_sources=["dapp_crawl", "upgrade_history"],  # both LOW
+        )
+
+        assert _deployer_cascade_protocol_id(db_session, deployer) is None
+
+    def test_runtime_helper_returns_none_when_no_sibling_shares_deployer(self, db_session, seed_protocol):
+        from workers.discovery import _deployer_cascade_protocol_id
+
+        # Sibling exists for a DIFFERENT deployer.
+        self._seed_high_sibling(
+            db_session,
+            protocol_id=seed_protocol,
+            deployer=_addr(0xC003),
+            sibling_addr=_addr(0xC103),
+            sibling_sources=["deployer_expansion"],
+        )
+
+        result = _deployer_cascade_protocol_id(db_session, _addr(0xC004))
+        assert result is None
+
+    def test_runtime_helper_returns_none_when_deployer_is_none(self, db_session):
+        """Defensive — an orphan with no recorded deployer can't cascade."""
+        from workers.discovery import _deployer_cascade_protocol_id
+
+        assert _deployer_cascade_protocol_id(db_session, None) is None
+        assert _deployer_cascade_protocol_id(db_session, "") is None
+
+    def test_runtime_helper_picks_dominant_protocol_on_split(self, db_session, seed_protocol):
+        """If a deployer has HIGH-sourced contracts across two protocols
+        (rare but possible — shared dev team operating multiple protocols
+        from one EOA), pick the one with the most siblings."""
+        from db.models import Contract, Protocol
+        from workers.discovery import _deployer_cascade_protocol_id
+
+        other_proto = Protocol(name=f"dep-cascade-other-{uuid.uuid4().hex[:10]}")
+        db_session.add(other_proto)
+        db_session.commit()
+
+        deployer = _addr(0xC005)
+        # Three HIGH siblings on seed_protocol, one on other_proto.
+        for n, addr_n in enumerate((0xC105, 0xC106, 0xC107)):
+            db_session.add(
+                Contract(
+                    address=_addr(addr_n),
+                    chain="ethereum",
+                    deployer=deployer,
+                    protocol_id=seed_protocol,
+                    discovery_sources=["deployer_expansion"],
+                )
+            )
+        db_session.add(
+            Contract(
+                address=_addr(0xC108),
+                chain="ethereum",
+                deployer=deployer,
+                protocol_id=other_proto.id,
+                discovery_sources=["ai_inventory"],
+            )
+        )
+        db_session.commit()
+
+        # The HIGH-sibling count is 3 for seed_protocol vs 1 for other_proto.
+        assert _deployer_cascade_protocol_id(db_session, deployer) == seed_protocol
+
+    def test_runtime_helper_is_case_insensitive_on_deployer(self, db_session, seed_protocol):
+        """Contract.deployer addresses can land in either case; the lookup
+        must match regardless."""
+        from workers.discovery import _deployer_cascade_protocol_id
+
+        # Sibling row uses lowercase, query uses uppercase.
+        deployer_lc = _addr(0xC006)
+        self._seed_high_sibling(
+            db_session,
+            protocol_id=seed_protocol,
+            deployer=deployer_lc,
+            sibling_addr=_addr(0xC109),
+            sibling_sources=["deployer_expansion"],
+        )
+
+        # Same address, mixed case.
+        deployer_mixed = "0x" + deployer_lc[2:].upper()
+        assert _deployer_cascade_protocol_id(db_session, deployer_mixed) == seed_protocol
+
+    # ----- migration --------------------------------------------------------
+
+    @pytest.fixture(scope="class")
+    def remaining_orphans_migration(self):
+        """Load the deployer-cascade migration by file path. Migration
+        filenames lead with the revision id, which isn't a valid Python
+        module name, so importlib.util by path is the way in."""
+        import importlib.util
+
+        path = (
+            Path(__file__).resolve().parents[1]
+            / "alembic"
+            / "versions"
+            / "4d72e9b1f035_adopt_remaining_orphan_classes.py"
+        )
+        spec = importlib.util.spec_from_file_location("_adopt_remaining_orphans_mig", path)
+        assert spec is not None and spec.loader is not None
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+
+    def test_migration_adopts_orphan_when_high_sibling_shares_deployer(
+        self, db_session, seed_protocol, remaining_orphans_migration
+    ):
+        from db.models import Contract
+
+        deployer = _addr(0xCA01)
+        orphan_addr = _addr(0xCB01)
+
+        # Seed the orphan first.
+        db_session.add(
+            Contract(
+                address=orphan_addr,
+                chain="ethereum",
+                deployer=deployer,
+                protocol_id=None,
+                discovery_sources=None,
+            )
+        )
+        # And a HIGH-sourced sibling sharing the deployer.
+        self._seed_high_sibling(
+            db_session,
+            protocol_id=seed_protocol,
+            deployer=deployer,
+            sibling_addr=_addr(0xCC01),
+            sibling_sources=["deployer_expansion"],
+        )
+
+        rows = db_session.execute(remaining_orphans_migration._SELECT_REMAINING_ORPHANS).fetchall()
+        adopted = 0
+        for orphan_id, protocols, dominant_protocol in rows:
+            unique = [pid for pid in (protocols or []) if pid is not None]
+            if len(unique) == 1:
+                db_session.execute(
+                    remaining_orphans_migration._ADOPT_ORPHAN,
+                    {"pid": dominant_protocol, "id": orphan_id},
+                )
+                adopted += 1
+        db_session.commit()
+
+        assert adopted >= 1
+        row = db_session.query(Contract).filter_by(address=orphan_addr).one()
+        assert row.protocol_id == seed_protocol
+        assert "structural_adoption" in (row.discovery_sources or [])
+
+    def test_migration_skips_low_only_siblings(self, db_session, seed_protocol, remaining_orphans_migration):
+        """A deployer whose siblings are all LOW (dapp_crawl,
+        upgrade_history) does NOT count — this keeps Lido / EigenLayer /
+        WETH orphans from being adopted just because some etherfi pipeline
+        also saw them."""
+        from db.models import Contract
+
+        deployer = _addr(0xCA02)
+        orphan_addr = _addr(0xCB02)
+
+        db_session.add(
+            Contract(
+                address=orphan_addr,
+                chain="ethereum",
+                deployer=deployer,
+                protocol_id=None,
+                discovery_sources=None,
+            )
+        )
+        self._seed_high_sibling(
+            db_session,
+            protocol_id=seed_protocol,
+            deployer=deployer,
+            sibling_addr=_addr(0xCC02),
+            sibling_sources=["dapp_crawl"],  # LOW-only
+        )
+
+        rows = db_session.execute(remaining_orphans_migration._SELECT_REMAINING_ORPHANS).fetchall()
+        orphan_ids = {r[0] for r in rows}
+        target = db_session.query(Contract).filter_by(address=orphan_addr).one()
+        assert target.id not in orphan_ids, (
+            "deployer-cascade SELECT returned an orphan whose sibling is LOW-only — "
+            "this is the WETH leak the gate must block"
+        )
+
+    def test_migration_skips_cross_protocol_collision(self, db_session, seed_protocol, remaining_orphans_migration):
+        """If a single deployer wrote HIGH-source contracts for two
+        different protocols and we'd be choosing one over the other,
+        skip the orphan and leave it for manual review. Mirrors the
+        existing structural-orphan migration convention."""
+        from db.models import Contract, Protocol
+
+        other = Protocol(name=f"dep-cascade-collide-{uuid.uuid4().hex[:10]}")
+        db_session.add(other)
+        db_session.commit()
+
+        deployer = _addr(0xCA03)
+        orphan_addr = _addr(0xCB03)
+        db_session.add(
+            Contract(
+                address=orphan_addr,
+                chain="ethereum",
+                deployer=deployer,
+                protocol_id=None,
+                discovery_sources=None,
+            )
+        )
+        # One HIGH sibling on each of two protocols → ambiguous.
+        self._seed_high_sibling(
+            db_session,
+            protocol_id=seed_protocol,
+            deployer=deployer,
+            sibling_addr=_addr(0xCC03),
+            sibling_sources=["deployer_expansion"],
+        )
+        self._seed_high_sibling(
+            db_session,
+            protocol_id=other.id,
+            deployer=deployer,
+            sibling_addr=_addr(0xCC04),
+            sibling_sources=["ai_inventory"],
+        )
+
+        rows = db_session.execute(remaining_orphans_migration._SELECT_REMAINING_ORPHANS).fetchall()
+        for orphan_id, protocols, dominant_protocol in rows:
+            unique = [pid for pid in (protocols or []) if pid is not None]
+            if len(unique) == 1:
+                db_session.execute(
+                    remaining_orphans_migration._ADOPT_ORPHAN,
+                    {"pid": dominant_protocol, "id": orphan_id},
+                )
+        db_session.commit()
+
+        row = db_session.query(Contract).filter_by(address=orphan_addr).one()
+        assert row.protocol_id is None, (
+            "cross-protocol collision was silently assigned to one protocol — "
+            "shared deployers across protocols need manual review"
+        )
+
+    # ----- branch B: historical-impl of a HIGH-sourced proxy ---------------
+
+    @staticmethod
+    def _seed_high_proxy_with_upgrade_history(db_session, *, protocol_id, proxy_addr, proxy_sources, historical_impls):
+        """Create a HIGH-sourced proxy Contract row + UpgradeEvent rows
+        for each address in *historical_impls* pointing at it."""
+        from db.models import Contract, UpgradeEvent
+
+        proxy = Contract(
+            address=proxy_addr,
+            chain="ethereum",
+            protocol_id=protocol_id,
+            discovery_sources=proxy_sources,
+            is_proxy=True,
+        )
+        db_session.add(proxy)
+        db_session.flush()
+        for i, impl_addr in enumerate(historical_impls):
+            db_session.add(
+                UpgradeEvent(
+                    contract_id=proxy.id,
+                    proxy_address=proxy_addr,
+                    old_impl=historical_impls[i - 1] if i > 0 else None,
+                    new_impl=impl_addr,
+                    block_number=1_000_000 + i,
+                )
+            )
+        db_session.commit()
+        return proxy
+
+    def test_historical_impl_adopted_when_proxy_is_high_sourced(
+        self, db_session, seed_protocol, remaining_orphans_migration
+    ):
+        """LRTSquare-shape: an orphan impl whose only source is
+        ``upgrade_history`` (or NULL) is adopted into the proxy's
+        protocol when the proxy itself is HIGH-sourced. This is the
+        case that catches LRTSquare/LRTSquared/LRTSquaredDummy behind
+        the HIGH-sourced LRTSquaredCore."""
+        from db.models import Contract
+
+        old_impl_addr = _addr(0xD001)
+        proxy_addr = _addr(0xE001)
+
+        # Orphan historical impl with only LOW source (or NULL — pin both).
+        db_session.add(
+            Contract(
+                address=old_impl_addr,
+                chain="ethereum",
+                protocol_id=None,
+                discovery_sources=["upgrade_history"],
+            )
+        )
+        # HIGH-sourced proxy that once delegated to old_impl_addr.
+        self._seed_high_proxy_with_upgrade_history(
+            db_session,
+            protocol_id=seed_protocol,
+            proxy_addr=proxy_addr,
+            proxy_sources=["deployer_expansion"],
+            historical_impls=[old_impl_addr, _addr(0xD002)],
+        )
+
+        rows = db_session.execute(remaining_orphans_migration._SELECT_REMAINING_ORPHANS).fetchall()
+        for orphan_id, protocols, dominant_protocol in rows:
+            unique = [pid for pid in (protocols or []) if pid is not None]
+            if len(unique) == 1:
+                db_session.execute(
+                    remaining_orphans_migration._ADOPT_ORPHAN,
+                    {"pid": dominant_protocol, "id": orphan_id},
+                )
+        db_session.commit()
+
+        row = db_session.query(Contract).filter_by(address=old_impl_addr).one()
+        assert row.protocol_id == seed_protocol, (
+            "historical impl behind HIGH-sourced proxy stayed orphan — branch B failed"
+        )
+        assert "structural_adoption" in (row.discovery_sources or [])
+
+    def test_historical_impl_skipped_when_proxy_is_low_only(
+        self, db_session, seed_protocol, remaining_orphans_migration
+    ):
+        """EigenLayer-leak shape (reversed direction): a foreign proxy
+        imported via ``dapp_crawl`` carries upgrade history, but its
+        historical impls must NOT be adopted. The HIGH-parent
+        requirement is what holds this gate shut."""
+        from db.models import Contract
+
+        old_impl_addr = _addr(0xD003)
+        proxy_addr = _addr(0xE002)
+
+        db_session.add(
+            Contract(
+                address=old_impl_addr,
+                chain="ethereum",
+                protocol_id=None,
+                discovery_sources=["upgrade_history"],
+            )
+        )
+        # LOW-only proxy — dapp_crawl is in LOW_CONFIDENCE_SOURCES.
+        self._seed_high_proxy_with_upgrade_history(
+            db_session,
+            protocol_id=seed_protocol,
+            proxy_addr=proxy_addr,
+            proxy_sources=["dapp_crawl"],
+            historical_impls=[old_impl_addr],
+        )
+
+        rows = db_session.execute(remaining_orphans_migration._SELECT_REMAINING_ORPHANS).fetchall()
+        orphan_ids = {r[0] for r in rows}
+        target = db_session.query(Contract).filter_by(address=old_impl_addr).one()
+        assert target.id not in orphan_ids, (
+            "historical impl behind LOW-only proxy was returned by the SELECT — "
+            "this is the EigenLayer leak shape the gate must block"
+        )
+
+    def test_historical_impl_zero_address_filtered(self, db_session, seed_protocol, remaining_orphans_migration):
+        """Some backfill paths emit synthetic UpgradeEvent rows with
+        ``new_impl = 0x0…0`` for the pre-init state. The SELECT must
+        filter those out — otherwise we'd be "adopting" the zero
+        address as a contract, which doesn't exist."""
+        from db.models import Contract
+
+        zero_addr = "0x" + "0" * 40
+        proxy_addr = _addr(0xE003)
+
+        # An orphan row keyed at the zero address would never exist in
+        # practice (no contract there), but seed it to verify the
+        # filter explicitly — if anyone ever does materialize a row
+        # there, this test pins that the migration won't grant ownership.
+        db_session.add(
+            Contract(
+                address=zero_addr,
+                chain="ethereum",
+                protocol_id=None,
+                discovery_sources=["upgrade_history"],
+            )
+        )
+        self._seed_high_proxy_with_upgrade_history(
+            db_session,
+            protocol_id=seed_protocol,
+            proxy_addr=proxy_addr,
+            proxy_sources=["deployer_expansion"],
+            historical_impls=[zero_addr, _addr(0xD004)],
+        )
+
+        rows = db_session.execute(remaining_orphans_migration._SELECT_REMAINING_ORPHANS).fetchall()
+        orphan_ids = {r[0] for r in rows}
+        zero_row = db_session.query(Contract).filter_by(address=zero_addr).one()
+        assert zero_row.id not in orphan_ids, (
+            "zero-address UpgradeEvent.new_impl rows must be filtered before they reach the adoption SELECT"
+        )
+
+    def test_historical_impl_cross_protocol_collision_skipped(
+        self, db_session, seed_protocol, remaining_orphans_migration
+    ):
+        """Two HIGH-sourced proxies from different protocols both used
+        the same impl at some point (rare — shared init impl across
+        deployments). The orphan impl is skipped + logged rather than
+        adopted into one arbitrary protocol."""
+        from db.models import Contract, Protocol
+
+        other = Protocol(name=f"hist-impl-collide-{uuid.uuid4().hex[:10]}")
+        db_session.add(other)
+        db_session.commit()
+
+        shared_impl_addr = _addr(0xD005)
+        db_session.add(
+            Contract(
+                address=shared_impl_addr,
+                chain="ethereum",
+                protocol_id=None,
+                discovery_sources=["upgrade_history"],
+            )
+        )
+        # Two proxies on two different protocols, each with the shared
+        # impl in their upgrade history.
+        self._seed_high_proxy_with_upgrade_history(
+            db_session,
+            protocol_id=seed_protocol,
+            proxy_addr=_addr(0xE004),
+            proxy_sources=["deployer_expansion"],
+            historical_impls=[shared_impl_addr],
+        )
+        self._seed_high_proxy_with_upgrade_history(
+            db_session,
+            protocol_id=other.id,
+            proxy_addr=_addr(0xE005),
+            proxy_sources=["ai_inventory"],
+            historical_impls=[shared_impl_addr],
+        )
+
+        rows = db_session.execute(remaining_orphans_migration._SELECT_REMAINING_ORPHANS).fetchall()
+        for orphan_id, protocols, dominant_protocol in rows:
+            unique = [pid for pid in (protocols or []) if pid is not None]
+            if len(unique) == 1:
+                db_session.execute(
+                    remaining_orphans_migration._ADOPT_ORPHAN,
+                    {"pid": dominant_protocol, "id": orphan_id},
+                )
+        db_session.commit()
+
+        row = db_session.query(Contract).filter_by(address=shared_impl_addr).one()
+        assert row.protocol_id is None, (
+            "shared impl across two protocols was silently assigned to one — "
+            "the cross-protocol skip must cover the historical-impl branch too"
+        )
+
+    def test_orphan_with_both_branches_matching_same_protocol_adopts(
+        self, db_session, seed_protocol, remaining_orphans_migration
+    ):
+        """Belt-and-suspenders: if the orphan matches via BOTH the
+        deployer-cascade and historical-impl branches for the SAME
+        protocol, that's not a collision — it's stronger evidence.
+        Adopt cleanly."""
+        from db.models import Contract
+
+        orphan_addr = _addr(0xD006)
+        deployer = _addr(0xCA10)
+
+        # Orphan with a deployer set; will match Branch A via deployer.
+        db_session.add(
+            Contract(
+                address=orphan_addr,
+                chain="ethereum",
+                deployer=deployer,
+                protocol_id=None,
+                discovery_sources=["upgrade_history"],
+            )
+        )
+        # HIGH sibling sharing the deployer (Branch A evidence).
+        self._seed_high_sibling(
+            db_session,
+            protocol_id=seed_protocol,
+            deployer=deployer,
+            sibling_addr=_addr(0xCC10),
+            sibling_sources=["deployer_expansion"],
+        )
+        # HIGH proxy with this orphan in upgrade history (Branch B evidence)
+        # — same protocol, so the two evidence streams reinforce.
+        self._seed_high_proxy_with_upgrade_history(
+            db_session,
+            protocol_id=seed_protocol,
+            proxy_addr=_addr(0xE006),
+            proxy_sources=["ai_inventory"],
+            historical_impls=[orphan_addr],
+        )
+
+        rows = db_session.execute(remaining_orphans_migration._SELECT_REMAINING_ORPHANS).fetchall()
+        for orphan_id, protocols, dominant_protocol in rows:
+            unique = [pid for pid in (protocols or []) if pid is not None]
+            if len(unique) == 1:
+                db_session.execute(
+                    remaining_orphans_migration._ADOPT_ORPHAN,
+                    {"pid": dominant_protocol, "id": orphan_id},
+                )
+        db_session.commit()
+
+        row = db_session.query(Contract).filter_by(address=orphan_addr).one()
+        assert row.protocol_id == seed_protocol
